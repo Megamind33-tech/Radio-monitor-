@@ -123,12 +123,17 @@ def extract_station_play_buttons(html: str) -> list[tuple[str, str, str]]:
 
 def discover_orb_paths_to_fetch() -> list[str]:
     """
-    Country page + each city listing + individual station pages linked from country
-    (excluding genre links and city index paths — those are fetched explicitly).
+    Country listing + each city listing + individual station pages linked from the
+    country index (excluding genre links and city index paths).
     """
-    html = fetch_orb_html(ZM_COUNTRY_PATH)
-    paths = extract_paths_from_zm_listing(html)
-    # Explicit city listings (covers pagination / completeness)
+    paths: set[str] = set()
+    try:
+        html = fetch_orb_html(ZM_COUNTRY_PATH)
+        paths |= extract_paths_from_zm_listing(html)
+    except Exception:
+        pass
+
+    # Explicit city listings (stations not always linked from country index)
     for slug in ORB_CITY_SLUGS:
         paths.add(f"/zm/{slug}/")
 
