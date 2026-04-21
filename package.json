@@ -9,7 +9,9 @@
     "build": "vite build && tsc --project tsconfig.server.json",
     "start": "NODE_ENV=production node dist/server/main.js",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "harvest:zambia": "python3 scripts/zambia_station_harvest.py --max-stations 150 --out scripts/data/zambia_harvest.json",
+    "import:zambia": "node scripts/import_zambia_stations.mjs scripts/data/zambia_harvest.json"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

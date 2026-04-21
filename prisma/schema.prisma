@@ -14,8 +14,16 @@ model Station {
   id                         String   @id @default(cuid())
   name                       String
   country                    String
+  /// City / district (e.g. Lusaka, Ndola, Luanshya)
+  district                   String   @default("")
   streamUrl                  String
   streamFormatHint           String?
+  /// radio_garden channel id, tunein station id, etc. (JSON string)
+  sourceIdsJson              String?
+  /// Last harvest result: good | partial | weak | none | error
+  icyQualification           String?
+  /// Truncated ICY StreamTitle sample from harvest
+  icySampleTitle             String?
   isActive                   Boolean  @default(true)
   metadataPriorityEnabled    Boolean  @default(true)
   fingerprintFallbackEnabled Boolean  @default(true)
