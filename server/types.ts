@@ -1,4 +1,4 @@
-export type DetectionMethod = 'stream_metadata' | 'fingerprint_acoustid' | 'unresolved';
+export type DetectionMethod = 'stream_metadata' | 'fingerprint_acoustid' | 'catalog_lookup' | 'unresolved';
 export type DetectionStatus = 'matched' | 'unresolved' | 'ignored';
 
 export interface NormalizedMetadata {
@@ -16,6 +16,8 @@ export interface MatchResult {
   releaseTitle?: string;
   releaseDate?: string;
   isrcs?: string[];
+  genre?: string;
+  sourceProvider?: 'acoustid' | 'musicbrainz' | 'musicbrainz_search' | 'itunes_search' | 'stream_metadata';
   confidence: number;
   reasonCode?: string;
 }

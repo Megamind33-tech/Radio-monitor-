@@ -63,6 +63,7 @@ export class AcoustidService {
         recordingId: recording.id,
         title: recording.title,
         artist: recording.artists?.[0]?.name,
+        sourceProvider: "acoustid",
         confidence: result.score,
         reasonCode: 'fingerprint_acoustid'
       };

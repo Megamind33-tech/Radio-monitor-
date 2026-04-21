@@ -6,6 +6,7 @@ import { SamplerService } from './sampler.service.js';
 import { FingerprintService } from './fingerprint.service.js';
 import { AcoustidService } from './acoustid.service.js';
 import { MusicbrainzService } from './musicbrainz.service.js';
+import { CatalogLookupService } from './catalog-lookup.service.js';
 import { NormalizedMetadata, MatchResult, DetectionMethod } from '../types.js';
 
 export class MonitorService {
@@ -74,6 +75,15 @@ export class MonitorService {
         }
       }
 
+      // 2b. Public catalog fallback based on stream metadata text when fingerprinting misses
+      if (!match && metadata) {
+        const catalogMatch = await CatalogLookupService.lookupFromMetadata(metadata);
+        if (catalogMatch) {
+          match = catalogMatch;
+          method = 'catalog_lookup';
+        }
+      }
+
       // 3. Normalize and log
       const processingMs = Date.now() - start;
       await this.saveDetection(stationId, method, metadata, match, processingMs, reasonCode);
@@ -135,6 +145,8 @@ export class MonitorService {
         artistFinal,
         releaseFinal: match?.releaseTitle,
         releaseDate: match?.releaseDate,
+        genreFinal: match?.genre,
+        sourceProvider: match?.sourceProvider || method,
         isrcList: match?.isrcs ? JSON.stringify(match.isrcs) : null,
         processingMs,
         status,
@@ -147,6 +159,9 @@ export class MonitorService {
       update: {
         title: titleFinal,
         artist: artistFinal,
+        album: match?.releaseTitle,
+        genre: match?.genre,
+        sourceProvider: match?.sourceProvider || method,
         streamText: metadata?.combinedRaw,
         updatedAt: new Date()
       },
@@ -154,6 +169,9 @@ export class MonitorService {
         stationId,
         title: titleFinal,
         artist: artistFinal,
+        album: match?.releaseTitle,
+        genre: match?.genre,
+        sourceProvider: match?.sourceProvider || method,
         streamText: metadata?.combinedRaw
       }
     });

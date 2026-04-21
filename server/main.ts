@@ -48,6 +48,12 @@ async function startServer() {
     const fpcalc = isCommandAvailable("fpcalc");
     const acoustidApiKeyConfigured = !!process.env.ACOUSTID_API_KEY;
     const musicbrainzUserAgentConfigured = !!process.env.MUSICBRAINZ_USER_AGENT;
+    const catalogLookupReady = musicbrainzUserAgentConfigured;
+    const freeApisEnabled = {
+      acoustid: acoustidApiKeyConfigured,
+      musicbrainz: musicbrainzUserAgentConfigured,
+      itunesSearch: true
+    };
 
     const missing = [];
     if (!ffmpeg) missing.push("ffmpeg");
@@ -62,6 +68,8 @@ async function startServer() {
       fpcalc,
       acoustidApiKeyConfigured,
       musicbrainzUserAgentConfigured,
+      catalogLookupReady,
+      freeApisEnabled,
       fingerprintReady: ffmpeg && ffprobe && fpcalc && acoustidApiKeyConfigured,
       missing
     });
@@ -113,6 +121,8 @@ async function startServer() {
         detectionMethod: true,
         titleFinal: true,
         artistFinal: true,
+        genreFinal: true,
+        sourceProvider: true,
         status: true
       }
     });
@@ -123,10 +133,13 @@ async function startServer() {
     const stationIdQuery = typeof req.query.stationId === "string" ? req.query.stationId : undefined;
     const takeQuery = typeof req.query.take === "string" ? Number(req.query.take) : 100;
     const take = Number.isFinite(takeQuery) ? Math.min(Math.max(Math.trunc(takeQuery), 1), 500) : 100;
+    const statusQuery = typeof req.query.status === "string" ? req.query.status : undefined;
 
-    const where = stationIdQuery && stationIdQuery !== "all" ? { stationId: stationIdQuery } : undefined;
+    const where: { stationId?: string; status?: string } = {};
+    if (stationIdQuery && stationIdQuery !== "all") where.stationId = stationIdQuery;
+    if (statusQuery && statusQuery !== "all") where.status = statusQuery;
     const logs = await prisma.detectionLog.findMany({
-      where,
+      where: Object.keys(where).length > 0 ? where : undefined,
       orderBy: { observedAt: "desc" },
       take,
       include: {

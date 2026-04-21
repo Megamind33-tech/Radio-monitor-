@@ -36,6 +36,9 @@ interface Station {
   currentNowPlaying?: {
     title: string;
     artist: string;
+    album?: string;
+    genre?: string;
+    sourceProvider?: string;
     updatedAt: string;
   };
 }
@@ -47,6 +50,9 @@ interface DetectionLog {
   detectionMethod: string;
   artistFinal?: string;
   titleFinal?: string;
+  releaseFinal?: string;
+  genreFinal?: string;
+  sourceProvider?: string;
   status: string;
   acoustidScore?: number;
   station?: {
@@ -68,6 +74,12 @@ interface DependencyStatus {
   fpcalc: boolean;
   acoustidApiKeyConfigured: boolean;
   musicbrainzUserAgentConfigured: boolean;
+  catalogLookupReady: boolean;
+  freeApisEnabled: {
+    acoustid: boolean;
+    musicbrainz: boolean;
+    itunesSearch: boolean;
+  };
   fingerprintReady: boolean;
   missing: string[];
 }
@@ -145,6 +157,7 @@ export default function App() {
   const formatMethod = (method: string) => {
     if (method === 'stream_metadata') return 'Metadata';
     if (method === 'fingerprint_acoustid') return 'Fingerprint';
+    if (method === 'catalog_lookup') return 'Catalog';
     return method;
   };
 
@@ -251,6 +264,10 @@ export default function App() {
                           <div className="flex flex-col">
                             <span className="font-semibold group-hover:text-brand-cyan transition-colors">{log.titleFinal || "Unknown track"}</span>
                             <span className="text-xs text-gray-500">{log.artistFinal || "Unknown artist"}</span>
+                            <span className="text-xs text-gray-600">
+                              {log.genreFinal ? `Genre: ${log.genreFinal}` : ''}
+                              {log.sourceProvider ? `${log.genreFinal ? ' • ' : ''}Source: ${log.sourceProvider}` : ''}
+                            </span>
                           </div>
                         </td>
                         <td className="py-4">
@@ -294,6 +311,10 @@ export default function App() {
                   <div>ffprobe: {dependencies?.ffprobe ? 'OK' : 'Missing'}</div>
                   <div>fpcalc: {dependencies?.fpcalc ? 'OK' : 'Missing'}</div>
                   <div>AcoustID key: {dependencies?.acoustidApiKeyConfigured ? 'Configured' : 'Missing'}</div>
+                </div>
+                <div className="grid grid-cols-1 gap-2 text-xs text-gray-400 border-t border-white/5 pt-3">
+                  <div>Free APIs active: AcoustID ({dependencies?.freeApisEnabled?.acoustid ? 'on' : 'off'}), MusicBrainz ({dependencies?.freeApisEnabled?.musicbrainz ? 'on' : 'off'}), iTunes Search ({dependencies?.freeApisEnabled?.itunesSearch ? 'on' : 'off'})</div>
+                  <div>Catalog lookup fallback: {dependencies?.catalogLookupReady ? 'ready' : 'needs MusicBrainz user-agent'}</div>
                 </div>
                 {dependencies && dependencies.missing.length > 0 && (
                   <p className="text-xs text-yellow-300">
@@ -463,6 +484,12 @@ function StationCard({ station, onProbe }: { station: Station, onProbe: () => vo
               <div className="overflow-hidden">
                 <h4 className="text-xl font-bold truncate leading-tight mb-1">{np.title}</h4>
                 <p className="text-gray-400 truncate">{np.artist}</p>
+                {(np.genre || np.sourceProvider) && (
+                  <p className="text-xs text-gray-500 truncate">
+                    {np.genre ? `Genre: ${np.genre}` : ''}
+                    {np.sourceProvider ? `${np.genre ? ' • ' : ''}Source: ${np.sourceProvider}` : ''}
+                  </p>
+                )}
                 <p className="text-xs text-gray-500 mt-1">Detected {new Date(np.updatedAt).toLocaleTimeString()}</p>
               </div>
             </div>
