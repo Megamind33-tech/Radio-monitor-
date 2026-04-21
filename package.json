@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "tsx server/main.ts",
     "build": "vite build && tsc --project tsconfig.server.json",
     "start": "NODE_ENV=production node dist/server/main.js",

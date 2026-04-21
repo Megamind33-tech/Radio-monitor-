@@ -9,3 +9,5 @@ coverage/
 .env*
 !.env.example
 stations_audit.csv
+# SQLite dev DB (often under prisma/ when DATABASE_URL uses file:./prisma/*.db)
+prisma/**/*.db
