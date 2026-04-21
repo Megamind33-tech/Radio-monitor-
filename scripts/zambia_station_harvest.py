@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """
-Harvest Zambian radio stations from Radio Garden + TuneIn, resolve stream URLs,
-probe ICY metadata (up to 3 blocks), classify, write JSON for Prisma import.
+Harvest Zambian radio stations from MyTuner, OnlineRadioBox, Radio Garden,
+radio-browser, and TuneIn; resolve stream URLs, probe ICY metadata (up to 3 blocks),
+classify, write JSON for Prisma import.
 
 Target: up to --max-stations (default 150) unique entries.
 """
 from __future__ import annotations
+
+import os
+import sys
+
+# Allow `python3 scripts/zambia_station_harvest.py` to import sibling modules
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import argparse
 import asyncio
@@ -19,6 +26,22 @@ from dataclasses import dataclass
 
 import aiohttp
 
+from zambia_provinces import province_for_place, province_for_tunein_district
+from mytuner_zambia import (
+    decrypt_first_stream_url,
+    discover_mytuner_zambia_station_page_urls,
+    fetch_text as mytuner_fetch_text,
+    normalize_url as mytuner_normalize_url,
+)
+from onlineradio_zambia import (
+    ORB_CITY_SLUGS,
+    discover_orb_paths_to_fetch,
+    extract_station_play_buttons,
+    fetch_orb_html,
+    is_offline_placeholder,
+    slug_to_city_name,
+)
+
 UA_BROWSER = "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36"
 UA_ICY = "ZambiaStationHarvest/1.0"
 
@@ -31,8 +54,10 @@ class Candidate:
     stable_id: str
     name: str
     district: str
+    province: str
+    frequency_mhz: str | None
     stream_url: str
-    source: str  # radio_garden | tunein
+    source: str  # radio_garden | tunein | radio_browser | mytuner | onlineradiobox
     source_detail: str  # channel id or tunein id
     icy_qualification: str = "pending"
     icy_sample_title: str | None = None
@@ -66,10 +91,59 @@ def rg_channels_for_map(map_id: str) -> list[dict]:
     return [x["page"] for x in items if x.get("page", {}).get("type") == "channel"]
 
 
+ZAMBIA_NAME_HINTS = frozenset(
+    """
+    zambia lusaka ndola kitwe kabwe chipata choma livingstone luanshya mongu solwezi kasama
+    mufulira chingola kapiri petauke monze mazabuka kalomo sesheke senanga mansa samfya
+    copperbelt luapala luapula zambezi nakonde isoka mbala mwinilunga ikelenge ndola
+    luanshya kitwe chililabombwe kalulushi
+    """.split()
+)
+
+
+def is_likely_zambia_station_name(name: str) -> bool:
+    low = (name or "").lower()
+    if "zambia" in low or "zm " in low or low.endswith(" zm"):
+        return True
+    return any(h in low for h in ZAMBIA_NAME_HINTS if len(h) > 3)
+
+
+def extract_frequency_mhz(name: str) -> str | None:
+    """Parse FM frequency like 94.5 or 104.1 from station name."""
+    m = re.search(r"\b(\d{2,3}\.\d)\s*(?:fm|mhz)?\b", name, re.I)
+    if m:
+        return m.group(1)
+    m = re.search(r"\b(\d{2,3}\.\d)\b", name)
+    return m.group(1) if m else None
+
+
 def channel_slug_from_url(url: str) -> str | None:
     # /listen/some-name/CHANNELID
     m = re.search(r"/listen/[^/]+/([^/]+)/?$", url or "")
     return m.group(1) if m else None
+
+
+def fetch_radio_browser_zambia_stations() -> list[tuple[str, str]]:
+    """Return [(name, stream_url), ...] for Zambia (ZM). Merges multiple API mirrors."""
+    endpoints = [
+        "http://all.api.radio-browser.info/json/stations/bycountrycodeexact/ZM",
+        "http://all.api.radio-browser.info/json/stations/bycountry/Zambia",
+        "http://de1.api.radio-browser.info/json/stations/bycountrycodeexact/ZM",
+    ]
+    by_url: dict[str, tuple[str, str]] = {}
+    for u in endpoints:
+        try:
+            ctx = ssl.create_default_context()
+            with urllib.request.urlopen(u, context=ctx, timeout=45) as r:
+                data = json.loads(r.read().decode())
+            for row in data:
+                name = (row.get("name") or "").strip()
+                su = (row.get("url_resolved") or row.get("url") or "").strip()
+                if name and su.startswith("http") and su not in by_url:
+                    by_url[su] = (name, su)
+        except Exception:
+            continue
+    return list(by_url.values())
 
 
 def tunein_search_stations(query: str = "zambia") -> list[tuple[str, str]]:
@@ -115,6 +189,20 @@ def is_likely_junk_title(s: str | None) -> bool:
     if len(t) < 2:
         return True
     if t in {"-", " - ", "..."}:
+        return True
+    low = t.lower()
+    # Automation sometimes sends offline / placeholder strings instead of tracks
+    if any(
+        x in low
+        for x in (
+            "offline",
+            "not broadcasting",
+            "stream offline",
+            "no stream",
+            "temporarily unavailable",
+            "under maintenance",
+        )
+    ):
         return True
     # Long base64-ish blobs (Radio Maria / auth payloads)
     if len(t) > 400 and re.match(r"^[A-Za-z0-9+/=_-]+$", t[:200]):
@@ -202,6 +290,31 @@ def stable_id_tunein(sid: str) -> str:
     return f"zm_tn_{sid}"
 
 
+def stable_id_rb(name: str, url: str) -> str:
+    h = sha1_str(f"{name}|{url}")
+    return f"zm_rb_{h[:16]}"
+
+
+def stable_id_mytuner(radio_id: str, page_url: str) -> str:
+    if radio_id:
+        return f"zm_mt_{radio_id}"
+    return f"zm_mt_{sha1_str(page_url)[:16]}"
+
+
+def stable_id_orb(radio_id: str, stream_url: str) -> str:
+    rid = (radio_id or "").strip()
+    if rid:
+        safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", rid).strip("_")
+        return f"zm_orb_{safe[:56]}"
+    return f"zm_orb_{sha1_str(stream_url)[:16]}"
+
+
+def sha1_str(s: str) -> str:
+    import hashlib
+
+    return hashlib.sha1(s.encode("utf-8")).hexdigest()
+
+
 def infer_district_from_tunein_name(name: str) -> str:
     """Best-effort city/district from station name (TuneIn rarely encodes location elsewhere)."""
     low = name.lower()
@@ -234,17 +347,88 @@ def infer_district_from_tunein_name(name: str) -> str:
     return "Zambia"
 
 
+def build_mytuner_candidates() -> list[Candidate]:
+    """Decrypt stream URLs from MyTuner Zambia listing (same AES logic as audit script)."""
+    out: list[Candidate] = []
+    for page_url in discover_mytuner_zambia_station_page_urls():
+        try:
+            html = mytuner_fetch_text(page_url)
+        except Exception:
+            continue
+        su, name, rid = decrypt_first_stream_url(html, page_url)
+        if not su.startswith("http"):
+            continue
+        name = (name or "").strip() or f"MyTuner {rid or 'station'}"
+        dist = infer_district_from_tunein_name(name)
+        prov = province_for_tunein_district(dist) if dist != "Zambia" else ""
+        out.append(
+            Candidate(
+                stable_id=stable_id_mytuner(rid, page_url),
+                name=name,
+                district=dist,
+                province=prov,
+                frequency_mhz=extract_frequency_mhz(name),
+                stream_url=su,
+                source="mytuner",
+                source_detail=rid or page_url,
+            )
+        )
+    return out
+
+
+def _orb_context_district(path: str) -> str:
+    """If path is a city listing (/zm/Lusaka/), return that city name for metadata."""
+    last = path.rstrip("/").rsplit("/", 1)[-1]
+    for c in ORB_CITY_SLUGS:
+        if last.lower() == c.lower():
+            return slug_to_city_name(c)
+    return ""
+
+
+def build_orb_candidates() -> list[Candidate]:
+    """Stream URLs from OnlineRadioBox Zambia HTML (`station_play` stream=...)."""
+    out: list[Candidate] = []
+    for path in discover_orb_paths_to_fetch():
+        try:
+            html = fetch_orb_html(path)
+        except Exception:
+            continue
+        if is_offline_placeholder(html):
+            continue
+        ctx_dist = _orb_context_district(path)
+        for su, rname, rid in extract_station_play_buttons(html):
+            if not su.startswith("http"):
+                continue
+            name = (rname or "").strip() or f"ORB {rid or path}"
+            dist = ctx_dist or infer_district_from_tunein_name(name)
+            prov = province_for_tunein_district(dist) if dist != "Zambia" else ""
+            out.append(
+                Candidate(
+                    stable_id=stable_id_orb(rid, su),
+                    name=name,
+                    district=dist,
+                    province=prov,
+                    frequency_mhz=extract_frequency_mhz(name),
+                    stream_url=su,
+                    source="onlineradiobox",
+                    source_detail=rid or path,
+                )
+            )
+    return out
+
+
 async def build_candidates(max_total: int) -> list[Candidate]:
     place_maps = discover_rg_place_maps()
     by_url: dict[str, Candidate] = {}
 
     async with aiohttp.ClientSession() as session:
-        # --- Radio Garden (all districts) ---
+        # --- Radio Garden (all districts in Zambia — country page) ---
         for district, map_id in place_maps:
             try:
                 pages = rg_channels_for_map(map_id)
             except Exception:
                 continue
+            prov = province_for_place(district)
             for page in pages:
                 url_path = page.get("url") or ""
                 cid = channel_slug_from_url(url_path)
@@ -261,12 +445,31 @@ async def build_candidates(max_total: int) -> list[Candidate]:
                     stable_id=stable_id_rg(cid),
                     name=name,
                     district=district,
+                    province=prov,
+                    frequency_mhz=extract_frequency_mhz(name),
                     stream_url=su,
                     source="radio_garden",
                     source_detail=cid,
                 )
 
-        # --- TuneIn (multiple search queries to grow toward max_total unique URLs) ---
+        # --- radio-browser: country ZM only ---
+        for name, su in fetch_radio_browser_zambia_stations():
+            if su in by_url:
+                continue
+            dist = infer_district_from_tunein_name(name)
+            prov = province_for_tunein_district(dist) if dist != "Zambia" else ""
+            by_url[su] = Candidate(
+                stable_id=stable_id_rb(name, su),
+                name=name,
+                district=dist,
+                province=prov,
+                frequency_mhz=extract_frequency_mhz(name),
+                stream_url=su,
+                source="radio_browser",
+                source_detail=name[:80],
+            )
+
+        # --- TuneIn: only stations that look Zambian by name ---
         queries = [
             "zambia",
             "lusaka zambia",
@@ -275,12 +478,23 @@ async def build_candidates(max_total: int) -> list[Candidate]:
             "copperbelt zambia",
             "radio zambia",
             "fm zambia",
-            "luanshya",
             "chipata zambia",
             "mongu zambia",
             "solwezi zambia",
             "kabwe zambia",
             "livingstone zambia",
+            "kasama zambia",
+            "mansa zambia",
+            "samfya zambia",
+            "petauke zambia",
+            "mazabuka zambia",
+            "chalimbana zambia",
+            "mufulira zambia",
+            "chingola zambia",
+            "kalomo zambia",
+            "sesheke zambia",
+            "monze zambia",
+            "choma zambia",
         ]
         seen_tn: set[str] = set()
         for q in queries:
@@ -289,6 +503,8 @@ async def build_candidates(max_total: int) -> list[Candidate]:
             except Exception:
                 continue
             for name, sid in pairs:
+                if not is_likely_zambia_station_name(name):
+                    continue
                 if sid in seen_tn:
                     continue
                 seen_tn.add(sid)
@@ -300,20 +516,34 @@ async def build_candidates(max_total: int) -> list[Candidate]:
                     continue
                 if su in by_url:
                     continue
+                dist = infer_district_from_tunein_name(name)
+                prov = province_for_tunein_district(dist) if dist != "Zambia" else ""
                 by_url[su] = Candidate(
                     stable_id=stable_id_tunein(sid),
                     name=name,
-                    district=infer_district_from_tunein_name(name),
+                    district=dist,
+                    province=prov,
+                    frequency_mhz=extract_frequency_mhz(name),
                     stream_url=su,
                     source="tunein",
                     source_detail=sid,
                 )
-                if len(by_url) >= max_total:
-                    break
-            if len(by_url) >= max_total:
-                break
 
     return list(by_url.values())
+
+
+def merge_candidates_priority(*sequences: list[Candidate]) -> list[Candidate]:
+    """De-dupe by normalized stream URL; earlier sequences win (MyTuner > ORB > rest)."""
+    seen: set[str] = set()
+    merged: list[Candidate] = []
+    for seq in sequences:
+        for c in seq:
+            key = mytuner_normalize_url(c.stream_url)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(c)
+    return merged
 
 
 async def probe_batch(candidates: list[Candidate], concurrency: int = 25) -> None:
@@ -328,15 +558,20 @@ async def probe_batch(candidates: list[Candidate], concurrency: int = 25) -> Non
         await asyncio.gather(*(run(c, session) for c in candidates))
 
 
-def to_prisma_row(c: Candidate) -> dict:
+def to_prisma_row(c: Candidate) -> dict | None:
+    """Skip none/error — do not import dead streams."""
+    if c.icy_qualification in {"none", "error"}:
+        return None
     source_ids = {c.source: c.source_detail}
-    # Activate only reasonably useful ICY; still store weak for manual review
-    is_active = c.icy_qualification in {"good", "partial"}
+    # good / partial / weak — all monitored (weak may improve over time)
+    is_active = c.icy_qualification in {"good", "partial", "weak"}
     return {
         "id": c.stable_id,
         "name": c.name,
         "country": "Zambia",
         "district": c.district,
+        "province": c.province or "",
+        "frequencyMhz": c.frequency_mhz,
         "streamUrl": c.stream_url,
         "streamFormatHint": "icy",
         "sourceIdsJson": json.dumps(source_ids),
@@ -353,16 +588,28 @@ def to_prisma_row(c: Candidate) -> dict:
 
 async def async_main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--max-stations", type=int, default=150)
+    ap.add_argument(
+        "--max-probe",
+        type=int,
+        default=400,
+        help="Max streams to ICY-probe (discovery can list more; we cap work here).",
+    )
     ap.add_argument("--out", type=str, default="scripts/data/zambia_harvest.json")
     args = ap.parse_args()
 
-    print("Discovering candidates (Radio Garden + TuneIn)...")
-    cands = await build_candidates(args.max_stations)
-    print(f"Unique stream URLs: {len(cands)} (cap growth ~{args.max_stations*2})")
+    print(
+        "Discovering candidates (MyTuner + OnlineRadioBox + Radio Garden + "
+        "radio-browser ZM + filtered TuneIn)..."
+    )
+    mt = build_mytuner_candidates()
+    orb = build_orb_candidates()
+    base = await build_candidates(args.max_probe)
+    cands = merge_candidates_priority(mt, orb, base)
+    print(f"MyTuner decrypted URLs: {len(mt)}")
+    print(f"OnlineRadioBox stream buttons: {len(orb)}")
+    print(f"After merge (deduped by URL): {len(cands)}")
 
-    # Hard-cap probe list
-    to_probe = cands[: args.max_stations]
+    to_probe = cands[: args.max_probe]
     print(f"Probing ICY (3 blocks max) for {len(to_probe)} streams...")
     await probe_batch(to_probe, concurrency=25)
 
@@ -371,13 +618,26 @@ async def async_main():
     print(f"weak: {sum(1 for c in to_probe if c.icy_qualification == 'weak')}")
     print(f"none/error: {sum(1 for c in to_probe if c.icy_qualification in {'none','error'})}")
 
-    rows = [to_prisma_row(c) for c in to_probe]
-    import os
-
+    rows: list[dict] = []
+    for c in to_probe:
+        row = to_prisma_row(c)
+        if row is not None:
+            rows.append(row)
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
-        json.dump({"stations": rows, "stats": {"total": len(rows), "active": sum(1 for r in rows if r["isActive"])}}, f, indent=2)
-    print(f"Wrote {args.out}")
+        json.dump(
+            {
+                "stations": rows,
+                "stats": {
+                    "probed": len(to_probe),
+                    "imported": len(rows),
+                    "active": sum(1 for r in rows if r["isActive"]),
+                },
+            },
+            f,
+            indent=2,
+        )
+    print(f"Wrote {args.out} (imported {len(rows)} stations with usable ICY — none/error excluded)")
 
 
 def main():

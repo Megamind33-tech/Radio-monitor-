@@ -13,7 +13,8 @@ import {
   AlertCircle,
   BarChart3,
   Globe,
-  Music
+  Music,
+  LineChart
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -32,6 +33,9 @@ interface Station {
   name: string;
   country: string;
   district?: string;
+  province?: string;
+  frequencyMhz?: string | null;
+  icyQualification?: string | null;
   streamUrl: string;
   isActive: boolean;
   currentNowPlaying?: {
@@ -69,6 +73,22 @@ interface Metrics {
   errors_count: number;
 }
 
+interface StationSpinSummary {
+  stationId: string;
+  uniqueSongs: number;
+  detectionCount: number;
+}
+
+interface SongSpinRow {
+  stationId: string;
+  artist: string | null;
+  title: string | null;
+  album: string | null;
+  playCount: number;
+  lastPlayed: string;
+  firstPlayed: string;
+}
+
 interface DependencyStatus {
   ffmpeg: boolean;
   ffprobe: boolean;
@@ -95,23 +115,42 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedStationId, setSelectedStationId] = useState<string>('all');
-  const [activeTab, setActiveTab] = useState<'stations' | 'history' | 'settings'>('stations');
+  const [activeTab, setActiveTab] = useState<'stations' | 'history' | 'analytics' | 'settings'>('stations');
   const [isAddingStation, setIsAddingStation] = useState(false);
+  const [spinSummaries, setSpinSummaries] = useState<StationSpinSummary[]>([]);
+  const [songSpins, setSongSpins] = useState<SongSpinRow[]>([]);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   const fetchData = async () => {
     try {
-      const [stRes, metRes] = await Promise.all([
+      const [stRes, metRes, spinRes] = await Promise.all([
         fetch('/api/stations'),
-        fetch('/api/metrics/summary')
+        fetch('/api/metrics/summary'),
+        fetch('/api/analytics/station-summaries'),
       ]);
       const stData = await stRes.json();
       const metData = await metRes.json();
+      const spinData = await spinRes.json();
       setStations(stData);
       setMetrics(metData);
+      setSpinSummaries(Array.isArray(spinData) ? spinData : []);
     } catch (error) {
       console.error("Failed to fetch data", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchSongAnalytics = async () => {
+    setAnalyticsLoading(true);
+    try {
+      const res = await fetch('/api/analytics/songs?limit=800');
+      const data = await res.json();
+      setSongSpins(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setAnalyticsLoading(false);
     }
   };
 
@@ -151,9 +190,14 @@ export default function App() {
     if (activeTab === 'history') {
       fetchLogs(selectedStationId);
     }
+    if (activeTab === 'analytics') {
+      fetchSongAnalytics();
+    }
   }, [activeTab, selectedStationId]);
 
   const stationNameById = new Map(stations.map((station) => [station.id, station.name]));
+  const spinByStation = new Map(spinSummaries.map((s) => [s.stationId, s]));
+  const monitoredCount = stations.filter((s) => s.isActive).length;
 
   const formatMethod = (method: string) => {
     if (method === 'stream_metadata') return 'Metadata';
@@ -173,6 +217,7 @@ export default function App() {
         <div className="flex flex-col gap-6 flex-1">
           <NavIcon icon={<Activity className="w-6 h-6" />} active={activeTab === 'stations'} onClick={() => setActiveTab('stations')} label="Monitor" />
           <NavIcon icon={<History className="w-6 h-6" />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="History" />
+          <NavIcon icon={<LineChart className="w-6 h-6" />} active={activeTab === 'analytics'} onClick={() => setActiveTab('analytics')} label="Song spins" />
           <NavIcon icon={<Settings className="w-6 h-6" />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Settings" />
         </div>
 
@@ -200,8 +245,8 @@ export default function App() {
             />
             <MetricCard 
               label="Monitoring" 
-              value={stations.length.toString()} 
-              sub="Active stations"
+              value={monitoredCount.toString()} 
+              sub="Active Zambia stations"
             />
           </div>
         </header>
@@ -213,10 +258,89 @@ export default function App() {
                 <StationCard 
                   key={station.id} 
                   station={station} 
+                  spin={spinByStation.get(station.id)}
                   onProbe={() => fetchData()} 
                 />
               ))}
             </AnimatePresence>
+          </div>
+        )}
+
+        {activeTab === 'analytics' && (
+          <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-sm space-y-6">
+            <div className="flex flex-wrap justify-between items-center gap-4">
+              <div>
+                <h2 className="text-xl font-semibold flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-brand-cyan" />
+                  Song spins (from real detections)
+                </h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  Play counts are derived from stored detection logs only — no invented spins. FM frequency is parsed from the station name when present (not from the audio stream).
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <a
+                  href="/api/export/songs.csv?stationId=all&limit=50000"
+                  className="px-4 py-2 rounded-xl bg-brand-cyan text-black font-semibold text-sm hover:brightness-110"
+                >
+                  Download Excel (CSV)
+                </a>
+                <button
+                  type="button"
+                  onClick={() => fetchSongAnalytics()}
+                  className="px-4 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50"
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-white/5 text-gray-500">
+                    <th className="pb-3 font-medium">Station</th>
+                    <th className="pb-3 font-medium">Province</th>
+                    <th className="pb-3 font-medium">District</th>
+                    <th className="pb-3 font-medium">Title</th>
+                    <th className="pb-3 font-medium">Artist</th>
+                    <th className="pb-3 font-medium">Album</th>
+                    <th className="pb-3 font-medium text-right">Plays</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analyticsLoading && songSpins.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-gray-500">
+                        Loading analytics…
+                      </td>
+                    </tr>
+                  ) : (
+                    songSpins.map((row, i) => {
+                      const st = stations.find((s) => s.id === row.stationId);
+                      return (
+                        <tr key={`${row.stationId}-${row.title}-${i}`} className="border-b border-white/5 hover:bg-white/5">
+                          <td className="py-3 font-medium">{st?.name ?? row.stationId}</td>
+                          <td className="py-3 text-gray-400">{st?.province || '—'}</td>
+                          <td className="py-3 text-gray-400">{st?.district || '—'}</td>
+                          <td className="py-3">{row.title || '—'}</td>
+                          <td className="py-3 text-gray-400">{row.artist || '—'}</td>
+                          <td className="py-3 text-gray-500">{row.album || '—'}</td>
+                          <td className="py-3 text-right font-mono">{row.playCount}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                  {!analyticsLoading && songSpins.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-gray-500">
+                        No matched detections yet. Leave the monitor running — spins appear as tracks are logged.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -416,7 +540,7 @@ function MetricCard({ label, value, sub }: any) {
   );
 }
 
-function StationCard({ station, onProbe }: { station: Station, onProbe: () => void }) {
+function StationCard({ station, spin, onProbe }: { station: Station, spin?: StationSpinSummary, onProbe: () => void }) {
   const [probing, setProbing] = useState(false);
   const [copied, setCopied] = useState(false);
   const np = station.currentNowPlaying;
@@ -452,15 +576,32 @@ function StationCard({ station, onProbe }: { station: Station, onProbe: () => vo
             <h3 className="text-xl font-bold">{station.name}</h3>
             <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
               <span className="px-1.5 py-0.5 bg-white/5 rounded border border-white/10 uppercase">{station.country}</span>
+              {station.province ? (
+                <>
+                  <span>•</span>
+                  <span className="text-gray-400">{station.province}</span>
+                </>
+              ) : null}
               {station.district ? (
                 <>
                   <span>•</span>
                   <span className="text-gray-400">{station.district}</span>
                 </>
               ) : null}
+              {station.frequencyMhz ? (
+                <>
+                  <span>•</span>
+                  <span className="text-amber-200/90">{station.frequencyMhz} MHz</span>
+                </>
+              ) : null}
               <span>•</span>
               <span>{station.isActive ? 'Live Monitoring' : 'Inactive'}</span>
             </div>
+            {spin && spin.detectionCount > 0 ? (
+              <p className="text-[11px] text-gray-500 mt-1">
+                Logged detections: {spin.detectionCount} · distinct tracks (approx.): {spin.uniqueSongs}
+              </p>
+            ) : null}
           </div>
         </div>
         

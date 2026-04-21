@@ -16,6 +16,10 @@ model Station {
   country                    String
   /// City / district (e.g. Lusaka, Ndola, Luanshya)
   district                   String   @default("")
+  /// Zambia province (e.g. Copperbelt, Lusaka, Southern)
+  province                   String   @default("")
+  /// FM frequency if parsed from station name (e.g. "94.5"); not always available from stream metadata
+  frequencyMhz               String?
   streamUrl                  String
   streamFormatHint           String?
   /// radio_garden channel id, tunein station id, etc. (JSON string)
