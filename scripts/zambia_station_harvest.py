@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Harvest Zambian radio stations from Radio Garden + TuneIn, resolve stream URLs,
-probe ICY metadata (up to 3 blocks), classify, write JSON for Prisma import.
+Harvest Zambian radio stations from MyTuner, OnlineRadioBox, Radio Garden,
+radio-browser, and TuneIn; resolve stream URLs, probe ICY metadata (up to 3 blocks),
+classify, write JSON for Prisma import.
 
 Target: up to --max-stations (default 150) unique entries.
 """
@@ -32,6 +33,14 @@ from mytuner_zambia import (
     fetch_text as mytuner_fetch_text,
     normalize_url as mytuner_normalize_url,
 )
+from onlineradio_zambia import (
+    ORB_CITY_SLUGS,
+    discover_orb_paths_to_fetch,
+    extract_station_play_buttons,
+    fetch_orb_html,
+    is_offline_placeholder,
+    slug_to_city_name,
+)
 
 UA_BROWSER = "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36"
 UA_ICY = "ZambiaStationHarvest/1.0"
@@ -48,7 +57,7 @@ class Candidate:
     province: str
     frequency_mhz: str | None
     stream_url: str
-    source: str  # radio_garden | tunein | radio_browser | mytuner
+    source: str  # radio_garden | tunein | radio_browser | mytuner | onlineradiobox
     source_detail: str  # channel id or tunein id
     icy_qualification: str = "pending"
     icy_sample_title: str | None = None
@@ -181,6 +190,20 @@ def is_likely_junk_title(s: str | None) -> bool:
         return True
     if t in {"-", " - ", "..."}:
         return True
+    low = t.lower()
+    # Automation sometimes sends offline / placeholder strings instead of tracks
+    if any(
+        x in low
+        for x in (
+            "offline",
+            "not broadcasting",
+            "stream offline",
+            "no stream",
+            "temporarily unavailable",
+            "under maintenance",
+        )
+    ):
+        return True
     # Long base64-ish blobs (Radio Maria / auth payloads)
     if len(t) > 400 and re.match(r"^[A-Za-z0-9+/=_-]+$", t[:200]):
         return True
@@ -278,6 +301,14 @@ def stable_id_mytuner(radio_id: str, page_url: str) -> str:
     return f"zm_mt_{sha1_str(page_url)[:16]}"
 
 
+def stable_id_orb(radio_id: str, stream_url: str) -> str:
+    rid = (radio_id or "").strip()
+    if rid:
+        safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", rid).strip("_")
+        return f"zm_orb_{safe[:56]}"
+    return f"zm_orb_{sha1_str(stream_url)[:16]}"
+
+
 def sha1_str(s: str) -> str:
     import hashlib
 
@@ -342,6 +373,47 @@ def build_mytuner_candidates() -> list[Candidate]:
                 source_detail=rid or page_url,
             )
         )
+    return out
+
+
+def _orb_context_district(path: str) -> str:
+    """If path is a city listing (/zm/Lusaka/), return that city name for metadata."""
+    last = path.rstrip("/").rsplit("/", 1)[-1]
+    for c in ORB_CITY_SLUGS:
+        if last.lower() == c.lower():
+            return slug_to_city_name(c)
+    return ""
+
+
+def build_orb_candidates() -> list[Candidate]:
+    """Stream URLs from OnlineRadioBox Zambia HTML (`station_play` stream=...)."""
+    out: list[Candidate] = []
+    for path in discover_orb_paths_to_fetch():
+        try:
+            html = fetch_orb_html(path)
+        except Exception:
+            continue
+        if is_offline_placeholder(html):
+            continue
+        ctx_dist = _orb_context_district(path)
+        for su, rname, rid in extract_station_play_buttons(html):
+            if not su.startswith("http"):
+                continue
+            name = (rname or "").strip() or f"ORB {rid or path}"
+            dist = ctx_dist or infer_district_from_tunein_name(name)
+            prov = province_for_tunein_district(dist) if dist != "Zambia" else ""
+            out.append(
+                Candidate(
+                    stable_id=stable_id_orb(rid, su),
+                    name=name,
+                    district=dist,
+                    province=prov,
+                    frequency_mhz=extract_frequency_mhz(name),
+                    stream_url=su,
+                    source="onlineradiobox",
+                    source_detail=rid or path,
+                )
+            )
     return out
 
 
@@ -460,18 +532,17 @@ async def build_candidates(max_total: int) -> list[Candidate]:
     return list(by_url.values())
 
 
-def merge_candidates_mytuner_first(
-    mytuner: list[Candidate], others: list[Candidate]
-) -> list[Candidate]:
-    """De-dupe by normalized stream URL; MyTuner rows stay first."""
+def merge_candidates_priority(*sequences: list[Candidate]) -> list[Candidate]:
+    """De-dupe by normalized stream URL; earlier sequences win (MyTuner > ORB > rest)."""
     seen: set[str] = set()
     merged: list[Candidate] = []
-    for c in mytuner + others:
-        key = mytuner_normalize_url(c.stream_url)
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        merged.append(c)
+    for seq in sequences:
+        for c in seq:
+            key = mytuner_normalize_url(c.stream_url)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(c)
     return merged
 
 
@@ -527,12 +598,15 @@ async def async_main():
     args = ap.parse_args()
 
     print(
-        "Discovering candidates (MyTuner + Radio Garden + radio-browser ZM + filtered TuneIn)..."
+        "Discovering candidates (MyTuner + OnlineRadioBox + Radio Garden + "
+        "radio-browser ZM + filtered TuneIn)..."
     )
     mt = build_mytuner_candidates()
+    orb = build_orb_candidates()
     base = await build_candidates(args.max_probe)
-    cands = merge_candidates_mytuner_first(mt, base)
+    cands = merge_candidates_priority(mt, orb, base)
     print(f"MyTuner decrypted URLs: {len(mt)}")
+    print(f"OnlineRadioBox stream buttons: {len(orb)}")
     print(f"After merge (deduped by URL): {len(cands)}")
 
     to_probe = cands[: args.max_probe]
