@@ -3,10 +3,20 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import cors from "cors";
 import helmet from "helmet";
+import { spawnSync } from "child_process";
 import { logger } from "./lib/logger.js";
 import { prisma } from "./lib/prisma.js";
 import { SchedulerService } from "./services/scheduler.service.js";
 import { MonitorService } from "./services/monitor.service.js";
+
+function isCommandAvailable(command: string, args: string[] = ["-version"]) {
+  try {
+    const result = spawnSync(command, args, { stdio: "ignore" });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
 
 async function startServer() {
   const app = express();
@@ -30,6 +40,31 @@ async function startServer() {
     } catch (error) {
       res.status(500).json({ status: "error", database: "disconnected" });
     }
+  });
+
+  app.get("/api/system/dependencies", (req, res) => {
+    const ffmpeg = isCommandAvailable("ffmpeg");
+    const ffprobe = isCommandAvailable("ffprobe");
+    const fpcalc = isCommandAvailable("fpcalc");
+    const acoustidApiKeyConfigured = !!process.env.ACOUSTID_API_KEY;
+    const musicbrainzUserAgentConfigured = !!process.env.MUSICBRAINZ_USER_AGENT;
+
+    const missing = [];
+    if (!ffmpeg) missing.push("ffmpeg");
+    if (!ffprobe) missing.push("ffprobe");
+    if (!fpcalc) missing.push("fpcalc");
+    if (!acoustidApiKeyConfigured) missing.push("ACOUSTID_API_KEY");
+    if (!musicbrainzUserAgentConfigured) missing.push("MUSICBRAINZ_USER_AGENT");
+
+    res.json({
+      ffmpeg,
+      ffprobe,
+      fpcalc,
+      acoustidApiKeyConfigured,
+      musicbrainzUserAgentConfigured,
+      fingerprintReady: ffmpeg && ffprobe && fpcalc && acoustidApiKeyConfigured,
+      missing
+    });
   });
 
   // Stations API
@@ -59,6 +94,52 @@ async function startServer() {
       orderBy: { observedAt: 'desc' },
       take: 100
     });
+    res.json(logs);
+  });
+
+  app.get("/api/stations/:id/airplays", async (req, res) => {
+    const airplays = await prisma.detectionLog.findMany({
+      where: {
+        stationId: req.params.id,
+        status: "matched",
+        titleFinal: { not: null }
+      },
+      orderBy: { observedAt: "desc" },
+      take: 200,
+      select: {
+        id: true,
+        stationId: true,
+        observedAt: true,
+        detectionMethod: true,
+        titleFinal: true,
+        artistFinal: true,
+        status: true
+      }
+    });
+    res.json(airplays);
+  });
+
+  app.get("/api/logs", async (req, res) => {
+    const stationIdQuery = typeof req.query.stationId === "string" ? req.query.stationId : undefined;
+    const takeQuery = typeof req.query.take === "string" ? Number(req.query.take) : 100;
+    const take = Number.isFinite(takeQuery) ? Math.min(Math.max(Math.trunc(takeQuery), 1), 500) : 100;
+
+    const where = stationIdQuery && stationIdQuery !== "all" ? { stationId: stationIdQuery } : undefined;
+    const logs = await prisma.detectionLog.findMany({
+      where,
+      orderBy: { observedAt: "desc" },
+      take,
+      include: {
+        station: {
+          select: {
+            id: true,
+            name: true,
+            country: true
+          }
+        }
+      }
+    });
+
     res.json(logs);
   });
 
