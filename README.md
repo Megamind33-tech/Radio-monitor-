@@ -1,65 +1,187 @@
-# Radio Pulse Monitor - Production-grade MVP
+# Zambian Airplay Monitor — Starter Kit
 
-A robust, full-stack service for monitoring online radio streams and identifying "now playing" tracks using ICY metadata extraction and AcoustID fingerprinting as an automated fallback.
+Scrapes ICY metadata (now-playing data) from internet radio streams and logs every track change to Supabase. No audio fingerprinting, no ACRCloud bill, no fake science. Just HTTP + Postgres.
 
-## 🚀 Priority Order
-1. **Stream Metadata**: Priority extraction using ICY/Shoutcast metadata.
-2. **Audio Fingerprinting**: Short capture (20s) fallback when metadata is missing, stale, or untrusted.
-3. **AcoustID matching**: High-confidence fingerprint matching.
-4. **Catalog fallback (free APIs)**: Metadata-based lookup via MusicBrainz search, then iTunes Search API when fingerprint matching misses.
-5. **MusicBrainz Enrichment**: Data normalization and MBID enrichment.
-6. **Persistence**: Structured logs and real-time state in PostgreSQL (SQLite used for local MVP).
+## Files
 
-## 🛠 Tech Stack
-- **Backend**: Node.js, Express, TypeScript, Prisma (ORM), SQLite/Postgres.
-- **Frontend**: React, Vite, Tailwind CSS, Lucide, Recharts, Framer Motion.
-- **Processing**: FFmpeg + FFprobe, Chromaprint (fpcalc).
-- **APIs**: AcoustID v2, MusicBrainz WS v2, iTunes Search API.
+| File | What it does |
+|------|----------------|
+| `audit_stations.py` | Day-1 tool. Tests which stations broadcast usable metadata. Writes `stations_audit.csv`. Doesn't touch the DB. |
+| `monitor.py` | Long-running engine. Connects to every station, logs track changes to Supabase. Auto-reconnects. |
+| `schema.sql` | Run once in Supabase SQL editor to create tables + handy views. |
+| `stations.csv` | Your list of stations. Fill in stream URLs. |
+| `requirements.txt` | Python dependencies (`pip install -r requirements.txt`). |
 
-## 📦 Setup & Installation
+This repository also contains a separate Node/React stack under `server/` and `src/` for broader fingerprinting experiments; the **ICY + Supabase** workflow uses only the Python files above.
 
-### Prerequisites
-- Node.js 18+
-- FFmpeg and FFprobe installed on system PATH
-- Chromaprint (fpcalc) installed on system PATH
+## Install
 
-### Local Environment
-1. Clone the repository.
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Initialize the database:
-   ```bash
-   npx prisma generate
-   npx prisma db push
-   ```
-4. Update `.env` with your API keys:
-   - `ACOUSTID_API_KEY`: Get one at [acoustid.org](https://acoustid.org/applications).
-   - `MUSICBRAINZ_USER_AGENT`: Set a custom one (e.g., `MyRadioApp/1.0.0 ( contact@example.com )`).
-   - `CATALOG_LOOKUP_MIN_SCORE`: Optional threshold for free catalog fallback (default `0.65`).
-
-### Running the App
 ```bash
-npm run dev
+pip install -r requirements.txt
 ```
-The server will be available at `http://localhost:3000`.
 
-## 🌐 Free API Strategy (No paid music database)
-- **Primary**: AcoustID fingerprint lookup (free non-commercial key).
-- **Secondary**: MusicBrainz recording search from stream metadata (free with proper user-agent).
-- **Tertiary**: iTunes Search API fallback for title/artist/genre hints.
-- **Result**: Better coverage for unknown tracks without running your own catalog.
+Or:
 
-## ⚠️ Known Limitations
-- **Non-Commercial Only**: Usage of public AcoustID and MusicBrainz services is strictly for non-commercial or development purposes as per their terms.
-- **Catalog Coverage**: Public catalogs may lack coverage for local niche stations, unreleased tracks, or long-tail content.
-- **Probabilistic Matching**: Fingerprinting from short clips is probabilistic; factors like noise, DJ talkover, or low bitrates can reduce confidence.
-- **Rate Limits**: Service implements internal throttling to respect AcoustID (3 req/s) and MusicBrainz (1 req/s) limits.
+```bash
+pip install aiohttp asyncpg
+```
 
-## 🛣 Next Upgrade Path: Enterprise Scale
-To transition from this MVP to a full commercial production service:
-1. **Replace Public Backends**: Deploy a private AcoustID instance or a custom fingerprint database (Chromaprint/Echofon).
-2. **PostgreSQL Migration**: Switch `prisma.schema` to `provider = "postgresql"` and use a managed DB service.
-3. **Redis Task Queue**: Replace simple `node-cron` with BullMQ or Celery for better horizontal scaling across multiple worker nodes.
-4. **Cloud Recording**: Move temporary audio storage to S3/GCS buckets if clip retention is required for legal/archival purposes.
+## Setup — one-time
+
+### 1. Create Supabase tables
+
+- Open your Supabase project → SQL Editor → New query
+- Paste the entire contents of `schema.sql`
+- Click Run
+
+### 2. Get your DB connection string
+
+- Supabase dashboard → Project Settings → Database → **Connection string** → **URI**
+- Use the **Session** pooler (port 5432) for normal use
+- Copy the URL (looks like `postgresql://postgres.xxx:PASSWORD@aws-0-region.pooler.supabase.com:5432/postgres`)
+- Replace `[YOUR-PASSWORD]` with your actual database password
+
+### 3. Export it
+
+```bash
+export SUPABASE_DB_URL='postgresql://postgres.xxx:PASSWORD@...pooler.supabase.com:5432/postgres'
+```
+
+For production, put this in a `.env` file loaded by systemd or pm2.
+
+## Usage
+
+### Step 1 — get stream URLs
+
+Find each station's stream URL. Options:
+
+- **TuneIn** / **Streema** / **myTuner Radio** — search "Zambia", right-click play → copy link
+- **radio-browser.info** has a free API:
+
+  ```bash
+  curl -s 'https://de1.api.radio-browser.info/json/stations/bycountry/Zambia' \
+    | python3 -c "import json,sys,re; \
+      [print(f'{re.sub(r\"[^a-z0-9]+\",\"_\",s[\"name\"].lower())[:20]},{s[\"name\"]},{s[\"url_resolved\"]}') \
+       for s in json.load(sys.stdin) if s['url_resolved']]"
+  ```
+
+- **Station website** — view page source on their web player
+
+Paste into `stations.csv`:
+
+```csv
+station_id,name,stream_url
+hot_fm,Hot FM Zambia,http://stream.example.com/hot
+phoenix,Radio Phoenix,http://stream.example.com/phx
+```
+
+### Step 2 — audit (no DB needed)
+
+```bash
+python audit_stations.py stations.csv
+```
+
+For each station, takes ~30 seconds (connect, sample, wait 25s, sample again). Writes a CSV report with verdict per station:
+
+- `✅ good` — metadata is live and changes between tracks. **USE THESE.**
+- `⚠️ partial` — metadata exists but didn't change in 25s. Could be a long track. Re-run or watch longer.
+- `❌ no metadata` — station streams but sends no metadata. Drop or fall back to fingerprinting.
+- `💀 dead` — stream URL broken or offline. Find a new URL.
+
+### Step 3 — monitor
+
+Strip `none`/`dead` stations from `stations.csv`, then:
+
+```bash
+python monitor.py stations.csv
+```
+
+Every track change gets written to Supabase in real time. Leave it running.
+
+## Inspect the data (Supabase SQL Editor)
+
+```sql
+-- what's playing right now on each station
+select * from v_now_playing;
+
+-- today's activity per station (sanity check the monitor is working)
+select * from v_station_activity_today;
+
+-- top artists across all stations last 7 days
+select parsed_artist, sum(spins) as total_spins
+from v_top_artists_7d
+group by parsed_artist
+order by total_spins desc
+limit 25;
+
+-- every play of a specific artist in the last week
+select station_id, captured_at, raw_title
+from detections
+where parsed_artist ilike '%chef 187%'
+  and captured_at >= now() - interval '7 days'
+order by captured_at desc;
+
+-- station health — when did each one last connect/disconnect?
+select station_id, event_type, event_at, detail
+from station_events
+order by event_at desc
+limit 50;
+```
+
+## Run forever (production)
+
+### systemd (recommended for VPS)
+
+Create `/etc/systemd/system/zamplay-monitor.service`:
+
+```ini
+[Unit]
+Description=Zambian Airplay Monitor
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/zamplay-monitor
+EnvironmentFile=/home/ubuntu/zamplay-monitor/.env
+ExecStart=/usr/bin/python3 /home/ubuntu/zamplay-monitor/monitor.py /home/ubuntu/zamplay-monitor/stations.csv
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/zamplay-monitor.log
+StandardError=append:/var/log/zamplay-monitor.log
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Where `.env` contains:
+
+```
+SUPABASE_DB_URL=postgresql://...
+```
+
+Then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable zamplay-monitor
+sudo systemctl start zamplay-monitor
+sudo journalctl -u zamplay-monitor -f
+```
+
+## What this does NOT do yet (roadmap)
+
+1. **Fuzzy match against your ZAMCOPS member catalog.** `raw_title` is whatever the station typed: "Macky 2", "Macky2", "MACKY II" are different strings. Next step is a matching layer using `rapidfuzz` against a `zamcops_songs` table.
+
+2. **Filter ads and talk segments better.** `is_useful_title()` in `monitor.py` is a starting filter. Watch your data for a few days, then extend the junk list.
+
+3. **Audio evidence capture.** For royalty disputes, add a per-station ffmpeg sidecar writing rolling 60-min WAV chunks to B2/S3 with a 14-day retention.
+
+4. **Dashboard.** Use the existing UI on top of the Supabase client. The views in `schema.sql` are already shaped for this.
+
+## Known limits (the honest bit)
+
+- If a station's automation doesn't push ICY metadata, this approach gives nothing for that station. Audit first.
+- Metadata is what the station says it's playing, not audio-verified. Fine for royalty logging, weaker for legal disputes.
+- DJs sometimes override the queue; metadata may lag or be wrong.
+- FM-only stations with no internet stream need a physical receiver + RTL-SDR. Out of scope here.

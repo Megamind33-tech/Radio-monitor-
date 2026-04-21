@@ -198,7 +198,7 @@ def main():
     infile = sys.argv[1]
     outfile = "stations_audit.csv"
 
-    stations = []
+    stations: list[tuple[str, str, str]] = []
     with open(infile, newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
         for row in reader:
@@ -210,6 +210,10 @@ def main():
                 print(f"skipping malformed row: {row}")
                 continue
             stations.append((row[0].strip(), row[1].strip(), row[2].strip()))
+
+    if not stations:
+        print("no stations to audit — add rows with stream_url to stations.csv")
+        sys.exit(1)
 
     print(f"auditing {len(stations)} stations...\n")
 

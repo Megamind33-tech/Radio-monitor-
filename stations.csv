@@ -1,0 +1,4 @@
+station_id,name,stream_url
+# Add one row per station. Replace stream_url with the real ICY-capable stream.
+# Lines starting with # are ignored by audit_stations.py and monitor.py.
+# hot_fm,Hot FM Zambia,http://stream.example.com/hot
