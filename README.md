@@ -6,14 +6,15 @@ A robust, full-stack service for monitoring online radio streams and identifying
 1. **Stream Metadata**: Priority extraction using ICY/Shoutcast metadata.
 2. **Audio Fingerprinting**: Short capture (20s) fallback when metadata is missing, stale, or untrusted.
 3. **AcoustID matching**: High-confidence fingerprint matching.
-4. **MusicBrainz Enrichment**: Data normalization and MBID enrichment.
-5. **Persistence**: Structured logs and real-time state in PostgreSQL (SQLite used for local MVP).
+4. **Catalog fallback (free APIs)**: Metadata-based lookup via MusicBrainz search, then iTunes Search API when fingerprint matching misses.
+5. **MusicBrainz Enrichment**: Data normalization and MBID enrichment.
+6. **Persistence**: Structured logs and real-time state in PostgreSQL (SQLite used for local MVP).
 
 ## 🛠 Tech Stack
 - **Backend**: Node.js, Express, TypeScript, Prisma (ORM), SQLite/Postgres.
 - **Frontend**: React, Vite, Tailwind CSS, Lucide, Recharts, Framer Motion.
 - **Processing**: FFmpeg + FFprobe, Chromaprint (fpcalc).
-- **APIs**: AcoustID v2, MusicBrainz WS v2.
+- **APIs**: AcoustID v2, MusicBrainz WS v2, iTunes Search API.
 
 ## 📦 Setup & Installation
 
@@ -36,12 +37,19 @@ A robust, full-stack service for monitoring online radio streams and identifying
 4. Update `.env` with your API keys:
    - `ACOUSTID_API_KEY`: Get one at [acoustid.org](https://acoustid.org/applications).
    - `MUSICBRAINZ_USER_AGENT`: Set a custom one (e.g., `MyRadioApp/1.0.0 ( contact@example.com )`).
+   - `CATALOG_LOOKUP_MIN_SCORE`: Optional threshold for free catalog fallback (default `0.65`).
 
 ### Running the App
 ```bash
 npm run dev
 ```
 The server will be available at `http://localhost:3000`.
+
+## 🌐 Free API Strategy (No paid music database)
+- **Primary**: AcoustID fingerprint lookup (free non-commercial key).
+- **Secondary**: MusicBrainz recording search from stream metadata (free with proper user-agent).
+- **Tertiary**: iTunes Search API fallback for title/artist/genre hints.
+- **Result**: Better coverage for unknown tracks without running your own catalog.
 
 ## ⚠️ Known Limitations
 - **Non-Commercial Only**: Usage of public AcoustID and MusicBrainz services is strictly for non-commercial or development purposes as per their terms.

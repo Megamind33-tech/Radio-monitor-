@@ -31,7 +31,7 @@ export class MusicbrainzService {
       // https://musicbrainz.org/ws/2/recording/<MBID>?inc=artists+releases&fmt=json
       const response = await axios.get(`https://musicbrainz.org/ws/2/recording/${match.recordingId}`, {
         params: {
-          inc: 'artists+releases+isrcs',
+          inc: 'artists+releases+isrcs+genres',
           fmt: 'json'
         },
         headers: {
@@ -48,7 +48,9 @@ export class MusicbrainzService {
         artist: data['artist-credit']?.[0]?.name || match.artist,
         releaseTitle: data.releases?.[0]?.title,
         releaseDate: data.releases?.[0]?.date,
-        isrcs: data.isrcs
+        isrcs: data.isrcs,
+        genre: data.genres?.[0]?.name,
+        sourceProvider: "musicbrainz"
       };
 
       return enriched;

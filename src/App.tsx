@@ -36,6 +36,9 @@ interface Station {
   currentNowPlaying?: {
     title: string;
     artist: string;
+    album?: string;
+    genre?: string;
+    sourceProvider?: string;
     updatedAt: string;
   };
 }
@@ -45,10 +48,18 @@ interface DetectionLog {
   stationId: string;
   observedAt: string;
   detectionMethod: string;
-  artistFinal: string;
-  titleFinal: string;
+  artistFinal?: string;
+  titleFinal?: string;
+  releaseFinal?: string;
+  genreFinal?: string;
+  sourceProvider?: string;
   status: string;
   acoustidScore?: number;
+  station?: {
+    id: string;
+    name: string;
+    country: string;
+  };
 }
 
 interface Metrics {
@@ -57,13 +68,32 @@ interface Metrics {
   errors_count: number;
 }
 
+interface DependencyStatus {
+  ffmpeg: boolean;
+  ffprobe: boolean;
+  fpcalc: boolean;
+  acoustidApiKeyConfigured: boolean;
+  musicbrainzUserAgentConfigured: boolean;
+  catalogLookupReady: boolean;
+  freeApisEnabled: {
+    acoustid: boolean;
+    musicbrainz: boolean;
+    itunesSearch: boolean;
+  };
+  fingerprintReady: boolean;
+  missing: string[];
+}
+
 // --- Components ---
 
 export default function App() {
   const [stations, setStations] = useState<Station[]>([]);
   const [logs, setLogs] = useState<DetectionLog[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [dependencies, setDependencies] = useState<DependencyStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [selectedStationId, setSelectedStationId] = useState<string>('all');
   const [activeTab, setActiveTab] = useState<'stations' | 'history' | 'settings'>('stations');
   const [isAddingStation, setIsAddingStation] = useState(false);
 
@@ -84,21 +114,52 @@ export default function App() {
     }
   };
 
-  const fetchLogs = async (id: string) => {
+  const fetchLogs = async (stationId: string = selectedStationId) => {
+    setHistoryLoading(true);
     try {
-      const res = await fetch(`/api/stations/${id}/logs`);
+      const query = stationId === 'all' ? '' : `?stationId=${encodeURIComponent(stationId)}`;
+      const res = await fetch(`/api/logs${query}`);
       const data = await res.json();
       setLogs(data);
     } catch (error) {
       console.error("Failed to fetch logs", error);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const fetchDependencies = async () => {
+    try {
+      const res = await fetch('/api/system/dependencies');
+      const data = await res.json();
+      setDependencies(data);
+    } catch (error) {
+      console.error("Failed to fetch dependency status", error);
     }
   };
 
   useEffect(() => {
     fetchData();
+    fetchDependencies();
+    fetchLogs('all');
     const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'history') {
+      fetchLogs(selectedStationId);
+    }
+  }, [activeTab, selectedStationId]);
+
+  const stationNameById = new Map(stations.map((station) => [station.id, station.name]));
+
+  const formatMethod = (method: string) => {
+    if (method === 'stream_metadata') return 'Metadata';
+    if (method === 'fingerprint_acoustid') return 'Fingerprint';
+    if (method === 'catalog_lookup') return 'Catalog';
+    return method;
+  };
 
   return (
     <div className="min-h-screen bg-brand-bg text-gray-100 selection:bg-brand-cyan/30">
@@ -163,13 +224,23 @@ export default function App() {
              <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-semibold flex items-center gap-2">
                   <History className="w-5 h-5 text-brand-purple" />
-                  Recent Detection Logs
+                  Station Airplay Timeline
                 </h2>
                 <div className="flex gap-2">
-                   <select className="bg-black/40 border border-white/10 rounded-lg px-3 py-1 text-sm outline-none">
-                      <option>All Stations</option>
-                      {stations.map(s => <option key={s.id}>{s.name}</option>)}
+                   <select
+                      value={selectedStationId}
+                      onChange={(event) => setSelectedStationId(event.target.value)}
+                      className="bg-black/40 border border-white/10 rounded-lg px-3 py-1 text-sm outline-none"
+                    >
+                      <option value="all">All Stations</option>
+                      {stations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
                    </select>
+                   <button
+                    onClick={() => fetchLogs(selectedStationId)}
+                    className="px-3 py-1 text-xs rounded-lg border border-white/10 bg-black/30 hover:bg-black/50 transition-colors"
+                   >
+                    Refresh
+                   </button>
                 </div>
              </div>
              
@@ -185,24 +256,35 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="text-sm">
-                    {/* Placeholder for real logs */}
-                    <tr className="border-b border-white/5 hover:bg-white/5 transition-colors group">
-                      <td className="py-4 text-gray-400">12:45:02</td>
-                      <td className="py-4 font-medium">BBC Radio 1</td>
-                      <td className="py-4">
-                        <div className="flex flex-col">
-                          <span className="font-semibold group-hover:text-brand-cyan transition-colors">Flowers</span>
-                          <span className="text-xs text-gray-500">Miley Cyrus</span>
-                        </div>
-                      </td>
-                      <td className="py-4">
-                        <span className="px-2 py-0.5 bg-brand-cyan/10 text-brand-cyan rounded-full text-[10px] uppercase font-bold">AcoustID</span>
-                      </td>
-                      <td className="py-4">
-                        <CheckCircle2 className="w-4 h-4 text-green-500" />
-                      </td>
-                    </tr>
-                    {/* Map real logs here if available */}
+                    {logs.map((log) => (
+                      <tr key={log.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
+                        <td className="py-4 text-gray-400 whitespace-nowrap">{new Date(log.observedAt).toLocaleString()}</td>
+                        <td className="py-4 font-medium">{log.station?.name || stationNameById.get(log.stationId) || "Unknown station"}</td>
+                        <td className="py-4">
+                          <div className="flex flex-col">
+                            <span className="font-semibold group-hover:text-brand-cyan transition-colors">{log.titleFinal || "Unknown track"}</span>
+                            <span className="text-xs text-gray-500">{log.artistFinal || "Unknown artist"}</span>
+                            <span className="text-xs text-gray-600">
+                              {log.genreFinal ? `Genre: ${log.genreFinal}` : ''}
+                              {log.sourceProvider ? `${log.genreFinal ? ' • ' : ''}Source: ${log.sourceProvider}` : ''}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-4">
+                          <span className="px-2 py-0.5 bg-brand-cyan/10 text-brand-cyan rounded-full text-[10px] uppercase font-bold">{formatMethod(log.detectionMethod)}</span>
+                        </td>
+                        <td className="py-4">
+                          {log.status === 'matched' ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <AlertCircle className="w-4 h-4 text-yellow-500" />}
+                        </td>
+                      </tr>
+                    ))}
+                    {!historyLoading && logs.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-gray-500">
+                          No airplay detections yet. Probe a station to create logs.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
              </div>
@@ -213,26 +295,48 @@ export default function App() {
           <div className="max-w-2xl bg-white/5 border border-white/10 rounded-3xl p-10">
             <h2 className="text-xl font-semibold mb-8 flex items-center gap-2">
               <Settings className="w-5 h-5 text-gray-400" />
-              Environment Configuration
+              Environment & Fingerprint Readiness
             </h2>
             
             <div className="space-y-6">
-               <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-400">AcoustID API Key</label>
-                  <input type="password" value="••••••••••••••••" readOnly className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-brand-cyan outline-none" />
-               </div>
-               <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-400">MusicBrainz User Agent</label>
-                  <input type="text" value="RadioPulseMonitor/1.0.0" readOnly className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-gray-300 outline-none" />
-               </div>
-               <div className="pt-4 border-t border-white/5 flex gap-4">
-                  <button className="flex-1 bg-brand-purple hover:bg-brand-purple/80 text-white font-semibold py-3 rounded-xl transition-all">
-                    Save Changes
-                  </button>
-                  <button className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-semibold py-3 rounded-xl transition-all">
-                    Test Connections
-                  </button>
-               </div>
+              <div className="bg-black/30 border border-white/10 rounded-2xl p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold">Fingerprint pipeline</span>
+                  <span className={`px-2 py-1 rounded-lg text-xs font-bold ${dependencies?.fingerprintReady ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-300'}`}>
+                    {dependencies?.fingerprintReady ? 'READY' : 'NEEDS SETUP'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-sm text-gray-300">
+                  <div>ffmpeg: {dependencies?.ffmpeg ? 'OK' : 'Missing'}</div>
+                  <div>ffprobe: {dependencies?.ffprobe ? 'OK' : 'Missing'}</div>
+                  <div>fpcalc: {dependencies?.fpcalc ? 'OK' : 'Missing'}</div>
+                  <div>AcoustID key: {dependencies?.acoustidApiKeyConfigured ? 'Configured' : 'Missing'}</div>
+                </div>
+                <div className="grid grid-cols-1 gap-2 text-xs text-gray-400 border-t border-white/5 pt-3">
+                  <div>Free APIs active: AcoustID ({dependencies?.freeApisEnabled?.acoustid ? 'on' : 'off'}), MusicBrainz ({dependencies?.freeApisEnabled?.musicbrainz ? 'on' : 'off'}), iTunes Search ({dependencies?.freeApisEnabled?.itunesSearch ? 'on' : 'off'})</div>
+                  <div>Catalog lookup fallback: {dependencies?.catalogLookupReady ? 'ready' : 'needs MusicBrainz user-agent'}</div>
+                </div>
+                {dependencies && dependencies.missing.length > 0 && (
+                  <p className="text-xs text-yellow-300">
+                    Missing: {dependencies.missing.join(', ')}
+                  </p>
+                )}
+              </div>
+
+              <div className="pt-4 border-t border-white/5 flex gap-4">
+                <button
+                  onClick={fetchDependencies}
+                  className="flex-1 bg-brand-purple hover:bg-brand-purple/80 text-white font-semibold py-3 rounded-xl transition-all"
+                >
+                  Re-check Dependencies
+                </button>
+                <button
+                  onClick={fetchData}
+                  className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-semibold py-3 rounded-xl transition-all"
+                >
+                  Refresh Station Status
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -380,6 +484,13 @@ function StationCard({ station, onProbe }: { station: Station, onProbe: () => vo
               <div className="overflow-hidden">
                 <h4 className="text-xl font-bold truncate leading-tight mb-1">{np.title}</h4>
                 <p className="text-gray-400 truncate">{np.artist}</p>
+                {(np.genre || np.sourceProvider) && (
+                  <p className="text-xs text-gray-500 truncate">
+                    {np.genre ? `Genre: ${np.genre}` : ''}
+                    {np.sourceProvider ? `${np.genre ? ' • ' : ''}Source: ${np.sourceProvider}` : ''}
+                  </p>
+                )}
+                <p className="text-xs text-gray-500 mt-1">Detected {new Date(np.updatedAt).toLocaleTimeString()}</p>
               </div>
             </div>
           ) : (

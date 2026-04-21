@@ -33,7 +33,7 @@ model DetectionLog {
   id              String   @id @default(cuid())
   stationId       String
   observedAt      DateTime @default(now())
-  detectionMethod String   // stream_metadata, fingerprint_acoustid, unresolved
+  detectionMethod String   // stream_metadata, fingerprint_acoustid, catalog_lookup, unresolved
   rawStreamText   String?
   parsedArtist    String?
   parsedTitle     String?
@@ -44,6 +44,8 @@ model DetectionLog {
   artistFinal     String?
   releaseFinal    String?
   releaseDate     String?
+  genreFinal      String?
+  sourceProvider  String?
   isrcList        String?  // JSON string
   sampleSeconds   Int?
   processingMs    Int?
@@ -58,6 +60,8 @@ model CurrentNowPlaying {
   title     String?
   artist    String?
   album     String?
+  genre     String?
+  sourceProvider String?
   streamText String?
   updatedAt DateTime @updatedAt
   
