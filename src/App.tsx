@@ -31,6 +31,7 @@ interface Station {
   id: string;
   name: string;
   country: string;
+  district?: string;
   streamUrl: string;
   isActive: boolean;
   currentNowPlaying?: {
@@ -449,8 +450,14 @@ function StationCard({ station, onProbe }: { station: Station, onProbe: () => vo
           </div>
           <div className="flex flex-col">
             <h3 className="text-xl font-bold">{station.name}</h3>
-            <div className="flex items-center gap-2 text-xs text-gray-500">
+            <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
               <span className="px-1.5 py-0.5 bg-white/5 rounded border border-white/10 uppercase">{station.country}</span>
+              {station.district ? (
+                <>
+                  <span>•</span>
+                  <span className="text-gray-400">{station.district}</span>
+                </>
+              ) : null}
               <span>•</span>
               <span>{station.isActive ? 'Live Monitoring' : 'Inactive'}</span>
             </div>
