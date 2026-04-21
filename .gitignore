@@ -1,3 +1,5 @@
+__pycache__/
+*.pyc
 node_modules/
 build/
 dist/
@@ -6,3 +8,4 @@ coverage/
 *.log
 .env*
 !.env.example
+stations_audit.csv
