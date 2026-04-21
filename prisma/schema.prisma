@@ -1,0 +1,88 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite" // Default to sqlite for easy setup in this env
+  url      = env("DATABASE_URL")
+}
+
+model Station {
+  id                         String   @id @default(cuid())
+  name                       String
+  country                    String
+  streamUrl                  String
+  streamFormatHint           String?
+  isActive                   Boolean  @default(true)
+  metadataPriorityEnabled    Boolean  @default(true)
+  fingerprintFallbackEnabled Boolean  @default(true)
+  metadataStaleSeconds       Int      @default(180)
+  sampleSeconds              Int      @default(20)
+  pollIntervalSeconds        Int      @default(60)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  logs              DetectionLog[]
+  currentNowPlaying CurrentNowPlaying?
+}
+
+model DetectionLog {
+  id              String   @id @default(cuid())
+  stationId       String
+  observedAt      DateTime @default(now())
+  detectionMethod String   // stream_metadata, fingerprint_acoustid, unresolved
+  rawStreamText   String?
+  parsedArtist    String?
+  parsedTitle     String?
+  confidence      Float?
+  acoustidScore   Float?
+  recordingMbid   String?
+  titleFinal      String?
+  artistFinal     String?
+  releaseFinal    String?
+  releaseDate     String?
+  isrcList        String?  // JSON string
+  sampleSeconds   Int?
+  processingMs    Int?
+  status          String   // matched, unresolved, ignored
+  reasonCode      String?
+
+  station Station @relation(fields: [stationId], references: [id])
+}
+
+model CurrentNowPlaying {
+  stationId String   @id
+  title     String?
+  artist    String?
+  album     String?
+  streamText String?
+  updatedAt DateTime @updatedAt
+  
+  station Station @relation(fields: [stationId], references: [id])
+}
+
+model UnresolvedSample {
+  id        String   @id @default(cuid())
+  stationId String
+  filePath  String
+  createdAt DateTime @default(now())
+}
+
+model CacheEntry {
+  key       String   @id // e.g. fingerprint_hash
+  value     String   // JSON string
+  expiresAt DateTime
+  type      String   // fingerprint, metadata, enrichment
+}
+
+model JobRun {
+  id        String   @id @default(cuid())
+  stationId String
+  status    String   // success, failure
+  error     String?
+  durationMs Int
+  startedAt DateTime @default(now())
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Radio Pulse Monitor",
+  "description": "Production-grade MVP for real-time radio station stream monitoring and now-playing detection using ICY metadata and AcoustID fingerprinting fallback.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
