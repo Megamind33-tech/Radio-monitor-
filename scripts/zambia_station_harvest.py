@@ -26,6 +26,12 @@ from dataclasses import dataclass
 import aiohttp
 
 from zambia_provinces import province_for_place, province_for_tunein_district
+from mytuner_zambia import (
+    decrypt_first_stream_url,
+    discover_mytuner_zambia_station_page_urls,
+    fetch_text as mytuner_fetch_text,
+    normalize_url as mytuner_normalize_url,
+)
 
 UA_BROWSER = "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36"
 UA_ICY = "ZambiaStationHarvest/1.0"
@@ -42,7 +48,7 @@ class Candidate:
     province: str
     frequency_mhz: str | None
     stream_url: str
-    source: str  # radio_garden | tunein | radio_browser
+    source: str  # radio_garden | tunein | radio_browser | mytuner
     source_detail: str  # channel id or tunein id
     icy_qualification: str = "pending"
     icy_sample_title: str | None = None
@@ -266,6 +272,12 @@ def stable_id_rb(name: str, url: str) -> str:
     return f"zm_rb_{h[:16]}"
 
 
+def stable_id_mytuner(radio_id: str, page_url: str) -> str:
+    if radio_id:
+        return f"zm_mt_{radio_id}"
+    return f"zm_mt_{sha1_str(page_url)[:16]}"
+
+
 def sha1_str(s: str) -> str:
     import hashlib
 
@@ -302,6 +314,35 @@ def infer_district_from_tunein_name(name: str) -> str:
         if needle in low:
             return district
     return "Zambia"
+
+
+def build_mytuner_candidates() -> list[Candidate]:
+    """Decrypt stream URLs from MyTuner Zambia listing (same AES logic as audit script)."""
+    out: list[Candidate] = []
+    for page_url in discover_mytuner_zambia_station_page_urls():
+        try:
+            html = mytuner_fetch_text(page_url)
+        except Exception:
+            continue
+        su, name, rid = decrypt_first_stream_url(html, page_url)
+        if not su.startswith("http"):
+            continue
+        name = (name or "").strip() or f"MyTuner {rid or 'station'}"
+        dist = infer_district_from_tunein_name(name)
+        prov = province_for_tunein_district(dist) if dist != "Zambia" else ""
+        out.append(
+            Candidate(
+                stable_id=stable_id_mytuner(rid, page_url),
+                name=name,
+                district=dist,
+                province=prov,
+                frequency_mhz=extract_frequency_mhz(name),
+                stream_url=su,
+                source="mytuner",
+                source_detail=rid or page_url,
+            )
+        )
+    return out
 
 
 async def build_candidates(max_total: int) -> list[Candidate]:
@@ -419,6 +460,21 @@ async def build_candidates(max_total: int) -> list[Candidate]:
     return list(by_url.values())
 
 
+def merge_candidates_mytuner_first(
+    mytuner: list[Candidate], others: list[Candidate]
+) -> list[Candidate]:
+    """De-dupe by normalized stream URL; MyTuner rows stay first."""
+    seen: set[str] = set()
+    merged: list[Candidate] = []
+    for c in mytuner + others:
+        key = mytuner_normalize_url(c.stream_url)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(c)
+    return merged
+
+
 async def probe_batch(candidates: list[Candidate], concurrency: int = 25) -> None:
     sem = asyncio.Semaphore(concurrency)
 
@@ -470,9 +526,14 @@ async def async_main():
     ap.add_argument("--out", type=str, default="scripts/data/zambia_harvest.json")
     args = ap.parse_args()
 
-    print("Discovering candidates (Radio Garden + radio-browser ZM + filtered TuneIn)...")
-    cands = await build_candidates(args.max_probe)
-    print(f"Unique stream URLs discovered: {len(cands)}")
+    print(
+        "Discovering candidates (MyTuner + Radio Garden + radio-browser ZM + filtered TuneIn)..."
+    )
+    mt = build_mytuner_candidates()
+    base = await build_candidates(args.max_probe)
+    cands = merge_candidates_mytuner_first(mt, base)
+    print(f"MyTuner decrypted URLs: {len(mt)}")
+    print(f"After merge (deduped by URL): {len(cands)}")
 
     to_probe = cands[: args.max_probe]
     print(f"Probing ICY (3 blocks max) for {len(to_probe)} streams...")

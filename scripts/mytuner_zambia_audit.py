@@ -17,48 +17,23 @@ import csv
 import json
 import os
 import re
-import ssl
 import sys
-import urllib.request
 from dataclasses import dataclass, asdict
-from typing import Any
 
-try:
-    from Crypto.Cipher import AES
-except ImportError:
-    print("pip install pycryptodome", file=sys.stderr)
-    raise
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
 import aiohttp
 
-UA = "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36"
-LIST_BASE = "https://mytuner-radio.com/radio/country/zambia-stations"
-
-
-def fetch_text(url: str) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, context=ctx, timeout=60) as r:
-        return r.read().decode("utf-8", errors="replace")
-
-
-def parse_ld_station_urls(html: str) -> list[str]:
-    m = re.search(
-        r'<script type="application/ld\+json">\s*(\[.*?\])\s*</script>',
-        html,
-        re.S,
-    )
-    if not m:
-        return []
-    data = json.loads(m.group(1))
-    urls: list[str] = []
-    for block in data:
-        if block.get("@type") == "ItemList":
-            for it in block.get("itemListElement", []):
-                u = it.get("url")
-                if u:
-                    urls.append(u)
-    return urls
+from mytuner_zambia import (
+    decrypt_playlist_entry,
+    discover_mytuner_zambia_station_page_urls,
+    fetch_text,
+    normalize_url,
+    parse_station_page,
+    radio_id_from_mytuner_url,
+)
 
 
 def load_existing_stream_urls(path: str) -> set[str]:
@@ -72,65 +47,6 @@ def load_existing_stream_urls(path: str) -> set[str]:
         if u:
             urls.add(normalize_url(u))
     return urls
-
-
-def normalize_url(u: str) -> str:
-    u = u.strip().lower()
-    u = u.split(";", 1)[0]  # strip ;stream.mp3 extras for compare
-    return u.rstrip("/")
-
-
-def remove_null_prefix(s: str) -> str:
-    if len(s) > 6:
-        return s[6:]
-    return s
-
-
-def genk(s: str) -> str:
-    h = ""
-    j = 0
-    for _ in range(32):
-        h += format(ord(s[j]), "x")
-        j += 1
-        if j >= len(s):
-            j = 0
-    return h
-
-
-def decrypt_playlist_entry(iv_: str, cipher_b64: str, timestamp: str) -> str:
-    iv_hex = remove_null_prefix(iv_)
-    ct_b64 = remove_null_prefix(cipher_b64)
-    import base64
-
-    iv = bytes.fromhex(iv_hex)
-    ct_raw = base64.b64decode(ct_b64)
-    key_hex = genk(str(timestamp))
-    key = bytes.fromhex(key_hex)
-    cipher = AES.new(key, AES.MODE_CFB, iv, segment_size=128)
-    pt = cipher.decrypt(ct_raw)
-    return pt.decode("utf-8", errors="replace").strip()
-
-
-def parse_station_page(html: str) -> tuple[str | None, list[dict[str, Any]] | None, str | None]:
-    ts_m = re.search(r'id="last-update"\s+data-timestamp="(\d+)"', html)
-    timestamp = ts_m.group(1) if ts_m else None
-
-    pl_m = re.search(
-        r"var _playlist = formatPlaylist\((\[.*?\])\)\s*;",
-        html,
-        re.S,
-    )
-    playlist = None
-    if pl_m:
-        try:
-            playlist = json.loads(pl_m.group(1))
-        except json.JSONDecodeError:
-            playlist = None
-
-    name_m = re.search(r'"@type":\s*"RadioStation"[^}]*"name":\s*"([^"]*)"', html)
-    name = name_m.group(1) if name_m else None
-
-    return timestamp, playlist, name
 
 
 async def icy_first_title(session: aiohttp.ClientSession, stream_url: str) -> tuple[str | None, str | None, str | None]:
@@ -182,27 +98,14 @@ class Row:
 
 
 async def main_async(existing_json: str | None, out_csv: str) -> None:
-    all_urls: list[str] = []
-    for page in (1, 2):
-        url = LIST_BASE if page == 1 else f"{LIST_BASE}?page=2"
-        html = fetch_text(url)
-        all_urls.extend(parse_ld_station_urls(html))
-
-    seen: set[str] = set()
-    unique_urls: list[str] = []
-    for u in all_urls:
-        if u not in seen:
-            seen.add(u)
-            unique_urls.append(u)
-
+    unique_urls = discover_mytuner_zambia_station_page_urls()
     existing = load_existing_stream_urls(existing_json) if existing_json else set()
 
     rows: list[Row] = []
     connector = aiohttp.TCPConnector(limit=15)
     async with aiohttp.ClientSession(connector=connector) as session:
         for page_url in unique_urls:
-            rid_m = re.search(r"-(\d+)/?$", page_url)
-            radio_id = rid_m.group(1) if rid_m else ""
+            radio_id = radio_id_from_mytuner_url(page_url)
 
             try:
                 html = fetch_text(page_url)
@@ -252,6 +155,7 @@ async def main_async(existing_json: str | None, out_csv: str) -> None:
                 )
                 url_m = re.search(r"https?://[^\s\x00]+", su)
                 su = url_m.group(0).rstrip(".,);") if url_m else ""
+                su = "".join(ch for ch in su if ch == "\t" or ord(ch) >= 32).strip()
                 decrypt_ok = su.startswith("http")
             except Exception as e:
                 su = ""
