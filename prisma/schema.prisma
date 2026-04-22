@@ -34,8 +34,8 @@ model Station {
   metadataStaleSeconds       Int      @default(180)
   sampleSeconds              Int      @default(20)
   pollIntervalSeconds        Int      @default(60)
-  /// When true, successful detections store a ~30s WAV under SONG_SAMPLE_ARCHIVE_DIR for reference
-  archiveSongSamples         Boolean  @default(false)
+  /// First play of each distinct song only: ~30s WAV under SONG_SAMPLE_ARCHIVE_DIR (no duplicate file per repeat play)
+  archiveSongSamples         Boolean  @default(true)
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 

@@ -11,6 +11,7 @@ export function normalizeSongPart(s: string | null | undefined): string {
 /**
  * Call when a new DetectionLog row is created for a matched play (one row = one play).
  * Increments StationSongSpin.playCount for this station + song key.
+ * Returns final playCount (1 = first time we see this song key at this station).
  */
 export async function upsertSongSpinOnNewPlay(
   prisma: PrismaClient,
@@ -21,9 +22,9 @@ export async function upsertSongSpinOnNewPlay(
     album: string | null | undefined;
     detectionLogId: string;
   }
-): Promise<void> {
+): Promise<{ playCount: number }> {
   const titleNorm = normalizeSongPart(params.title);
-  if (!titleNorm) return;
+  if (!titleNorm) return { playCount: 0 };
 
   const artistNorm = normalizeSongPart(params.artist);
   const albumNorm = normalizeSongPart(params.album);
@@ -33,7 +34,7 @@ export async function upsertSongSpinOnNewPlay(
   const titleLast = (params.title ?? "").trim();
   const albumLast = (params.album ?? "").trim();
 
-  await prisma.stationSongSpin.upsert({
+  const row = await prisma.stationSongSpin.upsert({
     where: {
       stationId_artistNorm_titleNorm_albumNorm: {
         stationId: params.stationId,
@@ -64,4 +65,6 @@ export async function upsertSongSpinOnNewPlay(
       albumLast,
     },
   });
+
+  return { playCount: row.playCount };
 }

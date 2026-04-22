@@ -9,9 +9,10 @@ export function normalizeSongPart(s) {
     .toLowerCase();
 }
 
+/** @returns {{ playCount: number }} */
 export async function upsertSongSpinOnNewPlay(prisma, params) {
   const titleNorm = normalizeSongPart(params.title);
-  if (!titleNorm) return;
+  if (!titleNorm) return { playCount: 0 };
 
   const artistNorm = normalizeSongPart(params.artist);
   const albumNorm = normalizeSongPart(params.album);
@@ -20,7 +21,7 @@ export async function upsertSongSpinOnNewPlay(prisma, params) {
   const titleLast = String(params.title ?? "").trim();
   const albumLast = String(params.album ?? "").trim();
 
-  await prisma.stationSongSpin.upsert({
+  const row = await prisma.stationSongSpin.upsert({
     where: {
       stationId_artistNorm_titleNorm_albumNorm: {
         stationId: params.stationId,
@@ -51,4 +52,6 @@ export async function upsertSongSpinOnNewPlay(prisma, params) {
       albumLast,
     },
   });
+
+  return { playCount: row.playCount };
 }

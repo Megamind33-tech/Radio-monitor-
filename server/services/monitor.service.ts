@@ -192,17 +192,25 @@ export class MonitorService {
       select: { id: true },
     });
 
+    let spinPlayCount = 0;
     if (status === "matched") {
-      await upsertSongSpinOnNewPlay(prisma, {
+      const spin = await upsertSongSpinOnNewPlay(prisma, {
         stationId,
         artist: artistFinal,
         title: titleFinal,
         album: match?.releaseTitle,
         detectionLogId: log.id,
       });
+      spinPlayCount = spin.playCount;
     }
 
-    if (status === "matched" && station.archiveSongSamples && resolvedUrl.startsWith("http")) {
+    // One archived WAV per distinct song per station (first play only), not per repeat play
+    if (
+      status === "matched" &&
+      station.archiveSongSamples &&
+      spinPlayCount === 1 &&
+      resolvedUrl.startsWith("http")
+    ) {
       const sec = Math.min(Math.max(parseInt(process.env.ARCHIVE_SAMPLE_SECONDS || "30", 10) || 30, 10), 120);
       const archiveRoot = process.env.SONG_SAMPLE_ARCHIVE_DIR || path.join(process.cwd(), "data/song_samples");
       const dir = path.join(archiveRoot, stationId);
