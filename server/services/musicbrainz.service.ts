@@ -9,7 +9,8 @@ export class MusicbrainzService {
   /** Lightweight fetch of recording length (ms) for duplicate-suppression when enrich was skipped. */
   static async getRecordingLengthMs(recordingId: string): Promise<number | undefined> {
     await this.throttle();
-    const userAgent = process.env.MUSICBRAINZ_USER_AGENT || "RadioPulseMonitor/1.0.0 ( contact@example.com )";
+    const userAgent =
+      process.env.MUSICBRAINZ_USER_AGENT || "MOSTIFY/1.0.0 ( chansamax198@gmail.com )";
     try {
       const response = await axios.get(`https://musicbrainz.org/ws/2/recording/${recordingId}`, {
         params: { fmt: "json" },
@@ -41,7 +42,8 @@ export class MusicbrainzService {
 
     await this.throttle();
 
-    const userAgent = process.env.MUSICBRAINZ_USER_AGENT || 'RadioPulseMonitor/1.0.0 ( contact@example.com )';
+    const userAgent =
+      process.env.MUSICBRAINZ_USER_AGENT || "MOSTIFY/1.0.0 ( chansamax198@gmail.com )";
 
     try {
       logger.info({ mbid: match.recordingId }, "Enriching with MusicBrainz");

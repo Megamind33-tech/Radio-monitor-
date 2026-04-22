@@ -38,7 +38,8 @@ export class CatalogLookupService {
   }
 
   private static async musicbrainzSearch(title?: string, artist?: string, combined?: string): Promise<MatchResult | null> {
-    const userAgent = process.env.MUSICBRAINZ_USER_AGENT || "RadioPulseMonitor/1.0.0 ( contact@example.com )";
+    const userAgent =
+      process.env.MUSICBRAINZ_USER_AGENT || "MOSTIFY/1.0.0 ( chansamax198@gmail.com )";
     const query = this.toSearchQuery(title, artist, combined);
     if (!query) return null;
 
@@ -154,7 +155,10 @@ export class CatalogLookupService {
       const response = await axios.get("https://api.deezer.com/search", {
         params: { q, limit: 5 },
         timeout: 10000,
-        headers: { "User-Agent": "RadioPulseMonitor/1.0 ( catalog lookup )" },
+        headers: {
+          "User-Agent":
+            process.env.MUSICBRAINZ_USER_AGENT || "MOSTIFY/1.0.0 ( chansamax198@gmail.com )",
+        },
       });
 
       const items = response.data?.data;
