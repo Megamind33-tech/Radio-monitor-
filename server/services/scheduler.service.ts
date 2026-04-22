@@ -14,7 +14,9 @@ export class SchedulerService {
   static async init() {
     logger.info("Initializing station scheduler");
 
-    this.masterJob = cron.schedule("*/1 * * * *", () => {
+    // Keep scheduler state in sync every 30s (not only once per minute),
+    // so station toggles and interval changes are reflected quickly.
+    this.masterJob = cron.schedule("*/30 * * * * *", () => {
       void this.resyncStations();
     });
 
@@ -71,6 +73,9 @@ export class SchedulerService {
       }, pollIntervalSeconds * 1000);
       handle = { stop: () => clearInterval(id) };
     }
+
+    // Prime immediately so stations don't wait for the first interval tick.
+    void MonitorService.pollStation(station.id);
 
     this.tasks.set(station.id, handle);
     this.pollIntervals.set(station.id, pollIntervalSeconds);

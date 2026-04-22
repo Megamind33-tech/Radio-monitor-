@@ -29,6 +29,20 @@ function parseEnvFloat(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function parseEnvBool(key: string, fallback = false): boolean {
+  const v = process.env[key];
+  if (!v) return fallback;
+  const t = String(v).trim().toLowerCase();
+  return t === "1" || t === "true" || t === "yes" || t === "on";
+}
+
+function parseEnvInt(key: string, fallback: number): number {
+  const v = process.env[key];
+  if (!v) return fallback;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 /** ICY text too weak to drive MusicBrainz/iTunes (avoids garbage catalog hits). */
 function isJunkIcyMetadata(metadata: NormalizedMetadata | null): boolean {
   if (!metadata) return true;
@@ -36,6 +50,12 @@ function isJunkIcyMetadata(metadata: NormalizedMetadata | null): boolean {
   if (raw.length < 2) return true;
   if (raw === "-" || raw === " - " || raw === "...") return true;
   return false;
+}
+
+function isProgramLikeTitle(text: string | null | undefined): boolean {
+  const t = String(text ?? "").trim().toLowerCase();
+  if (!t) return false;
+  return /\b(on air|live|program|show|morning show|afternoon show|evening show|news|sports|talk)\b/.test(t);
 }
 
 export class MonitorService {
@@ -110,13 +130,15 @@ export class MonitorService {
         !lastFp || Date.now() - lastFp.getTime() >= intervalSec * 1000;
 
       const acoustidKey = process.env.ACOUSTID_API_KEY;
+      const forceAudioFallback = parseEnvBool("FORCE_AUDIO_FALLBACK_WHEN_UNRESOLVED", true);
       const doAudioId =
         !!station.fingerprintFallbackEnabled &&
-        !!acoustidKey &&
+        (forceAudioFallback || !!acoustidKey) &&
         (legacyFingerprint || icyChanged || intervalElapsed);
 
       let audioMatch: MatchResult | null = null;
       let sampledForFingerprint = false;
+      let sampledAudioPath: string | null = null;
 
       if (doAudioId && resolvedUrl.startsWith("http")) {
         const fpSec = Math.min(
@@ -133,6 +155,7 @@ export class MonitorService {
         const samplePath = await SamplerService.captureSample(resolvedUrl, fpSec);
         sampledForFingerprint = true;
         if (samplePath) {
+          sampledAudioPath = samplePath;
           const fingerprint = await FingerprintService.generateFingerprint(samplePath);
           if (fingerprint) {
             const acoustidMatch = await AcoustidService.lookup(fingerprint);
@@ -140,7 +163,6 @@ export class MonitorService {
               audioMatch = await MusicbrainzService.enrich(acoustidMatch);
             }
           }
-          SamplerService.cleanup(samplePath);
         }
       }
 
@@ -161,6 +183,27 @@ export class MonitorService {
         if (metadata && check.trusted) {
           method = "stream_metadata";
         }
+      }
+
+      // Second-pass fallback: when metadata is present but unresolved/program-like,
+      // attempt catalog lookup from combined stream text to reduce "Unknown".
+      if (!match && metadata && station.fingerprintFallbackEnabled) {
+        const viaCombined = await CatalogLookupService.lookupFromMetadata({
+          ...metadata,
+          rawArtist: metadata.rawArtist || "",
+          rawTitle: metadata.rawTitle || metadata.combinedRaw || "",
+        });
+        if (viaCombined) {
+          match = viaCombined;
+          method = "catalog_lookup";
+        }
+      }
+
+      if (sampledAudioPath && !match) {
+        await this.archiveUnresolvedSample(stationId, sampledAudioPath);
+      }
+      if (sampledAudioPath) {
+        SamplerService.cleanup(sampledAudioPath);
       }
 
       if (sampledForFingerprint) {
@@ -246,14 +289,24 @@ export class MonitorService {
       metadata &&
       station.metadataPriorityEnabled &&
       MetadataService.isMetadataTrustworthy(metadata, npRow?.streamText || undefined).trusted;
+    const metadataProgramLike =
+      isProgramLikeTitle(metadata?.rawTitle) ||
+      (!metadata?.rawTitle && isProgramLikeTitle(metadata?.combinedRaw));
 
     const isMatched =
       !!match ||
-      (method === "stream_metadata" && !!metadata && trustedMeta && !isJunkIcyMetadata(metadata));
+      (method === "stream_metadata" &&
+        !!metadata &&
+        trustedMeta &&
+        !isJunkIcyMetadata(metadata) &&
+        !metadataProgramLike);
     const status = isMatched ? "matched" : "unresolved";
 
-    const titleFinal = match?.title || metadata?.rawTitle;
-    const artistFinal = match?.artist || metadata?.rawArtist;
+    const rawTitle = (metadata?.rawTitle ?? "").trim();
+    const rawArtist = (metadata?.rawArtist ?? "").trim();
+    const titleFinal =
+      match?.title || (!metadataProgramLike && rawTitle ? rawTitle : undefined);
+    const artistFinal = match?.artist || (rawArtist ? rawArtist : undefined);
 
     let trackDurationMs: number | undefined = match?.durationMs;
     if (!trackDurationMs && match?.recordingId) {
@@ -309,7 +362,13 @@ export class MonitorService {
         releaseFinal: match?.releaseTitle,
         releaseDate: match?.releaseDate,
         genreFinal: match?.genre,
-        sourceProvider: match?.sourceProvider || method,
+        sourceProvider:
+          match?.sourceProvider ||
+          (method === "stream_metadata"
+            ? metadataProgramLike
+              ? "stream_metadata_program"
+              : "stream_metadata"
+            : method),
         isrcList: match?.isrcs ? JSON.stringify(match.isrcs) : null,
         trackDurationMs: trackDurationMs ?? null,
         sampleSeconds: station.sampleSeconds,
@@ -373,7 +432,13 @@ export class MonitorService {
         artist: artistFinal,
         album: match?.releaseTitle,
         genre: match?.genre,
-        sourceProvider: match?.sourceProvider || method,
+        sourceProvider:
+          match?.sourceProvider ||
+          (method === "stream_metadata"
+            ? metadataProgramLike
+              ? "stream_metadata_program"
+              : "stream_metadata"
+            : method),
         streamText: metadata?.combinedRaw,
         updatedAt: new Date(),
       },
@@ -383,7 +448,13 @@ export class MonitorService {
         artist: artistFinal,
         album: match?.releaseTitle,
         genre: match?.genre,
-        sourceProvider: match?.sourceProvider || method,
+        sourceProvider:
+          match?.sourceProvider ||
+          (method === "stream_metadata"
+            ? metadataProgramLike
+              ? "stream_metadata_program"
+              : "stream_metadata"
+            : method),
         streamText: metadata?.combinedRaw,
       },
     });
@@ -395,5 +466,44 @@ export class MonitorService {
         durationMs: processingMs,
       },
     });
+  }
+
+  private static async archiveUnresolvedSample(stationId: string, samplePath: string): Promise<void> {
+    if (!parseEnvBool("ARCHIVE_UNRESOLVED_SAMPLES", true)) return;
+    try {
+      const root =
+        process.env.UNRESOLVED_SAMPLE_DIR || path.join(process.cwd(), "data/unresolved_samples");
+      const dir = path.join(root, stationId);
+      fs.mkdirSync(dir, { recursive: true });
+
+      const fileName = `${Date.now()}_${path.basename(samplePath)}`;
+      const destPath = path.join(dir, fileName);
+      fs.copyFileSync(samplePath, destPath);
+      await prisma.unresolvedSample.create({
+        data: {
+          stationId,
+          filePath: destPath,
+        },
+      });
+
+      const keepRaw = parseEnvInt("UNRESOLVED_SAMPLE_MAX_PER_STATION", 25);
+      const keep = Math.min(200, Math.max(1, keepRaw));
+      const stale = await prisma.unresolvedSample.findMany({
+        where: { stationId },
+        orderBy: { createdAt: "desc" },
+        skip: keep,
+        select: { id: true, filePath: true },
+      });
+      for (const row of stale) {
+        try {
+          if (row.filePath && fs.existsSync(row.filePath)) fs.unlinkSync(row.filePath);
+        } catch {
+          // Best effort disk cleanup; row delete still proceeds.
+        }
+        await prisma.unresolvedSample.delete({ where: { id: row.id } });
+      }
+    } catch (error) {
+      logger.warn({ error, stationId }, "Failed to archive unresolved sample");
+    }
   }
 }

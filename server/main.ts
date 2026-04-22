@@ -152,10 +152,12 @@ async function startServer() {
   });
 
   app.get("/api/stations/:id/logs", async (req, res) => {
+    const takeQuery = typeof req.query.take === "string" ? Number(req.query.take) : 300;
+    const take = Number.isFinite(takeQuery) ? Math.min(Math.max(Math.trunc(takeQuery), 1), 2000) : 300;
     const logs = await prisma.detectionLog.findMany({
       where: { stationId: req.params.id },
       orderBy: { observedAt: 'desc' },
-      take: 100
+      take
     });
     res.json(logs);
   });
@@ -214,8 +216,8 @@ async function startServer() {
 
   app.get("/api/logs", async (req, res) => {
     const stationIdQuery = typeof req.query.stationId === "string" ? req.query.stationId : undefined;
-    const takeQuery = typeof req.query.take === "string" ? Number(req.query.take) : 100;
-    const take = Number.isFinite(takeQuery) ? Math.min(Math.max(Math.trunc(takeQuery), 1), 500) : 100;
+    const takeQuery = typeof req.query.take === "string" ? Number(req.query.take) : 500;
+    const take = Number.isFinite(takeQuery) ? Math.min(Math.max(Math.trunc(takeQuery), 1), 2000) : 500;
     const statusQuery = typeof req.query.status === "string" ? req.query.status : undefined;
 
     const where: { stationId?: string; status?: string } = {};

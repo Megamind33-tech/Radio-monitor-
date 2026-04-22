@@ -8,6 +8,7 @@ import { PrismaClient } from "@prisma/client";
 
 const args = process.argv.slice(2);
 const replaceAll = args.includes("--replace");
+const replaceStationCatalogOnly = args.includes("--replace-stations-only");
 const pathArg = args.find((a) => !a.startsWith("--") && a.endsWith(".json"));
 const path = pathArg || "scripts/data/zambia_harvest.json";
 const raw = readFileSync(path, "utf-8");
@@ -44,6 +45,11 @@ function mergeSourceIdsJson(a, b) {
 
 const prisma = new PrismaClient();
 
+if (replaceAll && replaceStationCatalogOnly) {
+  console.error("Use either --replace or --replace-stations-only, not both.");
+  process.exit(1);
+}
+
 if (replaceAll) {
   await prisma.stationSongSpin.deleteMany();
   await prisma.songSampleArchive.deleteMany();
@@ -52,7 +58,12 @@ if (replaceAll) {
   await prisma.currentNowPlaying.deleteMany();
   await prisma.unresolvedSample.deleteMany();
   await prisma.station.deleteMany();
-  console.log("Replaced entire station catalog (--replace).");
+  console.log("Replaced entire station catalog and detections (--replace).");
+} else if (replaceStationCatalogOnly) {
+  // Keep historical detections/logs for trend continuity.
+  // We do NOT delete stations here because historical DetectionLog rows are FK-linked.
+  // Instead, upsert incoming rows and deactivate Zambia rows that are no longer in the feed.
+  console.log("Replacing station catalog shape via upsert/deactivate (detections preserved).");
 } else {
   // Remove non-Zambia test/seed stations only
   const outsiders = await prisma.station.findMany({
@@ -70,6 +81,7 @@ if (replaceAll) {
 }
 
 let upserted = 0;
+const incomingIds = new Set(stations.map((s) => s?.id).filter((id) => typeof id === "string"));
 for (const row of stations) {
   const {
     id,
@@ -144,6 +156,18 @@ for (const row of stations) {
     },
   });
   upserted++;
+}
+
+if (replaceStationCatalogOnly) {
+  const stale = await prisma.station.updateMany({
+    where: {
+      country: "Zambia",
+      id: { notIn: Array.from(incomingIds) },
+      isActive: true,
+    },
+    data: { isActive: false },
+  });
+  console.log(`Deactivated ${stale.count} stale Zambia station(s) not present in import.`);
 }
 
 const active = await prisma.station.count({ where: { isActive: true } });

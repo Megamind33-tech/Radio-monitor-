@@ -14,7 +14,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 
 const argv = process.argv.slice(2);
+if (!argv.includes("--replace") && !argv.includes("--replace-stations-only")) {
+  // Safe default: preserve historical detections while refreshing the station catalog.
+  // Full wipe remains available via explicit --replace.
+  argv.push("--replace-stations-only");
+}
 const replace = argv.includes("--replace");
+const replaceStationsOnly = argv.includes("--replace-stations-only");
 const maxIdx = argv.findIndex((a) => a === "--max-probe");
 const maxProbe =
   maxIdx >= 0 && argv[maxIdx + 1] ? String(argv[maxIdx + 1]) : "800";
@@ -36,6 +42,7 @@ if (h.status !== 0) {
 
 const importArgs = [join(root, "scripts/import_zambia_stations.mjs")];
 if (replace) importArgs.push("--replace");
+if (replaceStationsOnly) importArgs.push("--replace-stations-only");
 importArgs.push(join(root, "scripts/data/zambia_harvest.json"));
 
 console.log("[sync:zambia] Running import:", "node", ...importArgs.map((p) => p.replace(root + "/", "")));

@@ -150,6 +150,8 @@ function normalizeStationName(value: string): string {
 // --- Components ---
 
 export default function App() {
+  const STATION_REFRESH_MS = 30_000;
+  const HISTORY_REFRESH_MS = 120_000;
   const [stations, setStations] = useState<Station[]>([]);
   const [logs, setLogs] = useState<DetectionLog[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
@@ -226,17 +228,23 @@ export default function App() {
     fetchData();
     fetchDependencies();
     fetchLogs('all');
-    const interval = setInterval(fetchData, 30000);
+    const interval = setInterval(fetchData, STATION_REFRESH_MS);
     return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'history') {
-      fetchLogs(selectedStationId);
-    }
     if (activeTab === 'analytics') {
       fetchSongAnalytics();
     }
+  }, [activeTab, selectedStationId]);
+
+  useEffect(() => {
+    if (activeTab !== 'history') return;
+    fetchLogs(selectedStationId);
+    const interval = setInterval(() => {
+      fetchLogs(selectedStationId);
+    }, HISTORY_REFRESH_MS);
+    return () => clearInterval(interval);
   }, [activeTab, selectedStationId]);
 
   const stationNameById = new Map(stations.map((station) => [station.id, station.name]));
