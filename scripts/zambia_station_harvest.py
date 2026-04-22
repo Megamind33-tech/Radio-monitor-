@@ -48,6 +48,7 @@ from streema_zambia import (
     extract_stream_from_station_html,
     fetch_html as streema_fetch_html,
 )
+from zeno_zambia import discover_zeno_zambia_stations
 
 UA_BROWSER = "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36"
 UA_ICY = "ZambiaStationHarvest/1.0"
@@ -64,7 +65,7 @@ class Candidate:
     province: str
     frequency_mhz: str | None
     stream_url: str
-    source: str  # radio_garden | tunein | radio_browser | mytuner | onlineradiobox | streema
+    source: str  # radio_garden | tunein | radio_browser | mytuner | onlineradiobox | streema | zeno
     source_detail: str  # channel id or tunein id
     """All discovery sources for this stream URL (merged when same URL from multiple sites)."""
     source_map: dict[str, str] = field(default_factory=dict)
@@ -364,6 +365,15 @@ def stable_id_streema(path: str) -> str:
     return f"zm_st_{sha1_str(path)[:16]}"
 
 
+def stable_id_zeno(slug: str, stream_url: str) -> str:
+    s = (slug or "").strip()
+    if s:
+        safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", s).strip("_")
+        if safe:
+            return f"zm_zn_{safe[:56]}"
+    return f"zm_zn_{sha1_str(stream_url)[:16]}"
+
+
 def sha1_str(s: str) -> str:
     import hashlib
 
@@ -498,6 +508,33 @@ def build_streema_candidates() -> list[Candidate]:
                 stream_url=su,
                 source="streema",
                 source_detail=path,
+            )
+        )
+    return out
+
+
+def build_zeno_candidates(limit: int = 220) -> list[Candidate]:
+    """Direct stream URLs discovered from Zeno Zambia listings/pages."""
+    out: list[Candidate] = []
+    for z in discover_zeno_zambia_stations(max_results=limit):
+        su = (z.stream_url or "").strip()
+        if not su.startswith("https://stream"):
+            continue
+        name = (z.name or z.slug).strip()
+        if not name:
+            continue
+        dist = infer_district_from_tunein_name(name)
+        prov = province_for_tunein_district(dist) if dist != "Zambia" else ""
+        out.append(
+            Candidate(
+                stable_id=stable_id_zeno(z.slug, su),
+                name=name,
+                district=dist,
+                province=prov,
+                frequency_mhz=extract_frequency_mhz(name),
+                stream_url=su,
+                source="zeno",
+                source_detail=z.slug,
             )
         )
     return out
@@ -683,7 +720,8 @@ SOURCE_PRIORITY_RANK: dict[str, int] = {
     "streema": 2,
     "radio_garden": 3,
     "tunein": 4,
-    "radio_browser": 5,
+    "zeno": 5,
+    "radio_browser": 6,
 }
 
 
@@ -719,6 +757,8 @@ def stable_id_from_candidate(c: Candidate) -> str:
         return stable_id_tunein(det)
     if src == "radio_browser":
         return stable_id_rb(c.name, c.stream_url)
+    if src == "zeno":
+        return stable_id_zeno(det, c.stream_url)
     h = sha1_str(f"{c.stream_url}|{json.dumps(sm, sort_keys=True)}")
     return f"zm_mg_{h[:16]}"
 
@@ -817,18 +857,20 @@ async def async_main():
     args = ap.parse_args()
 
     print(
-        "Discovering candidates (MyTuner + OnlineRadioBox + Streema + Radio Garden "
-        "[https://radio.garden Zambia API: country channels + all place maps] + "
+        "Discovering candidates (MyTuner + OnlineRadioBox + Streema + Zeno + "
+        "Radio Garden [https://radio.garden Zambia API: country channels + all place maps] + "
         "radio-browser ZM + filtered TuneIn)..."
     )
     mt = build_mytuner_candidates()
     orb = build_orb_candidates()
     st = build_streema_candidates()
+    zn = build_zeno_candidates(limit=max(args.max_probe, 220))
     base = await build_candidates(0)
-    cands = merge_candidates_priority(mt, orb, st, base)
+    cands = merge_candidates_priority(mt, orb, st, zn, base)
     print(f"MyTuner decrypted URLs: {len(mt)}")
     print(f"OnlineRadioBox stream buttons: {len(orb)}")
     print(f"Streema station profiles: {len(st)}")
+    print(f"Zeno discovered pages: {len(zn)}")
     print(f"After merge (deduped by URL): {len(cands)}")
 
     to_probe = cands[: args.max_probe]
