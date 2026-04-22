@@ -21,9 +21,13 @@ DATABASE_URL="postgresql://..."
 ACOUSTID_API_KEY="..."
 MUSICBRAINZ_USER_AGENT="MOSTIFY/1.0.0 ( you@example.com )"
 NODE_ENV=production
+ARCHIVE_UNRESOLVED_SAMPLES="true"
+UNRESOLVED_SAMPLE_MAX_PER_STATION="0"   # keep all unresolved audio captures (no pruning)
+SONG_SAMPLE_ARCHIVE_DIR="/opt/radio-monitor/data/song_samples"
+UNRESOLVED_SAMPLE_DIR="/opt/radio-monitor/data/unresolved_samples"
 ```
 
-Optional: `DEEZER_LOOKUP_ENABLED`, `SONG_SAMPLE_ARCHIVE_DIR`, `LOG_LEVEL`, etc.
+Optional: `DEEZER_LOOKUP_ENABLED`, `LOG_LEVEL`, etc.
 
 ```bash
 sudo install -d -o root -g root -m 0755 /etc/mostify-monitor

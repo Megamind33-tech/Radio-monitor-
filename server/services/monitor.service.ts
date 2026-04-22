@@ -754,6 +754,9 @@ export class MonitorService {
       });
 
       const keepRaw = parseEnvInt("UNRESOLVED_SAMPLE_MAX_PER_STATION", 25);
+      // Production retention mode:
+      // set UNRESOLVED_SAMPLE_MAX_PER_STATION=0 to disable pruning entirely.
+      if (keepRaw <= 0) return;
       const keep = Math.min(200, Math.max(1, keepRaw));
       const stale = await prisma.unresolvedSample.findMany({
         where: { stationId },
