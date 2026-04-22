@@ -10,6 +10,13 @@ export class MetadataService {
     logger.debug({ url }, "Reading stream metadata via ffprobe");
 
     return new Promise((resolve) => {
+      let settled = false;
+      const done = (value: NormalizedMetadata | null) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+
       // ffprobe -v quiet -show_format -show_streams -print_format json -i <url>
       // For ICY metadata, we often need to wait a few seconds or use specific flags
       const ffprobe = spawn('ffprobe', [
@@ -23,18 +30,24 @@ export class MetadataService {
       const timeout = setTimeout(() => {
         ffprobe.kill();
         logger.warn({ url }, "ffprobe metadata read timed out");
-        resolve(null);
+        done(null);
       }, 10000);
 
       ffprobe.stdout.on('data', (data) => {
         stdout += data;
       });
 
+      ffprobe.on('error', (error) => {
+        clearTimeout(timeout);
+        logger.warn({ url, error }, "ffprobe failed to start");
+        done(null);
+      });
+
       ffprobe.on('close', (code) => {
         clearTimeout(timeout);
         if (code !== 0) {
           logger.debug({ url, code }, "ffprobe exited with non-zero code");
-          resolve(null);
+          done(null);
           return;
         }
 
@@ -43,22 +56,22 @@ export class MetadataService {
           const tags = data.format?.tags;
           
           if (!tags) {
-            resolve(null);
+            done(null);
             return;
           }
 
           // ICY/Shoutcast metadata usually comes in StreamTitle
           const streamTitle = tags.StreamTitle || tags.title;
           if (!streamTitle) {
-            resolve(null);
+            done(null);
             return;
           }
 
           const normalized = this.parseStreamTitle(streamTitle);
-          resolve(normalized);
+          done(normalized);
         } catch (error) {
           logger.error({ error, stdout }, "Failed to parse ffprobe output");
-          resolve(null);
+          done(null);
         }
       });
     });

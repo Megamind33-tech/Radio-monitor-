@@ -776,8 +776,12 @@ def to_prisma_row(c: Candidate) -> dict | None:
     if c.icy_qualification in {"none", "error"}:
         return None
     source_ids = dict(c.source_map or {c.source: c.source_detail})
-    # good / partial / weak — all monitored (weak may improve over time)
-    is_active = c.icy_qualification in {"good", "partial", "weak"}
+    # Keep monitoring set stable by default: weak streams are stored in catalog
+    # but not auto-activated unless explicitly requested.
+    include_weak = os.environ.get("INCLUDE_WEAK_STATIONS", "").strip().lower() in {"1", "true", "yes"}
+    is_active = c.icy_qualification in {"good", "partial"} or (
+        include_weak and c.icy_qualification == "weak"
+    )
     return {
         "id": stable_id_from_candidate(c),
         "name": c.name,

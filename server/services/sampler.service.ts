@@ -19,6 +19,13 @@ export class SamplerService {
     logger.info({ url, durationSeconds, outputPath }, "Capturing audio sample");
 
     return new Promise((resolve) => {
+      let settled = false;
+      const done = (result: string | null) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+
       // ffmpeg -i <url> -t <duration> -vn -ac 1 -ar 11025 -f wav <output>
       // We use lower sample rate for fingerprinting (Chromaprint usually uses 11025 or 44100)
       const ffmpeg = spawn('ffmpeg', [
@@ -36,18 +43,25 @@ export class SamplerService {
         ffmpeg.kill();
         logger.warn({ url }, "ffmpeg sample capture timed out");
         if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-        resolve(null);
+        done(null);
       }, (durationSeconds + 10) * 1000);
+
+      ffmpeg.on('error', (error) => {
+        clearTimeout(timeout);
+        logger.warn({ error, url }, "ffmpeg failed to start");
+        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+        done(null);
+      });
 
       ffmpeg.on('close', (code) => {
         clearTimeout(timeout);
         if (code === 0 && fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
           logger.info({ outputPath }, "Sample captured successfully");
-          resolve(outputPath);
+          done(outputPath);
         } else {
           logger.warn({ code }, "ffmpeg failed to capture sample");
           if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-          resolve(null);
+          done(null);
         }
       });
     });

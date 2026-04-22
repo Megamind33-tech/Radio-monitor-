@@ -252,10 +252,19 @@ async function startServer() {
     const totalLogs = await prisma.detectionLog.count();
     const matchedLogs = await prisma.detectionLog.count({ where: { status: 'matched' } });
     const stationErrors = await prisma.jobRun.count({ where: { status: 'failure' } });
+    const recentWindow = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentLogs = await prisma.detectionLog.count({
+      where: { observedAt: { gte: recentWindow } },
+    });
+    const recentMatched = await prisma.detectionLog.count({
+      where: { observedAt: { gte: recentWindow }, status: "matched" },
+    });
     
     res.json({
       total_detections: totalLogs,
       match_rate: totalLogs > 0 ? (matchedLogs / totalLogs) : 0,
+      match_rate_24h: recentLogs > 0 ? (recentMatched / recentLogs) : 0,
+      detections_24h: recentLogs,
       errors_count: stationErrors
     });
   });

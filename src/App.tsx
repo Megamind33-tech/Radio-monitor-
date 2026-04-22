@@ -75,6 +75,8 @@ interface DetectionLog {
 interface Metrics {
   total_detections: number;
   match_rate: number;
+  match_rate_24h?: number;
+  detections_24h?: number;
   errors_count: number;
 }
 
@@ -253,8 +255,8 @@ export default function App() {
           <div className="flex gap-4">
             <MetricCard 
               label="Match Rate" 
-              value={metrics ? `${(metrics.match_rate * 100).toFixed(1)}%` : '--'} 
-              sub="Avg confidence"
+              value={metrics ? `${((metrics.match_rate_24h ?? metrics.match_rate) * 100).toFixed(1)}%` : '--'} 
+              sub={metrics?.detections_24h ? `Last 24h (${metrics.detections_24h} detections)` : 'Last 24h'}
             />
             <MetricCard 
               label="Monitoring" 
