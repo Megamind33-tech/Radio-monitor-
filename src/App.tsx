@@ -15,6 +15,7 @@ import {
   BarChart3,
   Download,
   Eye,
+  MoreHorizontal,
   Globe,
   Music,
   LineChart
@@ -493,7 +494,7 @@ export default function App() {
       </nav>
 
       {/* Main Content */}
-      <main className="pl-32 pr-8 py-12 max-w-[1200px] mx-auto">
+      <main className="pl-28 pr-6 py-10 max-w-[1650px] mx-auto">
         {/* Header */}
         <header className="mb-8 flex flex-wrap justify-between items-end gap-6">
           <div>
@@ -586,16 +587,16 @@ export default function App() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="w-full text-left text-sm table-fixed min-w-[980px]">
                 <thead>
                   <tr className="border-b border-white/5 text-gray-500">
-                    <th className="pb-3 font-medium">Station</th>
-                    <th className="pb-3 font-medium">Province</th>
-                    <th className="pb-3 font-medium">District</th>
-                    <th className="pb-3 font-medium">Title</th>
-                    <th className="pb-3 font-medium">Artist</th>
-                    <th className="pb-3 font-medium">Album</th>
-                    <th className="pb-3 font-medium text-right">Plays</th>
+                    <th className="pb-3 font-medium w-[20%]">Station</th>
+                    <th className="pb-3 font-medium w-[13%]">Province</th>
+                    <th className="pb-3 font-medium w-[13%]">District</th>
+                    <th className="pb-3 font-medium w-[20%]">Title</th>
+                    <th className="pb-3 font-medium w-[16%]">Artist</th>
+                    <th className="pb-3 font-medium w-[12%]">Album</th>
+                    <th className="pb-3 font-medium text-right w-[6%]">Plays</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -610,12 +611,12 @@ export default function App() {
                       const st = stations.find((s) => s.id === row.stationId);
                       return (
                         <tr key={`${row.stationId}-${row.title}-${i}`} className="border-b border-white/5 hover:bg-white/5">
-                          <td className="py-3 font-medium">{st?.name ?? row.stationId}</td>
-                          <td className="py-3 text-gray-400">{st?.province || '—'}</td>
-                          <td className="py-3 text-gray-400">{st?.district || '—'}</td>
-                          <td className="py-3">{row.title || '—'}</td>
-                          <td className="py-3 text-gray-400">{row.artist || '—'}</td>
-                          <td className="py-3 text-gray-500">{row.album || '—'}</td>
+                          <td className="py-3 font-medium truncate pr-2" title={st?.name ?? row.stationId}>{st?.name ?? row.stationId}</td>
+                          <td className="py-3 text-gray-400 truncate pr-2" title={st?.province || '—'}>{st?.province || '—'}</td>
+                          <td className="py-3 text-gray-400 truncate pr-2" title={st?.district || '—'}>{st?.district || '—'}</td>
+                          <td className="py-3 truncate pr-2" title={row.title || '—'}>{row.title || '—'}</td>
+                          <td className="py-3 text-gray-400 truncate pr-2" title={row.artist || '—'}>{row.artist || '—'}</td>
+                          <td className="py-3 text-gray-500 truncate pr-2" title={row.album || '—'}>{row.album || '—'}</td>
                           <td className="py-3 text-right font-mono">{row.playCount}</td>
                         </tr>
                       );
@@ -660,26 +661,26 @@ export default function App() {
              </div>
              
              <div className="overflow-x-auto">
-                <table className="w-full text-left">
+                <table className="w-full text-left table-fixed min-w-[980px]">
                   <thead>
                     <tr className="border-b border-white/5 text-gray-500 text-sm">
-                      <th className="pb-4 font-medium">Time</th>
-                      <th className="pb-4 font-medium">Station</th>
-                      <th className="pb-4 font-medium">Track Info</th>
-                      <th className="pb-4 font-medium">Method</th>
-                      <th className="pb-4 font-medium">Status</th>
+                      <th className="pb-4 font-medium w-[18%]">Time</th>
+                      <th className="pb-4 font-medium w-[20%]">Station</th>
+                      <th className="pb-4 font-medium w-[42%]">Track Info</th>
+                      <th className="pb-4 font-medium w-[12%]">Method</th>
+                      <th className="pb-4 font-medium w-[8%]">Status</th>
                     </tr>
                   </thead>
                   <tbody className="text-sm">
                     {logs.map((log) => (
                       <tr key={log.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
                         <td className="py-4 text-gray-400 whitespace-nowrap">{new Date(log.observedAt).toLocaleString()}</td>
-                        <td className="py-4 font-medium">{log.station?.name || stationNameById.get(log.stationId) || "Unknown station"}</td>
+                        <td className="py-4 font-medium truncate pr-2" title={log.station?.name || stationNameById.get(log.stationId) || "Unknown station"}>{log.station?.name || stationNameById.get(log.stationId) || "Unknown station"}</td>
                         <td className="py-4">
-                          <div className="flex flex-col">
-                            <span className="font-semibold group-hover:text-brand-cyan transition-colors">{log.titleFinal || "Unknown track"}</span>
-                            <span className="text-xs text-gray-500">{log.artistFinal || "Unknown artist"}</span>
-                            <span className="text-xs text-gray-600">
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-semibold group-hover:text-brand-cyan transition-colors truncate" title={log.titleFinal || "Unknown track"}>{log.titleFinal || "Unknown track"}</span>
+                            <span className="text-xs text-gray-500 truncate" title={log.artistFinal || "Unknown artist"}>{log.artistFinal || "Unknown artist"}</span>
+                            <span className="text-xs text-gray-600 truncate">
                               {log.genreFinal ? `Genre: ${log.genreFinal}` : ''}
                               {log.sourceProvider ? `${log.genreFinal ? ' • ' : ''}Source: ${log.sourceProvider}` : ''}
                             </span>
@@ -932,19 +933,18 @@ function StationsManagementTable({
         </button>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm min-w-[980px]">
+      <div className="overflow-x-auto rounded-2xl border border-white/5">
+        <table className="w-full text-sm min-w-[1200px] table-fixed">
           <thead>
             <tr className="border-b border-white/10 text-left text-gray-400">
-              <th className="py-3 font-medium">Station ID</th>
-              <th className="py-3 font-medium">Name</th>
-              <th className="py-3 font-medium">Country</th>
-              <th className="py-3 font-medium">Location</th>
-              <th className="py-3 font-medium">Now playing</th>
-              <th className="py-3 font-medium">State</th>
-              <th className="py-3 font-medium">Matched plays</th>
-              <th className="py-3 font-medium">URL</th>
-              <th className="py-3 font-medium text-right">Actions</th>
+              <th className="py-3 px-3 font-medium w-[12%]">Station ID</th>
+              <th className="py-3 px-3 font-medium w-[20%]">Name</th>
+              <th className="py-3 px-3 font-medium w-[10%]">Country</th>
+              <th className="py-3 px-3 font-medium w-[14%]">Location</th>
+              <th className="py-3 px-3 font-medium w-[22%]">Now playing</th>
+              <th className="py-3 px-3 font-medium w-[10%]">State</th>
+              <th className="py-3 px-3 font-medium w-[6%]">Plays</th>
+              <th className="py-3 px-3 font-medium text-right w-[6%]">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -959,14 +959,14 @@ function StationsManagementTable({
             ))}
             {!loading && stations.length === 0 && (
               <tr>
-                <td colSpan={9} className="py-10 text-center text-gray-500">
+                <td colSpan={8} className="py-10 text-center text-gray-500">
                   No stations found for the current filter/search.
                 </td>
               </tr>
             )}
             {loading && (
               <tr>
-                <td colSpan={9} className="py-10 text-center text-gray-500">
+                <td colSpan={8} className="py-10 text-center text-gray-500">
                   Loading stations…
                 </td>
               </tr>
@@ -991,6 +991,7 @@ function StationTableRow({
 }) {
   const [probing, setProbing] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const lastPoll = station.lastPollAt ? new Date(station.lastPollAt) : null;
   const pollOk = station.lastPollStatus === 'ok';
@@ -1024,28 +1025,33 @@ function StationTableRow({
     }
   };
 
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [station.id]);
+
   return (
     <tr className="border-b border-white/5 hover:bg-white/5">
-      <td className="py-3 text-xs text-gray-400 font-mono">{station.id}</td>
-      <td className="py-3">
+      <td className="py-3 px-3 text-xs text-gray-400 font-mono whitespace-nowrap truncate" title={station.id}>{station.id}</td>
+      <td className="py-3 px-3 min-w-0">
         <div className="font-medium">{station.name}</div>
-        <div className="text-[11px] text-gray-500 mt-0.5">{station.frequencyMhz ? `${station.frequencyMhz} MHz` : 'Frequency not set'}</div>
+        <div className="text-[11px] text-gray-500 mt-0.5 truncate">{station.frequencyMhz ? `${station.frequencyMhz} MHz` : 'Frequency not set'}</div>
       </td>
-      <td className="py-3 text-gray-300">{station.country}</td>
-      <td className="py-3 text-gray-400">{[station.province, station.district].filter(Boolean).join(' / ') || '—'}</td>
-      <td className="py-3">
-        <div className="font-medium text-gray-200">{station.currentNowPlaying?.title || '—'}</div>
-        <div className="text-xs text-gray-500">{station.currentNowPlaying?.artist || 'No current track'}</div>
+      <td className="py-3 px-3 text-gray-300 truncate" title={station.country}>{station.country}</td>
+      <td className="py-3 px-3 text-gray-400 truncate" title={[station.province, station.district].filter(Boolean).join(' / ') || '—'}>
+        {[station.province, station.district].filter(Boolean).join(' / ') || '—'}
       </td>
-      <td className="py-3">
+      <td className="py-3 px-3 min-w-0">
+        <div className="font-medium text-gray-200 truncate" title={station.currentNowPlaying?.title || '—'}>{station.currentNowPlaying?.title || '—'}</div>
+        <div className="text-xs text-gray-500 truncate" title={station.currentNowPlaying?.artist || 'No current track'}>{station.currentNowPlaying?.artist || 'No current track'}</div>
+      </td>
+      <td className="py-3 px-3">
         <span className={`text-[11px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg border ${badge.className}`}>
           {badge.text}
         </span>
       </td>
-      <td className="py-3 text-gray-300 font-mono">{spin?.detectionCount ?? 0}</td>
-      <td className="py-3 text-xs text-gray-500 max-w-[220px] truncate" title={station.streamUrl}>{station.streamUrl}</td>
-      <td className="py-3">
-        <div className="flex justify-end gap-2">
+      <td className="py-3 px-3 text-gray-300 font-mono whitespace-nowrap">{spin?.detectionCount ?? 0}</td>
+      <td className="py-3 px-3">
+        <div className="flex justify-end items-center gap-2">
           <button
             type="button"
             onClick={() => onOpenStation(station.id)}
@@ -1054,22 +1060,52 @@ function StationTableRow({
             <Eye className="w-3.5 h-3.5" />
             View
           </button>
-          <button
-            type="button"
-            disabled={probing || !station.isActive}
-            onClick={handleProbe}
-            className="px-2.5 py-1.5 rounded-lg border border-white/10 bg-black/30 hover:bg-black/50 text-xs disabled:opacity-40"
-          >
-            {probing ? 'Probing…' : 'Probe'}
-          </button>
-          <button
-            type="button"
-            disabled={toggling}
-            onClick={handleToggle}
-            className="px-2.5 py-1.5 rounded-lg border border-white/10 bg-black/30 hover:bg-black/50 text-xs disabled:opacity-40"
-          >
-            {station.isActive ? 'Pause' : 'Resume'}
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label="More actions"
+              onClick={() => setMenuOpen((open) => !open)}
+              className="px-2.5 py-1.5 rounded-lg border border-white/10 bg-black/30 hover:bg-black/50 text-xs inline-flex items-center gap-1"
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" />
+              More
+            </button>
+            {menuOpen ? (
+              <div className="absolute right-0 mt-1 w-44 bg-zinc-900 border border-white/10 rounded-xl shadow-xl z-20 p-1">
+                <button
+                  type="button"
+                  disabled={probing || !station.isActive}
+                  onClick={async () => {
+                    setMenuOpen(false);
+                    await handleProbe();
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-lg text-xs hover:bg-white/10 disabled:opacity-40"
+                >
+                  {probing ? 'Probing…' : 'Probe now'}
+                </button>
+                <button
+                  type="button"
+                  disabled={toggling}
+                  onClick={async () => {
+                    setMenuOpen(false);
+                    await handleToggle();
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-lg text-xs hover:bg-white/10 disabled:opacity-40"
+                >
+                  {station.isActive ? 'Pause monitoring' : 'Resume monitoring'}
+                </button>
+                <a
+                  href={station.streamUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setMenuOpen(false)}
+                  className="block px-3 py-2 rounded-lg text-xs hover:bg-white/10 text-gray-200"
+                >
+                  Open stream URL
+                </a>
+              </div>
+            ) : null}
+          </div>
         </div>
       </td>
     </tr>
@@ -1392,23 +1428,23 @@ function StationDetailPage({
             </select>
           </div>
           <div className="overflow-x-auto max-h-[480px]">
-            <table className="w-full text-sm min-w-[760px]">
+            <table className="w-full text-sm min-w-[760px] table-fixed">
               <thead>
                 <tr className="border-b border-white/10 text-gray-400">
-                  <th className="py-2.5 text-left font-medium">Title</th>
-                  <th className="py-2.5 text-left font-medium">Artist</th>
-                  <th className="py-2.5 text-left font-medium">Album</th>
-                  <th className="py-2.5 text-left font-medium">Normalization</th>
-                  <th className="py-2.5 text-right font-medium">Plays</th>
+                  <th className="py-2.5 text-left font-medium w-[28%]">Title</th>
+                  <th className="py-2.5 text-left font-medium w-[22%]">Artist</th>
+                  <th className="py-2.5 text-left font-medium w-[20%]">Album</th>
+                  <th className="py-2.5 text-left font-medium w-[22%]">Normalization</th>
+                  <th className="py-2.5 text-right font-medium w-[8%]">Plays</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredSongSpins.map((row, idx) => (
                   <tr key={`${row.stationId}-${row.title}-${idx}`} className="border-b border-white/5 hover:bg-white/5">
-                    <td className="py-2.5">{row.title || '—'}</td>
-                    <td className="py-2.5 text-gray-400">{row.artist || '—'}</td>
-                    <td className="py-2.5 text-gray-500">{row.album || '—'}</td>
-                    <td className="py-2.5 text-xs text-gray-500">
+                    <td className="py-2.5 truncate pr-2" title={row.title || '—'}>{row.title || '—'}</td>
+                    <td className="py-2.5 text-gray-400 truncate pr-2" title={row.artist || '—'}>{row.artist || '—'}</td>
+                    <td className="py-2.5 text-gray-500 truncate pr-2" title={row.album || '—'}>{row.album || '—'}</td>
+                    <td className="py-2.5 text-xs text-gray-500 truncate pr-2">
                       {row.mixRuleApplied ? (
                         <span className="inline-flex items-center gap-1">
                           <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
@@ -1446,13 +1482,13 @@ function StationDetailPage({
             <span className="text-xs text-gray-500">{logs.length} rows</span>
           </div>
           <div className="overflow-x-auto max-h-[480px]">
-            <table className="w-full text-sm min-w-[560px]">
+            <table className="w-full text-sm min-w-[560px] table-fixed">
               <thead>
                 <tr className="border-b border-white/10 text-gray-400">
-                  <th className="py-2.5 text-left font-medium">Time</th>
-                  <th className="py-2.5 text-left font-medium">Track</th>
-                  <th className="py-2.5 text-left font-medium">Method</th>
-                  <th className="py-2.5 text-left font-medium">Status</th>
+                  <th className="py-2.5 text-left font-medium w-[24%]">Time</th>
+                  <th className="py-2.5 text-left font-medium w-[44%]">Track</th>
+                  <th className="py-2.5 text-left font-medium w-[18%]">Method</th>
+                  <th className="py-2.5 text-left font-medium w-[14%]">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -1460,8 +1496,8 @@ function StationDetailPage({
                   <tr key={log.id} className="border-b border-white/5 hover:bg-white/5">
                     <td className="py-2.5 text-gray-400 whitespace-nowrap">{new Date(log.observedAt).toLocaleString()}</td>
                     <td className="py-2.5">
-                      <div>{log.titleFinal || 'Unknown track'}</div>
-                      <div className="text-xs text-gray-500">{log.artistFinal || 'Unknown artist'}</div>
+                      <div className="truncate" title={log.titleFinal || 'Unknown track'}>{log.titleFinal || 'Unknown track'}</div>
+                      <div className="text-xs text-gray-500 truncate" title={log.artistFinal || 'Unknown artist'}>{log.artistFinal || 'Unknown artist'}</div>
                     </td>
                     <td className="py-2.5 text-xs text-gray-400">{formatMethod(log.detectionMethod)}</td>
                     <td className="py-2.5">

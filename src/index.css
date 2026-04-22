@@ -14,5 +14,10 @@
   body {
     @apply bg-brand-bg text-gray-100 font-sans;
   }
+
+  th,
+  td {
+    vertical-align: top;
+  }
 }
 
