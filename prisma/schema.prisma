@@ -34,11 +34,14 @@ model Station {
   metadataStaleSeconds       Int      @default(180)
   sampleSeconds              Int      @default(20)
   pollIntervalSeconds        Int      @default(60)
+  /// When true, successful detections store a ~30s WAV under SONG_SAMPLE_ARCHIVE_DIR for reference
+  archiveSongSamples         Boolean  @default(false)
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 
   logs              DetectionLog[]
   currentNowPlaying CurrentNowPlaying?
+  songSamples       SongSampleArchive[]
 }
 
 model DetectionLog {
@@ -61,10 +64,27 @@ model DetectionLog {
   isrcList        String?  // JSON string
   sampleSeconds   Int?
   processingMs    Int?
+  /// Track length from MusicBrainz/iTunes catalog (ms) when resolved - used to avoid duplicate logs during one spin
+  trackDurationMs Int?
   status          String   // matched, unresolved, ignored
   reasonCode      String?
 
   station Station @relation(fields: [stationId], references: [id])
+  songSample SongSampleArchive?
+}
+
+/// Optional ~30s WAV per detection for future fingerprinting / dispute evidence
+model SongSampleArchive {
+  id             String   @id @default(cuid())
+  detectionLogId String   @unique
+  stationId      String
+  filePath       String
+  durationSec    Int      @default(30)
+  chromaprint    String?
+  createdAt      DateTime @default(now())
+
+  station      Station       @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  detectionLog DetectionLog  @relation(fields: [detectionLogId], references: [id], onDelete: Cascade)
 }
 
 model CurrentNowPlaying {
