@@ -13,6 +13,7 @@
     "harvest:zambia": "python3 scripts/zambia_station_harvest.py --max-probe 800 --out scripts/data/zambia_harvest.json",
     "import:zambia": "node scripts/import_zambia_stations.mjs scripts/data/zambia_harvest.json",
     "import:zambia:replace": "node scripts/import_zambia_stations.mjs --replace scripts/data/zambia_harvest.json",
+    "sync:zambia": "node scripts/sync_zambia_catalog.mjs",
     "audit:mytuner-zambia": "python3 scripts/mytuner_zambia_audit.py scripts/data/zambia_harvest.json scripts/data/mytuner_zambia_audit.csv",
     "poll:orb-tracks": "node scripts/orb_track_poller.mjs"
   },

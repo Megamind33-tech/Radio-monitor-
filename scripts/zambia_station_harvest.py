@@ -22,7 +22,8 @@ import ssl
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+import dataclasses
+from dataclasses import dataclass, field
 
 import aiohttp
 
@@ -65,8 +66,14 @@ class Candidate:
     stream_url: str
     source: str  # radio_garden | tunein | radio_browser | mytuner | onlineradiobox | streema
     source_detail: str  # channel id or tunein id
+    """All discovery sources for this stream URL (merged when same URL from multiple sites)."""
+    source_map: dict[str, str] = field(default_factory=dict)
     icy_qualification: str = "pending"
     icy_sample_title: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.source_map and self.source:
+            self.source_map = {self.source: self.source_detail}
 
 
 def fetch_json(url: str) -> dict:
@@ -515,9 +522,25 @@ async def build_candidates(_max_total: int) -> list[Candidate]:
                 su = await resolve_rg(session, cid)
             except Exception:
                 return
-            if not su.startswith("http") or su in by_url:
+            if not su.startswith("http"):
                 return
-            by_url[su] = Candidate(
+            norm = mytuner_normalize_url(su)
+            if not norm:
+                return
+            sm_rg = {"radio_garden": cid}
+            if norm in by_url:
+                ex = by_url[norm]
+                merged = dict(ex.source_map or {ex.source: ex.source_detail})
+                if "radio_garden" not in merged:
+                    merged["radio_garden"] = cid
+                by_url[norm] = dataclasses.replace(
+                    ex,
+                    source_map=merged,
+                    source=ex.source,
+                    source_detail=ex.source_detail,
+                )
+                return
+            by_url[norm] = Candidate(
                 stable_id=stable_id_rg(cid),
                 name=name,
                 district=district,
@@ -526,6 +549,7 @@ async def build_candidates(_max_total: int) -> list[Candidate]:
                 stream_url=su,
                 source="radio_garden",
                 source_detail=cid,
+                source_map=sm_rg,
             )
 
         # --- Radio Garden: "Popular" / country-index channels (same API as https://radio.garden/visit/zambia/...) ---
@@ -540,11 +564,28 @@ async def build_candidates(_max_total: int) -> list[Candidate]:
 
         # --- radio-browser: country ZM only ---
         for name, su in fetch_radio_browser_zambia_stations():
-            if su in by_url:
+            if not su.startswith("http"):
+                continue
+            norm = mytuner_normalize_url(su)
+            if not norm:
+                continue
+            det_rb = name[:80]
+            sm_rb = {"radio_browser": det_rb}
+            if norm in by_url:
+                ex = by_url[norm]
+                merged = dict(ex.source_map or {ex.source: ex.source_detail})
+                if "radio_browser" not in merged:
+                    merged["radio_browser"] = det_rb
+                by_url[norm] = dataclasses.replace(
+                    ex,
+                    source_map=merged,
+                    source=ex.source,
+                    source_detail=ex.source_detail,
+                )
                 continue
             dist = infer_district_from_tunein_name(name)
             prov = province_for_tunein_district(dist) if dist != "Zambia" else ""
-            by_url[su] = Candidate(
+            by_url[norm] = Candidate(
                 stable_id=stable_id_rb(name, su),
                 name=name,
                 district=dist,
@@ -552,7 +593,8 @@ async def build_candidates(_max_total: int) -> list[Candidate]:
                 frequency_mhz=extract_frequency_mhz(name),
                 stream_url=su,
                 source="radio_browser",
-                source_detail=name[:80],
+                source_detail=det_rb,
+                source_map=sm_rb,
             )
 
         # --- TuneIn: only stations that look Zambian by name ---
@@ -600,11 +642,25 @@ async def build_candidates(_max_total: int) -> list[Candidate]:
                     continue
                 if not su.startswith("http"):
                     continue
-                if su in by_url:
+                norm = mytuner_normalize_url(su)
+                if not norm:
+                    continue
+                sm_tn = {"tunein": sid}
+                if norm in by_url:
+                    ex = by_url[norm]
+                    merged = dict(ex.source_map or {ex.source: ex.source_detail})
+                    if "tunein" not in merged:
+                        merged["tunein"] = sid
+                    by_url[norm] = dataclasses.replace(
+                        ex,
+                        source_map=merged,
+                        source=ex.source,
+                        source_detail=ex.source_detail,
+                    )
                     continue
                 dist = infer_district_from_tunein_name(name)
                 prov = province_for_tunein_district(dist) if dist != "Zambia" else ""
-                by_url[su] = Candidate(
+                by_url[norm] = Candidate(
                     stable_id=stable_id_tunein(sid),
                     name=name,
                     district=dist,
@@ -613,23 +669,94 @@ async def build_candidates(_max_total: int) -> list[Candidate]:
                     stream_url=su,
                     source="tunein",
                     source_detail=sid,
+                    source_map=sm_tn,
                 )
 
     return list(by_url.values())
 
 
+# When the same direct stream URL appears on multiple sites, keep one row but merge
+# source hints (Radio Garden channel id + ORB id + MyTuner page, etc.) for self-healing / ORB poller.
+SOURCE_PRIORITY_RANK: dict[str, int] = {
+    "mytuner": 0,
+    "onlineradiobox": 1,
+    "streema": 2,
+    "radio_garden": 3,
+    "tunein": 4,
+    "radio_browser": 5,
+}
+
+
+def _candidate_source_rank(c: Candidate) -> int:
+    sm = c.source_map or {c.source: c.source_detail}
+    return min((SOURCE_PRIORITY_RANK.get(k, 99) for k in sm), default=99)
+
+
+def _canonical_source_fields(merged: dict[str, str]) -> tuple[str, str]:
+    """Pick primary source key for stable_id (mytuner > orb > ...)."""
+    if not merged:
+        return "", ""
+    best = min(merged.keys(), key=lambda k: SOURCE_PRIORITY_RANK.get(k, 99))
+    return best, merged[best]
+
+
+def stable_id_from_candidate(c: Candidate) -> str:
+    """Primary DB id from merged sources (same priority as _canonical_source_fields)."""
+    sm = c.source_map or {c.source: c.source_detail}
+    src, det = _canonical_source_fields(sm)
+    det = (det or "").strip()
+    if src == "mytuner":
+        if det.isdigit():
+            return stable_id_mytuner(det, "")
+        return stable_id_mytuner("", det)
+    if src == "onlineradiobox":
+        return stable_id_orb(det, c.stream_url)
+    if src == "streema":
+        return stable_id_streema(det)
+    if src == "radio_garden":
+        return stable_id_rg(det)
+    if src == "tunein":
+        return stable_id_tunein(det)
+    if src == "radio_browser":
+        return stable_id_rb(c.name, c.stream_url)
+    h = sha1_str(f"{c.stream_url}|{json.dumps(sm, sort_keys=True)}")
+    return f"zm_mg_{h[:16]}"
+
+
 def merge_candidates_priority(*sequences: list[Candidate]) -> list[Candidate]:
-    """De-dupe by normalized stream URL; earlier sequences win (MyTuner > ORB > rest)."""
-    seen: set[str] = set()
-    merged: list[Candidate] = []
+    """De-dupe by normalized stream URL; merge source hints across sites; keep highest-priority row for id/name."""
+    by_norm: dict[str, Candidate] = {}
     for seq in sequences:
         for c in seq:
             key = mytuner_normalize_url(c.stream_url)
-            if not key or key in seen:
+            if not key:
                 continue
-            seen.add(key)
-            merged.append(c)
-    return merged
+            sm = dict(c.source_map or {c.source: c.source_detail})
+            if key not in by_norm:
+                src, det = _canonical_source_fields(sm)
+                by_norm[key] = dataclasses.replace(c, source_map=sm, source=src, source_detail=det)
+                continue
+            ex = by_norm[key]
+            merged_sources = dict(ex.source_map or {ex.source: ex.source_detail})
+            merged_sources.update(sm)
+            src, det = _canonical_source_fields(merged_sources)
+            rc = _candidate_source_rank(c)
+            rx = _candidate_source_rank(ex)
+            if rc < rx:
+                by_norm[key] = dataclasses.replace(
+                    c,
+                    source_map=merged_sources,
+                    source=src,
+                    source_detail=det,
+                )
+            else:
+                by_norm[key] = dataclasses.replace(
+                    ex,
+                    source_map=merged_sources,
+                    source=src,
+                    source_detail=det,
+                )
+    return list(by_norm.values())
 
 
 async def probe_batch(candidates: list[Candidate], concurrency: int = 25) -> None:
@@ -648,11 +775,11 @@ def to_prisma_row(c: Candidate) -> dict | None:
     """Skip none/error — do not import dead streams."""
     if c.icy_qualification in {"none", "error"}:
         return None
-    source_ids = {c.source: c.source_detail}
+    source_ids = dict(c.source_map or {c.source: c.source_detail})
     # good / partial / weak — all monitored (weak may improve over time)
     is_active = c.icy_qualification in {"good", "partial", "weak"}
     return {
-        "id": c.stable_id,
+        "id": stable_id_from_candidate(c),
         "name": c.name,
         "country": "Zambia",
         "district": c.district,
