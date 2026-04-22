@@ -187,6 +187,10 @@ sudo systemctl start zamplay-monitor
 sudo journalctl -u zamplay-monitor -f
 ```
 
+### Node/React monitor (dashboard, Prisma, ORB poller)
+
+For the **TypeScript server** (`npm run build` then `npm run start`), timers for **OnlineRadioBox** track polling, and optional **stream health** CSV audits, use the ready-made units under `deploy/systemd/` and follow **`deploy/README.md`** (paths, `EnvironmentFile`, `which node`, `prisma migrate deploy`).
+
 ## What this does NOT do yet (roadmap)
 
 1. **Fuzzy match against your ZAMCOPS member catalog.** `raw_title` is whatever the station typed: "Macky 2", "Macky2", "MACKY II" are different strings. Next step is a matching layer using `rapidfuzz` against a `zamcops_songs` table.

@@ -1,0 +1,16 @@
+[Unit]
+Description=MOSTIFY stream health audit (ICY samples CSV)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/radio-monitor
+EnvironmentFile=-/etc/mostify-monitor/mostify-monitor.env
+# Replace with: which node
+ExecStart=/usr/bin/node scripts/stream_health_audit.mjs --out scripts/data/stream_health_audit.csv
+# User=mostify
+# Group=mostify
+
+[Install]
+WantedBy=multi-user.target
