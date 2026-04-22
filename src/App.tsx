@@ -42,6 +42,13 @@ interface Station {
   lastPollAt?: string | null;
   lastPollStatus?: string | null;
   lastPollError?: string | null;
+  monitorState?: 'ACTIVE_MUSIC' | 'ACTIVE_NO_MATCH' | 'ACTIVE_TALK' | 'DEGRADED' | 'INACTIVE' | 'UNKNOWN';
+  monitorStateReason?: string | null;
+  contentClassification?: 'music' | 'talk' | 'mixed' | 'unknown';
+  visibilityEnabled?: boolean;
+  lastHealthyAt?: string | null;
+  lastGoodAudioAt?: string | null;
+  lastSongDetectedAt?: string | null;
   streamRefreshedAt?: string | null;
   currentNowPlaying?: {
     title: string;
@@ -665,6 +672,32 @@ function MetricCard({ label, value, sub }: any) {
   );
 }
 
+function monitorBadge(station: Station, pollErr: boolean, stalePoll: boolean, pollOk: boolean, lastPoll: Date | null) {
+  const state = station.monitorState || 'UNKNOWN';
+  if (!station.isActive) {
+    return { text: 'Offline', className: 'border-white/10 text-gray-500' };
+  }
+  if (state === 'INACTIVE') {
+    return { text: 'Offline', className: 'border-red-500/40 text-red-300' };
+  }
+  if (state === 'DEGRADED') {
+    return { text: 'Degraded', className: 'border-amber-500/40 text-amber-200' };
+  }
+  if (state === 'ACTIVE_TALK') {
+    return { text: 'Talk show', className: 'border-purple-500/40 text-purple-200' };
+  }
+  if (state === 'ACTIVE_MUSIC') {
+    return { text: 'Music detected', className: 'border-green-500/30 text-green-300' };
+  }
+  if (state === 'ACTIVE_NO_MATCH') {
+    return { text: 'No current song match', className: 'border-cyan-500/40 text-cyan-200' };
+  }
+  if (pollErr) return { text: 'Stream error', className: 'border-red-500/40 text-red-300' };
+  if (stalePoll) return { text: 'No recent poll', className: 'border-amber-500/40 text-amber-200' };
+  if (pollOk || lastPoll) return { text: 'Active', className: 'border-green-500/30 text-green-300' };
+  return { text: 'Starting…', className: 'border-white/10 text-gray-500' };
+}
+
 function StationCard({ station, spin, onProbe }: { station: Station, spin?: StationSpinSummary, onProbe: () => void }) {
   const [probing, setProbing] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -687,6 +720,7 @@ function StationCard({ station, spin, onProbe }: { station: Station, spin?: Stat
     lastPoll != null &&
     Number.isFinite(lastPoll.getTime()) &&
     Date.now() - lastPoll.getTime() > Math.max(120_000, pollMs * 4);
+  const badge = monitorBadge(station, pollErr, stalePoll, pollOk, lastPoll);
 
   const handleProbe = async () => {
     setProbing(true);
@@ -717,32 +751,12 @@ function StationCard({ station, spin, onProbe }: { station: Station, spin?: Stat
       className="group bg-white/5 border border-white/10 hover:border-brand-cyan/30 rounded-[2.5rem] p-8 transition-all hover:bg-white/10 flex flex-col gap-8 relative overflow-hidden"
     >
       <div className="absolute top-0 right-0 p-8 flex flex-col items-end gap-2">
-        <div className={`w-2 h-2 rounded-full ${station.isActive ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+        <div className={`w-2 h-2 rounded-full ${station.isActive && station.monitorState !== 'INACTIVE' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
         <span
-          className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-lg border ${
-            !station.isActive
-              ? 'border-white/10 text-gray-500'
-              : pollErr
-                ? 'border-red-500/40 text-red-300'
-                : stalePoll
-                  ? 'border-amber-500/40 text-amber-200'
-                  : pollOk || lastPoll
-                    ? 'border-green-500/30 text-green-300'
-                    : 'border-white/10 text-gray-500'
-          }`}
-          title={station.lastPollError || undefined}
+          className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-lg border ${badge.className}`}
+          title={station.monitorStateReason || station.lastPollError || undefined}
         >
-          {!station.isActive
-            ? 'Inactive'
-            : pollErr
-              ? 'Stream error'
-              : stalePoll
-                ? 'No recent poll'
-                : pollOk
-                  ? 'Online'
-                  : lastPoll
-                    ? 'Checked'
-                    : 'Starting…'}
+          {badge.text}
         </span>
       </div>
 
@@ -782,7 +796,13 @@ function StationCard({ station, spin, onProbe }: { station: Station, spin?: Stat
                 </>
               ) : null}
               <span>•</span>
-              <span>{station.isActive ? 'Live Monitoring' : 'Inactive'}</span>
+              <span>{station.isActive ? `State: ${station.monitorState || 'UNKNOWN'}` : 'Inactive'}</span>
+            </div>
+            <div className="text-[11px] text-gray-500 mt-1 space-y-0.5">
+              <p>Last checked: {station.lastPollAt ? new Date(station.lastPollAt).toLocaleString() : '—'}</p>
+              <p>Last healthy: {station.lastHealthyAt ? new Date(station.lastHealthyAt).toLocaleString() : '—'}</p>
+              <p>Last good audio: {station.lastGoodAudioAt ? new Date(station.lastGoodAudioAt).toLocaleString() : '—'}</p>
+              <p>Last song detected: {station.lastSongDetectedAt ? new Date(station.lastSongDetectedAt).toLocaleString() : '—'}</p>
             </div>
             {spin && spin.detectionCount > 0 ? (
               <p className="text-[11px] text-gray-500 mt-1">
@@ -953,9 +973,14 @@ function StationCard({ station, spin, onProbe }: { station: Station, spin?: Stat
             <p className="text-[10px] text-gray-600">URL auto-refreshed: {new Date(station.streamRefreshedAt).toLocaleString()}</p>
           ) : null}
           {cardError ? <p className="text-xs text-amber-300">{cardError}</p> : null}
-          {station.lastPollError && pollErr ? (
+          {station.lastPollError && (pollErr || station.monitorState === 'DEGRADED' || station.monitorState === 'INACTIVE') ? (
             <p className="text-[11px] text-red-300/90 break-words" title={station.lastPollError}>
               {station.lastPollError.length > 220 ? `${station.lastPollError.slice(0, 220)}…` : station.lastPollError}
+            </p>
+          ) : null}
+          {station.monitorStateReason ? (
+            <p className="text-[11px] text-amber-200/90 break-words" title={station.monitorStateReason}>
+              Reason: {station.monitorStateReason}
             </p>
           ) : null}
         </div>

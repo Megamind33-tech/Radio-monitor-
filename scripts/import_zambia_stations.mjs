@@ -43,6 +43,27 @@ function mergeSourceIdsJson(a, b) {
   return Object.keys(out).length ? JSON.stringify(out) : null;
 }
 
+function validateCandidateStreamUrl(url) {
+  const canonicalUrl = String(url || "").trim();
+  if (!canonicalUrl.startsWith("http")) {
+    return { accepted: false, reason: "non_http_url", canonicalUrl };
+  }
+  try {
+    const u = new URL(canonicalUrl);
+    const host = u.hostname.toLowerCase();
+    const pathName = u.pathname.toLowerCase();
+    if (["localhost", "127.0.0.1", "0.0.0.0"].includes(host)) {
+      return { accepted: false, reason: "invalid_host", canonicalUrl };
+    }
+    if (["/search", "/discover", "/ads"].some((x) => pathName.includes(x))) {
+      return { accepted: false, reason: "non_stream_path", canonicalUrl };
+    }
+    return { accepted: true, reason: "ok", canonicalUrl };
+  } catch {
+    return { accepted: false, reason: "invalid_url", canonicalUrl };
+  }
+}
+
 const prisma = new PrismaClient();
 
 if (replaceAll && replaceStationCatalogOnly) {
@@ -80,6 +101,109 @@ if (replaceAll) {
   }
 }
 
+async function upsertStreamEndpointRow(stationId, streamUrl, sourceIdsJson, quality, isCurrent) {
+  const ids = parseSourceIds(sourceIdsJson);
+  const entry = Object.entries(ids)[0] || null;
+  const source = entry?.[0] || "import";
+  const sourceDetail = entry?.[1] || null;
+  const qualityText = String(quality || "").toLowerCase();
+  const isLowQuality = qualityText && !["good", "partial"].includes(qualityText);
+  const suppressed = source === "zeno" && isLowQuality;
+  const status =
+    qualityText === "error" || qualityText === "none"
+      ? "inactive"
+      : isLowQuality
+        ? "degraded"
+        : "healthy";
+  await prisma.stationStreamEndpoint.upsert({
+    where: { stationId_streamUrl: { stationId, streamUrl } },
+    create: {
+      stationId,
+      source,
+      sourceDetail,
+      streamUrl,
+      resolvedUrl: streamUrl,
+      isCurrent,
+      isSuppressed: suppressed,
+      lastValidationStatus: status,
+      lastFailureReason: suppressed ? "low_quality_or_unverified_zeno_candidate" : null,
+    },
+    update: {
+      source,
+      sourceDetail,
+      isCurrent,
+      isSuppressed: suppressed,
+      lastValidationStatus: status,
+      lastFailureReason: suppressed ? "low_quality_or_unverified_zeno_candidate" : null,
+    },
+  });
+}
+
+async function ensureZnbcBaselineStations() {
+  const rows = [
+    {
+      id: "zm_req_znbc_radio_1",
+      name: "ZNBC RADIO 1",
+      streamUrl: "https://stream.zeno.fm/8v2ncp9v8f8uv",
+      sourceIdsJson: JSON.stringify({ zeno: "znbc-radio-1", requested_seed: "znbc" }),
+    },
+    {
+      id: "zm_req_znbc_radio_2",
+      name: "ZNBC RADIO 2",
+      streamUrl: "https://stream.zeno.fm/mt6z2x5v8f8uv",
+      sourceIdsJson: JSON.stringify({ zeno: "znbc-radio-2", requested_seed: "znbc" }),
+    },
+    {
+      id: "zm_req_znbc_radio_4",
+      name: "ZNBC RADIO 4",
+      streamUrl: "https://stream.zeno.fm/hh6p7m5v8f8uv",
+      sourceIdsJson: JSON.stringify({ zeno: "znbc-radio-4", requested_seed: "znbc" }),
+    },
+  ];
+  for (const row of rows) {
+    const urlCheck = validateCandidateStreamUrl(row.streamUrl);
+    if (!urlCheck.accepted) continue;
+    await prisma.station.upsert({
+      where: { id: row.id },
+      create: {
+        id: row.id,
+        name: row.name,
+        country: "Zambia",
+        district: "Zambia",
+        province: "",
+        streamUrl: urlCheck.canonicalUrl,
+        streamFormatHint: "icy",
+        sourceIdsJson: row.sourceIdsJson,
+        icyQualification: "weak",
+        icySampleTitle: null,
+        isActive: true,
+        metadataPriorityEnabled: true,
+        fingerprintFallbackEnabled: true,
+        metadataStaleSeconds: 300,
+        pollIntervalSeconds: 120,
+        audioFingerprintIntervalSeconds: 300,
+        sampleSeconds: 20,
+        archiveSongSamples: true,
+        monitorState: "UNKNOWN",
+        contentClassification: "unknown",
+        visibilityEnabled: true,
+        deepValidationIntervalSeconds: 600,
+        failureThreshold: 3,
+        recoveryThreshold: 2,
+      },
+      update: {
+        name: row.name,
+        country: "Zambia",
+        streamUrl: urlCheck.canonicalUrl,
+        sourceIdsJson: row.sourceIdsJson,
+        isActive: true,
+        visibilityEnabled: true,
+      },
+    });
+    await upsertStreamEndpointRow(row.id, urlCheck.canonicalUrl, row.sourceIdsJson, "partial", true);
+  }
+}
+
 let upserted = 0;
 const incomingIds = new Set(stations.map((s) => s?.id).filter((id) => typeof id === "string"));
 for (const row of stations) {
@@ -104,16 +228,35 @@ for (const row of stations) {
     sampleSeconds,
     archiveSongSamples,
   } = row;
+  const urlCheck = validateCandidateStreamUrl(streamUrl);
+  if (!urlCheck.accepted) {
+    console.warn(`Skipping station ${id || name}: invalid candidate stream (${urlCheck.reason})`);
+    continue;
+  }
 
   const existing = await prisma.station.findUnique({
     where: { id },
-    select: { sourceIdsJson: true, isActive: true },
+    select: { sourceIdsJson: true, isActive: true, streamUrl: true, lastGoodAudioAt: true },
   });
   const mergedSources = mergeSourceIdsJson(existing?.sourceIdsJson, sourceIdsJson);
+  const incomingSources = parseSourceIds(sourceIdsJson);
   const nextIsActive =
     replaceStationCatalogOnly && existing
       ? existing.isActive
       : isActive ?? true;
+
+  const qualityText = String(icyQualification || "").toLowerCase();
+  const weakOrUnverified = !qualityText || ["weak", "none", "error", "pending"].includes(qualityText);
+  const shouldKeepExistingWorking =
+    replaceStationCatalogOnly &&
+    !!existing?.streamUrl &&
+    !!existing?.lastGoodAudioAt &&
+    !!incomingSources.zeno &&
+    weakOrUnverified;
+
+  const finalStreamUrl = shouldKeepExistingWorking
+    ? existing.streamUrl
+    : urlCheck.canonicalUrl;
 
   await prisma.station.upsert({
     where: { id },
@@ -124,7 +267,7 @@ for (const row of stations) {
       district: district ?? "",
       province: province ?? "",
       frequencyMhz: frequencyMhz ?? null,
-      streamUrl,
+      streamUrl: finalStreamUrl,
       streamFormatHint: streamFormatHint ?? null,
       sourceIdsJson: mergedSources ?? sourceIdsJson ?? null,
       icyQualification: icyQualification ?? null,
@@ -137,6 +280,12 @@ for (const row of stations) {
       audioFingerprintIntervalSeconds: audioFingerprintIntervalSeconds ?? 300,
       sampleSeconds: sampleSeconds ?? 20,
       archiveSongSamples: archiveSongSamples ?? true,
+      monitorState: "UNKNOWN",
+      contentClassification: "unknown",
+      visibilityEnabled: true,
+      deepValidationIntervalSeconds: 600,
+      failureThreshold: 3,
+      recoveryThreshold: 2,
     },
     update: {
       name,
@@ -144,7 +293,7 @@ for (const row of stations) {
       district: district ?? "",
       province: province ?? "",
       frequencyMhz: frequencyMhz ?? null,
-      streamUrl,
+      streamUrl: finalStreamUrl,
       streamFormatHint: streamFormatHint ?? null,
       sourceIdsJson: mergedSources ?? sourceIdsJson ?? null,
       icyQualification: icyQualification ?? null,
@@ -157,8 +306,15 @@ for (const row of stations) {
       audioFingerprintIntervalSeconds: audioFingerprintIntervalSeconds ?? 300,
       sampleSeconds: sampleSeconds ?? 20,
       archiveSongSamples: archiveSongSamples ?? true,
+      monitorState: replaceStationCatalogOnly ? undefined : "UNKNOWN",
+      contentClassification: replaceStationCatalogOnly ? undefined : "unknown",
+      visibilityEnabled: true,
+      deepValidationIntervalSeconds: 600,
+      failureThreshold: 3,
+      recoveryThreshold: 2,
     },
   });
+  await upsertStreamEndpointRow(id, finalStreamUrl, mergedSources ?? sourceIdsJson ?? null, icyQualification, true);
   upserted++;
 }
 
@@ -172,6 +328,19 @@ if (replaceStationCatalogOnly) {
     data: { isActive: false },
   });
   console.log(`Deactivated ${stale.count} stale Zambia station(s) not present in import.`);
+}
+
+await ensureZnbcBaselineStations();
+
+// Keep endpoint table aligned: non-current for rows absent from latest import.
+if (incomingIds.size > 0) {
+  await prisma.stationStreamEndpoint.updateMany({
+    where: {
+      stationId: { notIn: Array.from(incomingIds) },
+      isCurrent: true,
+    },
+    data: { isCurrent: false },
+  });
 }
 
 const active = await prisma.station.count({ where: { isActive: true } });

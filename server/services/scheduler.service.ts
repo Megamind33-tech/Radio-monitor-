@@ -9,6 +9,7 @@ export class SchedulerService {
   private static tasks: Map<string, PollHandle> = new Map();
   /** Last scheduled poll interval per station (seconds) — resync when DB value changes */
   private static pollIntervals: Map<string, number> = new Map();
+  private static pollRunning: Set<string> = new Set();
   private static masterJob: cron.ScheduledTask | null = null;
 
   static async init() {
@@ -60,22 +61,35 @@ export class SchedulerService {
   private static scheduleStation(station: { id: string; name: string }, pollIntervalSeconds: number) {
     logger.info({ station: station.name, interval: pollIntervalSeconds }, "Scheduling station poll");
 
+    const runPoll = async () => {
+      if (this.pollRunning.has(station.id)) {
+        logger.debug({ stationId: station.id }, "Skipping overlapping poll tick");
+        return;
+      }
+      this.pollRunning.add(station.id);
+      try {
+        await MonitorService.pollStation(station.id);
+      } finally {
+        this.pollRunning.delete(station.id);
+      }
+    };
+
     let handle: PollHandle;
     if (pollIntervalSeconds <= 59) {
       const cronExpr = `*/${pollIntervalSeconds} * * * * *`;
-      const task = cron.schedule(cronExpr, async () => {
-        await MonitorService.pollStation(station.id);
+      const task = cron.schedule(cronExpr, () => {
+        void runPoll();
       });
       handle = { stop: () => task.stop() };
     } else {
       const id = setInterval(() => {
-        void MonitorService.pollStation(station.id);
+        void runPoll();
       }, pollIntervalSeconds * 1000);
       handle = { stop: () => clearInterval(id) };
     }
 
     // Prime immediately so stations don't wait for the first interval tick.
-    void MonitorService.pollStation(station.id);
+    void runPoll();
 
     this.tasks.set(station.id, handle);
     this.pollIntervals.set(station.id, pollIntervalSeconds);
@@ -88,5 +102,6 @@ export class SchedulerService {
     }
     this.tasks.clear();
     this.pollIntervals.clear();
+    this.pollRunning.clear();
   }
 }

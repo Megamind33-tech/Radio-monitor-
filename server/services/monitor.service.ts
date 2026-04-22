@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import type { Station } from "@prisma/client";
+import type { Prisma, Station } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
@@ -11,9 +11,18 @@ import { FingerprintService } from "./fingerprint.service.js";
 import { AcoustidService } from "./acoustid.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { CatalogLookupService } from "./catalog-lookup.service.js";
-import { NormalizedMetadata, MatchResult, DetectionMethod } from "../types.js";
+import {
+  NormalizedMetadata,
+  MatchResult,
+  DetectionMethod,
+  StationContentClassification,
+  StationMonitorState,
+  StreamHealthSnapshot,
+} from "../types.js";
 import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
 import { StreamRefreshService } from "./stream-refresh.service.js";
+import { StreamHealthService } from "./stream-health.service.js";
+import { classifyContent, deriveMonitorState } from "../lib/station-health.js";
 
 function parseEnvMs(key: string, fallback: number): number {
   const v = process.env[key];
@@ -43,6 +52,51 @@ function parseEnvInt(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function computeDetectionLagMs(
+  station: {
+    detectionLagMsAvg: number | null;
+    detectionLagSamples: number;
+    metadataStaleSeconds: number;
+  },
+  metadata: NormalizedMetadata | null
+): { avg: number; samples: number } | null {
+  if (!metadata?.combinedRaw) return null;
+  const observed = Math.max(0, station.metadataStaleSeconds * 1000);
+  const prevAvg = station.detectionLagMsAvg ?? 0;
+  const prevN = Math.max(0, station.detectionLagSamples || 0);
+  const nextN = Math.min(prevN + 1, 5000);
+  const avg = Math.round((prevAvg * prevN + observed) / Math.max(nextN, 1));
+  return { avg, samples: nextN };
+}
+
+function stationUpdateWithPreservedDates(
+  station: {
+    lastHealthyAt: Date | null;
+    lastGoodAudioAt: Date | null;
+    lastMetadataAt: Date | null;
+    lastSongDetectedAt: Date | null;
+    detectionLagMsAvg: number | null;
+    detectionLagSamples: number;
+  },
+  input: {
+    health: StreamHealthSnapshot;
+    metadata: NormalizedMetadata | null;
+    detectionStatus: "matched" | "unresolved";
+    lag: { avg: number; samples: number } | null;
+  }
+): Prisma.StationUpdateInput {
+  const { health, metadata, detectionStatus, lag } = input;
+  return {
+    lastHealthyAt:
+      health.reachable && health.audioFlowing ? new Date() : station.lastHealthyAt,
+    lastGoodAudioAt: health.decoderOk ? new Date() : station.lastGoodAudioAt,
+    lastMetadataAt: metadata?.combinedRaw ? new Date() : station.lastMetadataAt,
+    lastSongDetectedAt: detectionStatus === "matched" ? new Date() : station.lastSongDetectedAt,
+    detectionLagMsAvg: lag?.avg ?? station.detectionLagMsAvg,
+    detectionLagSamples: lag?.samples ?? station.detectionLagSamples,
+  };
+}
+
 /** ICY text too weak to drive MusicBrainz/iTunes (avoids garbage catalog hits). */
 function isJunkIcyMetadata(metadata: NormalizedMetadata | null): boolean {
   if (!metadata) return true;
@@ -55,7 +109,22 @@ function isJunkIcyMetadata(metadata: NormalizedMetadata | null): boolean {
 function isProgramLikeTitle(text: string | null | undefined): boolean {
   const t = String(text ?? "").trim().toLowerCase();
   if (!t) return false;
-  return /\b(on air|live|program|show|morning show|afternoon show|evening show|news|sports|talk)\b/.test(t);
+  return /\b(on air|program|show|morning show|afternoon show|evening show|news|sports|talk)\b/.test(t);
+}
+
+function parseSourceIdsMap(json: string | null | undefined): Record<string, string> {
+  if (!json) return {};
+  try {
+    const x = JSON.parse(json);
+    if (!x || typeof x !== "object" || Array.isArray(x)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(x as Record<string, unknown>)) {
+      if (typeof v === "string" && v.trim()) out[k] = v.trim();
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 export class MonitorService {
@@ -77,12 +146,15 @@ export class MonitorService {
           lastPollAt: new Date(),
           lastPollStatus: "error",
           lastPollError: message.slice(0, 2000),
+          consecutivePollFailures: { increment: 1 },
+          consecutiveHealthyPolls: 0,
         },
       });
     };
 
     try {
       const resolvedUrl = await ResolverService.resolveStreamUrl(station.streamUrl);
+      const health = await StreamHealthService.validateStream(resolvedUrl);
 
       let metadata: NormalizedMetadata | null = null;
       let legacyFingerprint = false;
@@ -220,15 +292,77 @@ export class MonitorService {
         (intervalElapsed && !legacyFingerprint ? "audio_interval" : null);
 
       const processingMs = Date.now() - start;
-      await this.saveDetection(station, resolvedUrl, method, metadata, match, processingMs, finalReason);
+      let detectionReason = finalReason;
+      const detection = await this.saveDetection(
+        station,
+        resolvedUrl,
+        method,
+        metadata,
+        match,
+        processingMs,
+        finalReason
+      );
+      const contentClassification: StationContentClassification =
+        detection.status === "matched"
+          ? "music"
+          : classifyContent(metadata?.combinedRaw ?? null);
+
+      const nextFailureThreshold = Math.max(1, station.failureThreshold || 3);
+      const nextFailureCount = health.reachable && health.audioFlowing && health.decoderOk
+        ? 0
+        : Math.max(0, (station.consecutivePollFailures || 0) + 1);
+      const nextHealthyCount = health.reachable && health.audioFlowing && health.decoderOk
+        ? Math.max(0, (station.consecutiveHealthyPolls || 0) + 1)
+        : 0;
+      const monitor = deriveMonitorState({
+        health,
+        contentClassification,
+        hasReliableMatch: detection.status === "matched",
+        consecutiveFailures: nextFailureCount,
+        failureThreshold: nextFailureThreshold,
+      });
+      if (!detectionReason) {
+        detectionReason = monitor.reason;
+      }
+      const lag = computeDetectionLagMs(station, metadata);
+      const preservedDates = stationUpdateWithPreservedDates(station, {
+        health,
+        metadata,
+        detectionStatus: detection.status,
+        lag,
+      });
+
       await prisma.station.update({
         where: { id: stationId },
         data: {
           lastPollAt: new Date(),
-          lastPollStatus: "ok",
-          lastPollError: null,
+          lastPollStatus:
+            monitor.state === "INACTIVE"
+              ? "error"
+              : monitor.state === "DEGRADED"
+                ? "degraded"
+                : "ok",
+          lastPollError: monitor.state === "INACTIVE" || monitor.state === "DEGRADED" ? monitor.reason : null,
+          monitorState: monitor.state,
+          monitorStateReason: monitor.reason,
+          contentClassification,
+          consecutivePollFailures: nextFailureCount,
+          consecutiveHealthyPolls: nextHealthyCount,
+          lastValidationAt: new Date(),
+          lastValidationReason: health.reason,
+          lastResolvedStreamUrl: health.resolvedUrl || resolvedUrl,
+          lastStreamContentType: health.contentTypeHeader || null,
+          lastStreamCodec: health.codec || null,
+          lastStreamBitrate: health.bitrate ?? null,
+          ...preservedDates,
+          deepValidationIntervalSeconds: station.deepValidationIntervalSeconds || 600,
+          failureThreshold: nextFailureThreshold,
+          recoveryThreshold: Math.max(1, station.recoveryThreshold || 2),
         },
       });
+      await this.upsertStreamEndpoint(station, health, monitor.state);
+      await this.suppressFailingZenoEndpoints(station.id);
+      await this.recordHealthEvent(stationId, monitor.state, monitor.reason, contentClassification, health, nextFailureCount);
     } catch (error) {
       logger.error({ error, station: station.name }, "Error polling station");
       const errMsg = String(error);
@@ -274,6 +408,135 @@ export class MonitorService {
     }
   }
 
+  private static async recordHealthEvent(
+    stationId: string,
+    state: StationMonitorState,
+    reason: string,
+    contentClassification: StationContentClassification,
+    health: StreamHealthSnapshot,
+    consecutiveFailures: number
+  ) {
+    try {
+      await prisma.stationHealthEvent.create({
+        data: {
+          stationId,
+          monitorState: state,
+          reason,
+          reachable: health.reachable,
+          audioFlowing: health.audioFlowing,
+          decoderOk: health.decoderOk,
+          contentClassification,
+          resolvedUrl: health.resolvedUrl || null,
+          contentTypeHeader: health.contentTypeHeader || null,
+          codec: health.codec || null,
+          bitrate: health.bitrate ?? null,
+          latencyMs: health.latencyMs ?? null,
+          consecutiveFailures,
+        },
+      });
+    } catch (error) {
+      logger.warn({ error, stationId }, "Failed to write station health event");
+    }
+  }
+
+  private static async upsertStreamEndpoint(
+    station: Pick<Station, "id" | "streamUrl" | "sourceIdsJson">,
+    health: StreamHealthSnapshot,
+    monitorState: StationMonitorState
+  ) {
+    try {
+      const sourceMap = parseSourceIdsMap(station.sourceIdsJson);
+      const sourceEntries = Object.entries(sourceMap);
+      const source = sourceEntries[0]?.[0] || "manual";
+      const sourceDetail = sourceEntries[0]?.[1] || null;
+      const status =
+        monitorState === "INACTIVE"
+          ? "inactive"
+          : monitorState === "DEGRADED"
+            ? "degraded"
+            : monitorState === "UNKNOWN"
+              ? "unknown"
+              : "healthy";
+
+      const row = await prisma.stationStreamEndpoint.findFirst({
+        where: { stationId: station.id, streamUrl: station.streamUrl },
+        select: { id: true, consecutiveFailures: true },
+      });
+      const nextFailures = health.reachable && health.audioFlowing && health.decoderOk
+        ? 0
+        : Math.max(0, (row?.consecutiveFailures || 0) + 1);
+
+      if (row) {
+        await prisma.stationStreamEndpoint.update({
+          where: { id: row.id },
+          data: {
+            source,
+            sourceDetail,
+            resolvedUrl: health.resolvedUrl || null,
+            isCurrent: true,
+            isSuppressed: monitorState === "INACTIVE",
+            lastValidatedAt: new Date(),
+            lastValidationStatus: status,
+            lastFailureReason: health.reason || null,
+            lastHealthyAt:
+              health.reachable && health.audioFlowing && health.decoderOk ? new Date() : undefined,
+            consecutiveFailures: nextFailures,
+            codec: health.codec || null,
+            bitrate: health.bitrate ?? null,
+          },
+        });
+      } else {
+        await prisma.stationStreamEndpoint.create({
+          data: {
+            stationId: station.id,
+            source,
+            sourceDetail,
+            streamUrl: station.streamUrl,
+            resolvedUrl: health.resolvedUrl || null,
+            isCurrent: true,
+            isSuppressed: monitorState === "INACTIVE",
+            lastValidatedAt: new Date(),
+            lastValidationStatus: status,
+            lastFailureReason: health.reason || null,
+            lastHealthyAt:
+              health.reachable && health.audioFlowing && health.decoderOk ? new Date() : null,
+            consecutiveFailures: nextFailures,
+            codec: health.codec || null,
+            bitrate: health.bitrate ?? null,
+          },
+        });
+      }
+
+      // Only one current endpoint row per station.
+      await prisma.stationStreamEndpoint.updateMany({
+        where: {
+          stationId: station.id,
+          streamUrl: { not: station.streamUrl },
+          isCurrent: true,
+        },
+        data: { isCurrent: false },
+      });
+
+    } catch (error) {
+      logger.warn({ error, stationId: station.id }, "Failed to upsert stream endpoint");
+    }
+  }
+
+  private static async suppressFailingZenoEndpoints(stationId: string): Promise<void> {
+    try {
+      await prisma.stationStreamEndpoint.updateMany({
+        where: {
+          stationId,
+          source: "zeno",
+          consecutiveFailures: { gte: 3 },
+        },
+        data: { isSuppressed: true },
+      });
+    } catch (error) {
+      logger.warn({ error, stationId }, "Failed to suppress failing zeno endpoints");
+    }
+  }
+
   private static async saveDetection(
     station: Station,
     resolvedUrl: string,
@@ -282,7 +545,7 @@ export class MonitorService {
     match: MatchResult | null,
     processingMs: number,
     reasonCode: string | null
-  ) {
+  ): Promise<{ status: "matched" | "unresolved"; reasonCode: string | null }> {
     const stationId = station.id;
     const npRow = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
     const trustedMeta =
@@ -301,6 +564,9 @@ export class MonitorService {
         !isJunkIcyMetadata(metadata) &&
         !metadataProgramLike);
     const status = isMatched ? "matched" : "unresolved";
+    const detectionReason =
+      reasonCode ||
+      (status === "unresolved" ? (metadataProgramLike ? "talk_or_program_content" : "no_reliable_match") : null);
 
     const rawTitle = (metadata?.rawTitle ?? "").trim();
     const rawArtist = (metadata?.rawArtist ?? "").trim();
@@ -343,7 +609,7 @@ export class MonitorService {
           update: { updatedAt: new Date() },
           create: { stationId, title: titleFinal, artist: artistFinal },
         });
-        return;
+        return { status, reasonCode: detectionReason ?? null };
       }
     }
 
@@ -374,7 +640,7 @@ export class MonitorService {
         sampleSeconds: station.sampleSeconds,
         processingMs,
         status,
-        reasonCode,
+        reasonCode: detectionReason,
       },
       select: { id: true },
     });
@@ -466,6 +732,7 @@ export class MonitorService {
         durationMs: processingMs,
       },
     });
+    return { status, reasonCode: detectionReason ?? null };
   }
 
   private static async archiveUnresolvedSample(stationId: string, samplePath: string): Promise<void> {

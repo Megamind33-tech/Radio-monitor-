@@ -11,6 +11,8 @@ import { z } from "zod";
 import { SchedulerService } from "./services/scheduler.service.js";
 import { MonitorService } from "./services/monitor.service.js";
 import { StreamRefreshService } from "./services/stream-refresh.service.js";
+import { validateCandidateStreamUrl } from "./lib/stream-url-guard.js";
+import { StreamHealthService } from "./services/stream-health.service.js";
 
 function isCommandAvailable(command: string, args: string[] = ["-version"]) {
   try {
@@ -82,13 +84,22 @@ async function startServer() {
   // Stations API
   app.get("/api/stations", async (req, res) => {
     const stations = await prisma.station.findMany({
-      include: { currentNowPlaying: true }
+      where: { visibilityEnabled: true },
+      include: { currentNowPlaying: true },
+      orderBy: [{ name: "asc" }],
     });
     res.json(stations);
   });
 
   app.post("/api/stations", async (req, res) => {
-    const station = await prisma.station.create({ data: req.body });
+    const station = await prisma.station.create({
+      data: {
+        ...req.body,
+        monitorState: req.body?.monitorState || "UNKNOWN",
+        contentClassification: req.body?.contentClassification || "unknown",
+        visibilityEnabled: req.body?.visibilityEnabled ?? true,
+      },
+    });
     res.json(station);
   });
 
@@ -112,6 +123,10 @@ async function startServer() {
       pollIntervalSeconds: z.number().int().min(5).max(3600).optional(),
       audioFingerprintIntervalSeconds: z.number().int().min(30).max(86400).optional(),
       archiveSongSamples: z.boolean().optional(),
+      visibilityEnabled: z.boolean().optional(),
+      monitorState: z
+        .enum(["ACTIVE_MUSIC", "ACTIVE_NO_MATCH", "ACTIVE_TALK", "DEGRADED", "INACTIVE", "UNKNOWN"])
+        .optional(),
     })
     .strict();
 
@@ -124,6 +139,14 @@ async function startServer() {
     if (Object.keys(parsed.data).length === 0) {
       res.status(400).json({ error: "No valid fields to update" });
       return;
+    }
+    if (parsed.data.streamUrl) {
+      const check = validateCandidateStreamUrl(parsed.data.streamUrl);
+      if (!check.accepted) {
+        res.status(400).json({ error: `Rejected stream URL: ${check.reason}` });
+        return;
+      }
+      parsed.data.streamUrl = check.canonicalUrl;
     }
     const station = await prisma.station.update({
       where: { id: req.params.id },
@@ -149,6 +172,70 @@ async function startServer() {
       data: { streamUrl: next, streamRefreshedAt: new Date() },
     });
     res.json({ updated: true, streamUrl: updated.streamUrl });
+  });
+
+  app.post("/api/stations/:id/validate-stream", async (req, res) => {
+    const st = await prisma.station.findUnique({ where: { id: req.params.id } });
+    if (!st) {
+      res.status(404).json({ error: "Station not found" });
+      return;
+    }
+    const health = await StreamHealthService.validateStream(st.streamUrl);
+    const now = new Date();
+    await prisma.station.update({
+      where: { id: st.id },
+      data: {
+        lastValidationAt: now,
+        lastValidationReason: health.reason,
+        lastResolvedStreamUrl: health.resolvedUrl || st.streamUrl,
+        lastStreamContentType: health.contentTypeHeader || null,
+        lastStreamCodec: health.codec || null,
+        lastStreamBitrate: health.bitrate ?? null,
+        lastHealthyAt: health.reachable && health.audioFlowing ? now : st.lastHealthyAt,
+        lastGoodAudioAt: health.decoderOk ? now : st.lastGoodAudioAt,
+      },
+    });
+    res.json({ stationId: st.id, health });
+  });
+
+  app.get("/api/stations/:id/health-events", async (req, res) => {
+    const takeRaw = typeof req.query.take === "string" ? Number(req.query.take) : 200;
+    const take = Number.isFinite(takeRaw) ? Math.min(Math.max(Math.trunc(takeRaw), 1), 2000) : 200;
+    const events = await prisma.stationHealthEvent.findMany({
+      where: { stationId: req.params.id },
+      orderBy: { observedAt: "desc" },
+      take,
+    });
+    res.json(events);
+  });
+
+  app.get("/api/stations/:id/stream-endpoints", async (req, res) => {
+    const rows = await prisma.stationStreamEndpoint.findMany({
+      where: { stationId: req.params.id },
+      orderBy: [{ isCurrent: "desc" }, { updatedAt: "desc" }],
+    });
+    res.json(rows);
+  });
+
+  app.get("/api/monitoring/status-overview", async (_req, res) => {
+    const states = await prisma.station.groupBy({
+      by: ["monitorState"],
+      where: { visibilityEnabled: true },
+      _count: { _all: true },
+    });
+    const out: Record<string, number> = {
+      ACTIVE_MUSIC: 0,
+      ACTIVE_NO_MATCH: 0,
+      ACTIVE_TALK: 0,
+      DEGRADED: 0,
+      INACTIVE: 0,
+      UNKNOWN: 0,
+    };
+    for (const row of states) {
+      const k = row.monitorState || "UNKNOWN";
+      out[k] = Number(row._count._all || 0);
+    }
+    res.json(out);
   });
 
   app.get("/api/stations/:id/logs", async (req, res) => {
@@ -248,6 +335,41 @@ async function startServer() {
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }
+  });
+
+  app.get("/api/stations/status-overview", async (_req, res) => {
+    const stations = await prisma.station.findMany({
+      where: { visibilityEnabled: true },
+      select: {
+        id: true,
+        name: true,
+        isActive: true,
+        monitorState: true,
+        monitorStateReason: true,
+        contentClassification: true,
+        lastPollAt: true,
+        lastHealthyAt: true,
+        lastGoodAudioAt: true,
+        lastSongDetectedAt: true,
+        lastValidationReason: true,
+      },
+      orderBy: { name: "asc" },
+    });
+    res.json(stations);
+  });
+
+  app.get("/api/stations/znbc", async (_req, res) => {
+    const stations = await prisma.station.findMany({
+      where: {
+        OR: [
+          { name: { contains: "ZNBC" } },
+          { sourceIdsJson: { contains: "requested_seed" } },
+        ],
+      },
+      include: { currentNowPlaying: true },
+      orderBy: [{ isActive: "desc" }, { name: "asc" }],
+    });
+    res.json(stations);
   });
 
   app.get("/api/metrics/summary", async (req, res) => {

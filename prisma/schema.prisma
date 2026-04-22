@@ -46,6 +46,48 @@ model Station {
   lastPollStatus             String?
   /// Short error message when lastPollStatus is error
   lastPollError              String?
+  /// ACTIVE_MUSIC | ACTIVE_NO_MATCH | ACTIVE_TALK | DEGRADED | INACTIVE | UNKNOWN
+  monitorState               String   @default("UNKNOWN")
+  /// Human readable reason code for current monitorState
+  monitorStateReason         String?
+  /// music | talk | mixed | unknown - derived from metadata/audio heuristics
+  contentClassification      String   @default("unknown")
+  /// Last time stream health was validated (light or deep check)
+  lastValidationAt           DateTime?
+  /// Last validation failure or degrade reason
+  lastValidationReason       String?
+  /// Last final URL after redirect/playlist resolution
+  lastResolvedStreamUrl      String?
+  /// Last observed content-type header (audio/*, application/vnd.apple.mpegurl, etc.)
+  lastStreamContentType      String?
+  /// Last decoded audio codec from deep validation
+  lastStreamCodec            String?
+  /// Last decoded bitrate from deep validation
+  lastStreamBitrate          Int?
+  /// Last known healthy stream heartbeat (reachable/refreshing)
+  lastHealthyAt              DateTime?
+  /// Last known successful decoded audio frames
+  lastGoodAudioAt            DateTime?
+  /// Last time metadata endpoint provided a value
+  lastMetadataAt             DateTime?
+  /// Last time a confirmed song match was detected
+  lastSongDetectedAt         DateTime?
+  /// Failure counter for health checks (used for threshold-based INACTIVE transitions)
+  consecutivePollFailures    Int      @default(0)
+  /// Healthy counter for recovery threshold handling
+  consecutiveHealthyPolls    Int      @default(0)
+  /// Deep validation cadence (seconds)
+  deepValidationIntervalSeconds Int   @default(600)
+  /// Consecutive failure threshold before INACTIVE state
+  failureThreshold           Int      @default(3)
+  /// Consecutive healthy threshold to recover from INACTIVE
+  recoveryThreshold          Int      @default(2)
+  /// Visibility control in dashboards/admin
+  visibilityEnabled          Boolean  @default(true)
+  /// Running average detection lag (ms) between stream updates and recognized songs
+  detectionLagMsAvg          Int?
+  /// Number of lag samples used for detectionLagMsAvg
+  detectionLagSamples        Int      @default(0)
   /// When streamUrl was auto-updated from sourceIdsJson (MyTuner / ORB / Streema)
   streamRefreshedAt          DateTime?
   createdAt                  DateTime @default(now())
@@ -55,6 +97,57 @@ model Station {
   currentNowPlaying CurrentNowPlaying?
   songSamples       SongSampleArchive[]
   songSpins         StationSongSpin[]
+  streamEndpoints   StationStreamEndpoint[]
+  healthEvents      StationHealthEvent[]
+}
+
+model StationStreamEndpoint {
+  id                  String   @id @default(cuid())
+  stationId           String
+  source              String
+  /// Source-specific identifier/url used for discovery
+  sourceDetail        String?
+  streamUrl           String
+  resolvedUrl         String?
+  isCurrent           Boolean  @default(false)
+  isSuppressed        Boolean  @default(false)
+  lastValidatedAt     DateTime?
+  /// healthy | degraded | inactive | unknown
+  lastValidationStatus String?
+  lastFailureReason   String?
+  lastHealthyAt       DateTime?
+  consecutiveFailures Int      @default(0)
+  codec               String?
+  bitrate             Int?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  station Station @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  @@unique([stationId, streamUrl])
+  @@index([stationId, isCurrent])
+}
+
+model StationHealthEvent {
+  id                   String   @id @default(cuid())
+  stationId            String
+  observedAt           DateTime @default(now())
+  monitorState         String
+  reason               String?
+  reachable            Boolean
+  audioFlowing         Boolean
+  decoderOk            Boolean
+  contentClassification String
+  resolvedUrl          String?
+  contentTypeHeader    String?
+  codec                String?
+  bitrate              Int?
+  latencyMs            Int?
+  consecutiveFailures  Int
+
+  station Station @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  @@index([stationId, observedAt])
 }
 
 model DetectionLog {

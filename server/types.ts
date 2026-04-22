@@ -1,5 +1,14 @@
 export type DetectionMethod = 'stream_metadata' | 'fingerprint_acoustid' | 'catalog_lookup' | 'unresolved';
 export type DetectionStatus = 'matched' | 'unresolved' | 'ignored';
+export type StationMonitorState =
+  | 'ACTIVE_MUSIC'
+  | 'ACTIVE_NO_MATCH'
+  | 'ACTIVE_TALK'
+  | 'DEGRADED'
+  | 'INACTIVE'
+  | 'UNKNOWN';
+
+export type StationContentClassification = 'music' | 'talk' | 'mixed' | 'unknown';
 
 export interface NormalizedMetadata {
   rawTitle?: string;
@@ -34,4 +43,17 @@ export interface FingerprintResult {
   duration: number;
   fingerprint: string;
   backendUsed: string;
+}
+
+export interface StreamHealthSnapshot {
+  reachable: boolean;
+  audioFlowing: boolean;
+  decoderOk: boolean;
+  degraded: boolean;
+  reason: string | null;
+  resolvedUrl: string;
+  contentTypeHeader?: string | null;
+  codec?: string | null;
+  bitrate?: number | null;
+  latencyMs?: number | null;
 }
