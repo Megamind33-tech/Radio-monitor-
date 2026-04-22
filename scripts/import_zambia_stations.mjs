@@ -63,6 +63,7 @@ for (const row of stations) {
     metadataStaleSeconds,
     pollIntervalSeconds,
     sampleSeconds,
+    archiveSongSamples,
   } = row;
 
   await prisma.station.upsert({
@@ -81,10 +82,11 @@ for (const row of stations) {
       icySampleTitle: icySampleTitle || null,
       isActive: isActive ?? true,
       metadataPriorityEnabled: metadataPriorityEnabled ?? true,
-      fingerprintFallbackEnabled: fingerprintFallbackEnabled ?? false,
+      fingerprintFallbackEnabled: fingerprintFallbackEnabled ?? true,
       metadataStaleSeconds: metadataStaleSeconds ?? 300,
       pollIntervalSeconds: pollIntervalSeconds ?? 120,
       sampleSeconds: sampleSeconds ?? 20,
+      archiveSongSamples: archiveSongSamples ?? false,
     },
     update: {
       name,
@@ -99,10 +101,11 @@ for (const row of stations) {
       icySampleTitle: icySampleTitle || null,
       isActive: isActive ?? true,
       metadataPriorityEnabled: metadataPriorityEnabled ?? true,
-      fingerprintFallbackEnabled: fingerprintFallbackEnabled ?? false,
+      fingerprintFallbackEnabled: fingerprintFallbackEnabled ?? true,
       metadataStaleSeconds: metadataStaleSeconds ?? 300,
       pollIntervalSeconds: pollIntervalSeconds ?? 120,
       sampleSeconds: sampleSeconds ?? 20,
+      archiveSongSamples: archiveSongSamples ?? false,
     },
   });
   upserted++;

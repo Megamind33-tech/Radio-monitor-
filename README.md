@@ -98,6 +98,19 @@ python monitor.py stations.csv
 
 Every track change gets written to Supabase in real time. Leave it running.
 
+## Node stack: Radio Garden (Zambia) + import
+
+The harvester `scripts/zambia_station_harvest.py` pulls **all Radio Garden stations** exposed for Zambia on their public API: the country page JSON at `https://radio.garden/api/ara/content/page/XbLRE6NT` includes a **Popular Stations** channel list plus **Places in Zambia** maps; every map’s `/channels` feed is merged (deduped by resolved stream URL). That matches what you see on [radio.garden](https://radio.garden/) for Zambia; there is no separate hidden catalog beyond what their API returns.
+
+```bash
+npm run harvest:zambia
+npm run import:zambia
+# optional full replace of Zambia catalog in Prisma:
+# npm run import:zambia:replace
+```
+
+Harvest output enables **fingerprint fallback** and **archiveSongSamples** for imported rows (when present in JSON) to support audio matching alongside ICY.
+
 ## Inspect the data (Supabase SQL Editor)
 
 ```sql
