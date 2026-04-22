@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
@@ -6,8 +7,10 @@ import helmet from "helmet";
 import { spawnSync } from "child_process";
 import { logger } from "./lib/logger.js";
 import { prisma } from "./lib/prisma.js";
+import { z } from "zod";
 import { SchedulerService } from "./services/scheduler.service.js";
 import { MonitorService } from "./services/monitor.service.js";
+import { StreamRefreshService } from "./services/stream-refresh.service.js";
 
 function isCommandAvailable(command: string, args: string[] = ["-version"]) {
   try {
@@ -52,7 +55,8 @@ async function startServer() {
     const freeApisEnabled = {
       acoustid: acoustidApiKeyConfigured,
       musicbrainz: musicbrainzUserAgentConfigured,
-      itunesSearch: true
+      itunesSearch: true,
+      deezerSearch: process.env.DEEZER_LOOKUP_ENABLED !== "false",
     };
 
     const missing = [];
@@ -88,12 +92,63 @@ async function startServer() {
     res.json(station);
   });
 
+  const stationPatchSchema = z
+    .object({
+      name: z.string().min(1).max(500).optional(),
+      country: z.string().min(1).max(120).optional(),
+      district: z.string().max(200).optional(),
+      province: z.string().max(200).optional(),
+      frequencyMhz: z.string().max(32).nullable().optional(),
+      streamUrl: z.string().url().max(4000).optional(),
+      streamFormatHint: z.string().max(64).nullable().optional(),
+      sourceIdsJson: z.string().max(8000).nullable().optional(),
+      icyQualification: z.string().max(32).nullable().optional(),
+      icySampleTitle: z.string().max(2000).nullable().optional(),
+      isActive: z.boolean().optional(),
+      metadataPriorityEnabled: z.boolean().optional(),
+      fingerprintFallbackEnabled: z.boolean().optional(),
+      metadataStaleSeconds: z.number().int().min(30).max(86400).optional(),
+      sampleSeconds: z.number().int().min(5).max(120).optional(),
+      pollIntervalSeconds: z.number().int().min(5).max(3600).optional(),
+      audioFingerprintIntervalSeconds: z.number().int().min(30).max(86400).optional(),
+      archiveSongSamples: z.boolean().optional(),
+    })
+    .strict();
+
   app.patch("/api/stations/:id", async (req, res) => {
+    const parsed = stationPatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+      return;
+    }
+    if (Object.keys(parsed.data).length === 0) {
+      res.status(400).json({ error: "No valid fields to update" });
+      return;
+    }
     const station = await prisma.station.update({
       where: { id: req.params.id },
-      data: req.body
+      data: parsed.data,
     });
     res.json(station);
+  });
+
+  /** Re-fetch stream URL from harvest hints (MyTuner page / ORB / Streema) when the CDN URL rotated. */
+  app.post("/api/stations/:id/refresh-stream", async (req, res) => {
+    const st = await prisma.station.findUnique({ where: { id: req.params.id } });
+    if (!st) {
+      res.status(404).json({ error: "Station not found" });
+      return;
+    }
+    const next = await StreamRefreshService.refreshFromSourceHints(st.sourceIdsJson, st.streamUrl);
+    if (!next) {
+      res.json({ updated: false, streamUrl: st.streamUrl, message: "No alternate URL from hints" });
+      return;
+    }
+    const updated = await prisma.station.update({
+      where: { id: req.params.id },
+      data: { streamUrl: next, streamRefreshedAt: new Date() },
+    });
+    res.json({ updated: true, streamUrl: updated.streamUrl });
   });
 
   app.get("/api/stations/:id/logs", async (req, res) => {
@@ -205,23 +260,24 @@ async function startServer() {
     });
   });
 
-  // Song spin analytics (aggregated from detection logs — no fake data)
+  // Song spin analytics (StationSongSpin: one row per song, playCount = total plays)
   app.get("/api/analytics/station-summaries", async (_req, res) => {
     const rows = await prisma.$queryRaw<
-      { stationId: string; uniqueSongs: bigint; detectionCount: bigint }[]
+      { stationId: string; uniqueSongs: bigint; totalPlays: bigint }[]
     >`
       SELECT "stationId",
-        COUNT(DISTINCT COALESCE("artistFinal",'') || '|' || COALESCE("titleFinal",'') || '|' || COALESCE("releaseFinal",'')) AS "uniqueSongs",
-        COUNT(*) AS "detectionCount"
-      FROM "DetectionLog"
-      WHERE "status" = 'matched' AND "titleFinal" IS NOT NULL AND TRIM("titleFinal") != ''
+        COUNT(*) AS "uniqueSongs",
+        COALESCE(SUM("playCount"), 0) AS "totalPlays"
+      FROM "StationSongSpin"
       GROUP BY "stationId"
     `;
     res.json(
       rows.map((r) => ({
         stationId: r.stationId,
         uniqueSongs: Number(r.uniqueSongs),
-        detectionCount: Number(r.detectionCount),
+        /** Total matched plays (sum of spin counts); same spirit as former detection row count */
+        detectionCount: Number(r.totalPlays),
+        totalPlays: Number(r.totalPlays),
       }))
     );
   });
@@ -238,23 +294,21 @@ async function startServer() {
           artist: string | null;
           title: string | null;
           album: string | null;
-          playCount: bigint;
+          playCount: number;
           lastPlayed: Date;
           firstPlayed: Date;
         }[]
       >`
         SELECT "stationId",
-          "artistFinal" AS artist,
-          "titleFinal" AS title,
-          "releaseFinal" AS album,
-          COUNT(*) AS "playCount",
-          MAX("observedAt") AS "lastPlayed",
-          MIN("observedAt") AS "firstPlayed"
-        FROM "DetectionLog"
-        WHERE "status" = 'matched'
-          AND "titleFinal" IS NOT NULL AND TRIM("titleFinal") != ''
-          AND "stationId" = ${stationId}
-        GROUP BY "stationId", "artistFinal", "titleFinal", "releaseFinal"
+          NULLIF(TRIM("artistLast"), '') AS artist,
+          NULLIF(TRIM("titleLast"), '') AS title,
+          NULLIF(TRIM("albumLast"), '') AS album,
+          "playCount",
+          "lastPlayedAt" AS "lastPlayed",
+          "firstPlayedAt" AS "firstPlayed"
+        FROM "StationSongSpin"
+        WHERE "stationId" = ${stationId}
+          AND TRIM("titleNorm") != ''
         ORDER BY "playCount" DESC
         LIMIT ${limit}
       `;
@@ -277,22 +331,20 @@ async function startServer() {
         artist: string | null;
         title: string | null;
         album: string | null;
-        playCount: bigint;
+        playCount: number;
         lastPlayed: Date;
         firstPlayed: Date;
       }[]
     >`
       SELECT "stationId",
-        "artistFinal" AS artist,
-        "titleFinal" AS title,
-        "releaseFinal" AS album,
-        COUNT(*) AS "playCount",
-        MAX("observedAt") AS "lastPlayed",
-        MIN("observedAt") AS "firstPlayed"
-      FROM "DetectionLog"
-      WHERE "status" = 'matched'
-        AND "titleFinal" IS NOT NULL AND TRIM("titleFinal") != ''
-      GROUP BY "stationId", "artistFinal", "titleFinal", "releaseFinal"
+        NULLIF(TRIM("artistLast"), '') AS artist,
+        NULLIF(TRIM("titleLast"), '') AS title,
+        NULLIF(TRIM("albumLast"), '') AS album,
+        "playCount",
+        "lastPlayedAt" AS "lastPlayed",
+        "firstPlayedAt" AS "firstPlayed"
+      FROM "StationSongSpin"
+      WHERE TRIM("titleNorm") != ''
       ORDER BY "playCount" DESC
       LIMIT ${limit}
     `;
@@ -327,23 +379,21 @@ async function startServer() {
               artist: string | null;
               title: string | null;
               album: string | null;
-              playCount: bigint;
+              playCount: number;
               lastPlayed: Date;
               firstPlayed: Date;
             }[]
           >`
             SELECT "stationId",
-              "artistFinal" AS artist,
-              "titleFinal" AS title,
-              "releaseFinal" AS album,
-              COUNT(*) AS "playCount",
-              MAX("observedAt") AS "lastPlayed",
-              MIN("observedAt") AS "firstPlayed"
-            FROM "DetectionLog"
-            WHERE "status" = 'matched'
-              AND "titleFinal" IS NOT NULL AND TRIM("titleFinal") != ''
+              NULLIF(TRIM("artistLast"), '') AS artist,
+              NULLIF(TRIM("titleLast"), '') AS title,
+              NULLIF(TRIM("albumLast"), '') AS album,
+              "playCount",
+              "lastPlayedAt" AS "lastPlayed",
+              "firstPlayedAt" AS "firstPlayed"
+            FROM "StationSongSpin"
+            WHERE TRIM("titleNorm") != ''
               AND "stationId" = ${stationId}
-            GROUP BY "stationId", "artistFinal", "titleFinal", "releaseFinal"
             ORDER BY "playCount" DESC
             LIMIT ${limit}
           `
@@ -353,22 +403,20 @@ async function startServer() {
               artist: string | null;
               title: string | null;
               album: string | null;
-              playCount: bigint;
+              playCount: number;
               lastPlayed: Date;
               firstPlayed: Date;
             }[]
           >`
             SELECT "stationId",
-              "artistFinal" AS artist,
-              "titleFinal" AS title,
-              "releaseFinal" AS album,
-              COUNT(*) AS "playCount",
-              MAX("observedAt") AS "lastPlayed",
-              MIN("observedAt") AS "firstPlayed"
-            FROM "DetectionLog"
-            WHERE "status" = 'matched'
-              AND "titleFinal" IS NOT NULL AND TRIM("titleFinal") != ''
-            GROUP BY "stationId", "artistFinal", "titleFinal", "releaseFinal"
+              NULLIF(TRIM("artistLast"), '') AS artist,
+              NULLIF(TRIM("titleLast"), '') AS title,
+              NULLIF(TRIM("albumLast"), '') AS album,
+              "playCount",
+              "lastPlayedAt" AS "lastPlayed",
+              "firstPlayedAt" AS "firstPlayed"
+            FROM "StationSongSpin"
+            WHERE TRIM("titleNorm") != ''
             ORDER BY "playCount" DESC
             LIMIT ${limit}
           `;

@@ -34,14 +34,27 @@ model Station {
   metadataStaleSeconds       Int      @default(180)
   sampleSeconds              Int      @default(20)
   pollIntervalSeconds        Int      @default(60)
-  /// When true, successful detections store a ~30s WAV under SONG_SAMPLE_ARCHIVE_DIR for reference
-  archiveSongSamples         Boolean  @default(false)
+  /// Minimum seconds between audio fingerprint samples (scheduled), even when ICY unchanged
+  audioFingerprintIntervalSeconds Int @default(300)
+  /// Last time we captured audio for Chromaprint/AcoustID (scheduled or ICY-change path)
+  lastAudioFingerprintAt     DateTime?
+  /// First play of each distinct song only: ~30s WAV under SONG_SAMPLE_ARCHIVE_DIR (no duplicate file per repeat play)
+  archiveSongSamples         Boolean  @default(true)
+  /// Last monitor poll attempt (success or failure) for dashboard uptime
+  lastPollAt                 DateTime?
+  /// ok | error - set after each poll attempt
+  lastPollStatus             String?
+  /// Short error message when lastPollStatus is error
+  lastPollError              String?
+  /// When streamUrl was auto-updated from sourceIdsJson (MyTuner / ORB / Streema)
+  streamRefreshedAt          DateTime?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 
   logs              DetectionLog[]
   currentNowPlaying CurrentNowPlaying?
   songSamples       SongSampleArchive[]
+  songSpins         StationSongSpin[]
 }
 
 model DetectionLog {
@@ -71,6 +84,27 @@ model DetectionLog {
 
   station Station @relation(fields: [stationId], references: [id])
   songSample SongSampleArchive?
+}
+
+/// Aggregated play counts per station + normalized song key (one row per song; increments on each new play)
+model StationSongSpin {
+  id        String   @id @default(cuid())
+  stationId String
+  artistNorm String @default("")
+  titleNorm  String
+  albumNorm  String @default("")
+  /// Latest display values (same spin key, updated each play)
+  artistLast String @default("")
+  titleLast  String @default("")
+  albumLast  String @default("")
+  playCount  Int     @default(0)
+  firstPlayedAt DateTime
+  lastPlayedAt  DateTime
+  lastDetectionLogId String?
+
+  station Station @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  @@unique([stationId, artistNorm, titleNorm, albumNorm])
 }
 
 /// Optional ~30s WAV per detection for future fingerprinting / dispute evidence

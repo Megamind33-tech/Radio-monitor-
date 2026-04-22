@@ -620,9 +620,11 @@ def to_prisma_row(c: Candidate) -> dict | None:
         "icySampleTitle": (c.icy_sample_title or "")[:500],
         "isActive": is_active,
         "metadataPriorityEnabled": True,
-        "fingerprintFallbackEnabled": False,
+        "fingerprintFallbackEnabled": True,
+        "archiveSongSamples": True,
         "metadataStaleSeconds": 300,
         "pollIntervalSeconds": 120,
+        "audioFingerprintIntervalSeconds": 300,
         "sampleSeconds": 20,
     }
 

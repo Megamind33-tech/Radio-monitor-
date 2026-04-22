@@ -37,7 +37,12 @@ interface Station {
   frequencyMhz?: string | null;
   icyQualification?: string | null;
   streamUrl: string;
+  pollIntervalSeconds?: number;
   isActive: boolean;
+  lastPollAt?: string | null;
+  lastPollStatus?: string | null;
+  lastPollError?: string | null;
+  streamRefreshedAt?: string | null;
   currentNowPlaying?: {
     title: string;
     artist: string;
@@ -100,6 +105,7 @@ interface DependencyStatus {
     acoustid: boolean;
     musicbrainz: boolean;
     itunesSearch: boolean;
+    deezerSearch?: boolean;
   };
   fingerprintReady: boolean;
   missing: string[];
@@ -117,6 +123,8 @@ export default function App() {
   const [selectedStationId, setSelectedStationId] = useState<string>('all');
   const [activeTab, setActiveTab] = useState<'stations' | 'history' | 'analytics' | 'settings'>('stations');
   const [isAddingStation, setIsAddingStation] = useState(false);
+  const [addSubmitting, setAddSubmitting] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
   const [spinSummaries, setSpinSummaries] = useState<StationSpinSummary[]>([]);
   const [songSpins, setSongSpins] = useState<SongSpinRow[]>([]);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -221,8 +229,13 @@ export default function App() {
           <NavIcon icon={<Settings className="w-6 h-6" />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Settings" />
         </div>
 
-        <button className="p-3 text-gray-500 hover:text-white transition-colors">
-          <Plus className="w-6 h-6" onClick={() => setIsAddingStation(true)} />
+        <button
+          type="button"
+          className="p-3 text-gray-500 hover:text-white transition-colors"
+          onClick={() => setIsAddingStation(true)}
+          aria-label="Add station"
+        >
+          <Plus className="w-6 h-6" />
         </button>
       </nav>
 
@@ -438,7 +451,12 @@ export default function App() {
                   <div>AcoustID key: {dependencies?.acoustidApiKeyConfigured ? 'Configured' : 'Missing'}</div>
                 </div>
                 <div className="grid grid-cols-1 gap-2 text-xs text-gray-400 border-t border-white/5 pt-3">
-                  <div>Free APIs active: AcoustID ({dependencies?.freeApisEnabled?.acoustid ? 'on' : 'off'}), MusicBrainz ({dependencies?.freeApisEnabled?.musicbrainz ? 'on' : 'off'}), iTunes Search ({dependencies?.freeApisEnabled?.itunesSearch ? 'on' : 'off'})</div>
+                  <div>
+                    Free APIs active: AcoustID ({dependencies?.freeApisEnabled?.acoustid ? 'on' : 'off'}), MusicBrainz (
+                    {dependencies?.freeApisEnabled?.musicbrainz ? 'on' : 'off'}), iTunes Search (
+                    {dependencies?.freeApisEnabled?.itunesSearch ? 'on' : 'off'}), Deezer Search (
+                    {dependencies?.freeApisEnabled?.deezerSearch !== false ? 'on' : 'off'})
+                  </div>
                   <div>Catalog lookup fallback: {dependencies?.catalogLookupReady ? 'ready' : 'needs MusicBrainz user-agent'}</div>
                 </div>
                 {dependencies && dependencies.missing.length > 0 && (
@@ -481,7 +499,53 @@ export default function App() {
                 <h3 className="text-2xl font-bold mb-2">Register Station</h3>
                 <p className="text-gray-400 mb-8 text-sm">Add a new radio stream to monitor.</p>
                 
-                <form className="space-y-6" onSubmit={(e) => { e.preventDefault(); setIsAddingStation(false); fetchData(); }}>
+                <form
+                  className="space-y-6"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setAddError(null);
+                    const form = e.currentTarget;
+                    const fd = new FormData(form);
+                    const name = String(fd.get('name') || '').trim();
+                    const streamUrl = String(fd.get('streamUrl') || '').trim();
+                    const country = String(fd.get('country') || '').trim();
+                    const pollRaw = Number(fd.get('pollIntervalSeconds'));
+                    const pollIntervalSeconds = Number.isFinite(pollRaw) ? Math.min(3600, Math.max(5, Math.trunc(pollRaw))) : 60;
+                    if (!name || !streamUrl || !country) {
+                      setAddError('Name, stream URL, and country are required.');
+                      return;
+                    }
+                    setAddSubmitting(true);
+                    try {
+                      const res = await fetch('/api/stations', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          name,
+                          streamUrl,
+                          country,
+                          pollIntervalSeconds,
+                          isActive: true,
+                          metadataPriorityEnabled: true,
+                          fingerprintFallbackEnabled: true,
+                          archiveSongSamples: true,
+                        }),
+                      });
+                      if (!res.ok) {
+                        const j = await res.json().catch(() => ({}));
+                        setAddError(typeof j.error === 'string' ? j.error : `HTTP ${res.status}`);
+                        return;
+                      }
+                      setIsAddingStation(false);
+                      form.reset();
+                      await fetchData();
+                    } catch (err) {
+                      setAddError(err instanceof Error ? err.message : 'Request failed');
+                    } finally {
+                      setAddSubmitting(false);
+                    }
+                  }}
+                >
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-gray-500">Station Name</label>
                     <input required name="name" type="text" placeholder="e.g. Worldwide FM" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-brand-cyan transition-colors" />
@@ -497,13 +561,15 @@ export default function App() {
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-gray-500">Poll (secs)</label>
-                      <input required name="pollIntervalSeconds" type="number" defaultValue="60" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none" />
+                      <input required name="pollIntervalSeconds" type="number" defaultValue="60" min={5} max={3600} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none" />
                     </div>
                   </div>
-                  
+                  {addError ? <p className="text-sm text-amber-300">{addError}</p> : null}
                   <div className="flex gap-4 pt-4">
-                    <button type="button" onClick={() => setIsAddingStation(false)} className="flex-1 py-4 text-gray-400 font-medium hover:text-white">Cancel</button>
-                    <button type="submit" className="flex-1 bg-brand-cyan text-black font-bold py-4 rounded-2xl hover:brightness-110 shadow-[0_0_20px_rgba(0,242,255,0.3)]">Add Station</button>
+                    <button type="button" onClick={() => { setAddError(null); setIsAddingStation(false); }} className="flex-1 py-4 text-gray-400 font-medium hover:text-white">Cancel</button>
+                    <button type="submit" disabled={addSubmitting} className="flex-1 bg-brand-cyan text-black font-bold py-4 rounded-2xl hover:brightness-110 shadow-[0_0_20px_rgba(0,242,255,0.3)] disabled:opacity-50">
+                      {addSubmitting ? 'Adding…' : 'Add Station'}
+                    </button>
                   </div>
                 </form>
               </div>
@@ -543,17 +609,45 @@ function MetricCard({ label, value, sub }: any) {
 function StationCard({ station, spin, onProbe }: { station: Station, spin?: StationSpinSummary, onProbe: () => void }) {
   const [probing, setProbing] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [streamEdit, setStreamEdit] = useState(station.streamUrl);
+  const [savingUrl, setSavingUrl] = useState(false);
+  const [refreshingUrl, setRefreshingUrl] = useState(false);
+  const [toggling, setToggling] = useState(false);
+  const [cardError, setCardError] = useState<string | null>(null);
   const np = station.currentNowPlaying;
+
+  React.useEffect(() => {
+    setStreamEdit(station.streamUrl);
+  }, [station.streamUrl]);
+
+  const lastPoll = station.lastPollAt ? new Date(station.lastPollAt) : null;
+  const pollOk = station.lastPollStatus === 'ok';
+  const pollErr = station.lastPollStatus === 'error';
+  const pollMs = (station.pollIntervalSeconds || 60) * 1000;
+  const stalePoll =
+    lastPoll != null &&
+    Number.isFinite(lastPoll.getTime()) &&
+    Date.now() - lastPoll.getTime() > Math.max(120_000, pollMs * 4);
 
   const handleProbe = async () => {
     setProbing(true);
-    await fetch(`/api/stations/${station.id}/probe`, { method: 'POST' });
-    onProbe();
-    setTimeout(() => setProbing(false), 2000);
+    setCardError(null);
+    try {
+      const res = await fetch(`/api/stations/${station.id}/probe`, { method: 'POST' });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setCardError(typeof j.error === 'string' ? j.error : `Probe failed (${res.status})`);
+      }
+      onProbe();
+    } catch (e) {
+      setCardError(e instanceof Error ? e.message : 'Probe failed');
+    } finally {
+      setTimeout(() => setProbing(false), 800);
+    }
   };
 
   const copyToClipboard = () => {
-    navigator.clipboard.writeText(station.streamUrl);
+    navigator.clipboard.writeText(streamEdit);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -563,8 +657,34 @@ function StationCard({ station, spin, onProbe }: { station: Station, spin?: Stat
       layout
       className="group bg-white/5 border border-white/10 hover:border-brand-cyan/30 rounded-[2.5rem] p-8 transition-all hover:bg-white/10 flex flex-col gap-8 relative overflow-hidden"
     >
-      <div className="absolute top-0 right-0 p-8">
+      <div className="absolute top-0 right-0 p-8 flex flex-col items-end gap-2">
         <div className={`w-2 h-2 rounded-full ${station.isActive ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+        <span
+          className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-lg border ${
+            !station.isActive
+              ? 'border-white/10 text-gray-500'
+              : pollErr
+                ? 'border-red-500/40 text-red-300'
+                : stalePoll
+                  ? 'border-amber-500/40 text-amber-200'
+                  : pollOk || lastPoll
+                    ? 'border-green-500/30 text-green-300'
+                    : 'border-white/10 text-gray-500'
+          }`}
+          title={station.lastPollError || undefined}
+        >
+          {!station.isActive
+            ? 'Inactive'
+            : pollErr
+              ? 'Stream error'
+              : stalePoll
+                ? 'No recent poll'
+                : pollOk
+                  ? 'Online'
+                  : lastPoll
+                    ? 'Checked'
+                    : 'Starting…'}
+        </span>
       </div>
 
       <div className="flex justify-between items-start">
@@ -574,6 +694,14 @@ function StationCard({ station, spin, onProbe }: { station: Station, spin?: Stat
           </div>
           <div className="flex flex-col">
             <h3 className="text-xl font-bold">{station.name}</h3>
+            {lastPoll ? (
+              <p className="text-[11px] text-gray-500 mt-0.5">
+                Last check: {lastPoll.toLocaleString()}
+                {station.pollIntervalSeconds != null ? ` · poll every ${station.pollIntervalSeconds}s` : ''}
+              </p>
+            ) : station.isActive ? (
+              <p className="text-[11px] text-gray-500 mt-0.5">Waiting for first poll…</p>
+            ) : null}
             <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
               <span className="px-1.5 py-0.5 bg-white/5 rounded border border-white/10 uppercase">{station.country}</span>
               {station.province ? (
@@ -599,19 +727,51 @@ function StationCard({ station, spin, onProbe }: { station: Station, spin?: Stat
             </div>
             {spin && spin.detectionCount > 0 ? (
               <p className="text-[11px] text-gray-500 mt-1">
-                Logged detections: {spin.detectionCount} · distinct tracks (approx.): {spin.uniqueSongs}
+                Total plays (matched): {spin.detectionCount} · distinct songs: {spin.uniqueSongs}
               </p>
             ) : null}
           </div>
         </div>
         
-        <button 
-          onClick={handleProbe}
-          disabled={probing}
-          className="p-3 bg-black/40 border border-white/10 rounded-2xl hover:bg-brand-cyan hover:text-black transition-all group/btn"
-        >
-          <RefreshCw className={`w-5 h-5 ${probing ? 'animate-spin' : 'group-hover/btn:rotate-180 transition-transform duration-500'}`} />
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            title={station.isActive ? 'Pause monitoring' : 'Resume monitoring'}
+            onClick={async () => {
+              setToggling(true);
+              setCardError(null);
+              try {
+                const res = await fetch(`/api/stations/${station.id}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ isActive: !station.isActive }),
+                });
+                if (!res.ok) {
+                  const j = await res.json().catch(() => ({}));
+                  setCardError(typeof j.error === 'string' ? j.error : `HTTP ${res.status}`);
+                  return;
+                }
+                onProbe();
+              } catch (e) {
+                setCardError(e instanceof Error ? e.message : 'Update failed');
+              } finally {
+                setToggling(false);
+              }
+            }}
+            disabled={toggling}
+            className="px-3 py-2 text-xs font-semibold rounded-xl border border-white/10 bg-black/40 hover:bg-white/10 disabled:opacity-50"
+          >
+            {station.isActive ? 'Pause' : 'Resume'}
+          </button>
+          <button 
+            type="button"
+            onClick={handleProbe}
+            disabled={probing || !station.isActive}
+            className="p-3 bg-black/40 border border-white/10 rounded-2xl hover:bg-brand-cyan hover:text-black transition-all group/btn disabled:opacity-40"
+          >
+            <RefreshCw className={`w-5 h-5 ${probing ? 'animate-spin' : 'group-hover/btn:rotate-180 transition-transform duration-500'}`} />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-4">
@@ -652,20 +812,93 @@ function StationCard({ station, spin, onProbe }: { station: Station, spin?: Stat
           )}
         </div>
 
-        <div className="bg-black/20 rounded-2xl p-4 border border-white/5 flex flex-col gap-2">
+        <div className="bg-black/20 rounded-2xl p-4 border border-white/5 flex flex-col gap-3">
           <div className="flex justify-between items-center text-[10px] text-gray-500 font-bold uppercase tracking-widest">
-            <span>Stream Source</span>
+            <span>Stream URL (edit if the CDN link changed)</span>
             <span className="font-mono lowercase opacity-50">{station.id}</span>
           </div>
-          <div className="flex items-center gap-2 group/url">
-            <p className="text-xs text-gray-400 truncate font-mono flex-1">{station.streamUrl}</p>
-            <button 
+          <textarea
+            value={streamEdit}
+            onChange={(e) => setStreamEdit(e.target.value)}
+            rows={2}
+            className="w-full text-xs font-mono bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-gray-300 outline-none focus:border-brand-cyan/50 resize-y min-h-[2.5rem]"
+            spellCheck={false}
+          />
+          <div className="flex flex-wrap gap-2 items-center">
+            <button
+              type="button"
               onClick={copyToClipboard}
-              className={`p-1.5 rounded-lg transition-all ${copied ? 'bg-green-500/20 text-green-500' : 'bg-white/5 text-gray-500 hover:text-white'}`}
+              className={`p-2 rounded-lg text-xs flex items-center gap-1 ${copied ? 'bg-green-500/20 text-green-500' : 'bg-white/5 text-gray-500 hover:text-white'}`}
             >
               {copied ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              Copy
+            </button>
+            <button
+              type="button"
+              disabled={savingUrl || streamEdit.trim() === station.streamUrl}
+              onClick={async () => {
+                setSavingUrl(true);
+                setCardError(null);
+                try {
+                  const res = await fetch(`/api/stations/${station.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ streamUrl: streamEdit.trim() }),
+                  });
+                  const j = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    setCardError(typeof j.error === 'string' ? j.error : 'Invalid stream URL');
+                    return;
+                  }
+                  onProbe();
+                } catch (e) {
+                  setCardError(e instanceof Error ? e.message : 'Save failed');
+                } finally {
+                  setSavingUrl(false);
+                }
+              }}
+              className="px-3 py-2 rounded-lg text-xs font-semibold bg-brand-purple/30 border border-brand-purple/40 hover:bg-brand-purple/50 disabled:opacity-40"
+            >
+              {savingUrl ? 'Saving…' : 'Save URL'}
+            </button>
+            <button
+              type="button"
+              disabled={refreshingUrl}
+              onClick={async () => {
+                setRefreshingUrl(true);
+                setCardError(null);
+                try {
+                  const res = await fetch(`/api/stations/${station.id}/refresh-stream`, { method: 'POST' });
+                  const j = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    setCardError(typeof j.error === 'string' ? j.error : `HTTP ${res.status}`);
+                    return;
+                  }
+                  if (j.streamUrl) setStreamEdit(String(j.streamUrl));
+                  if (!j.updated) {
+                    setCardError(typeof j.message === 'string' ? j.message : 'No new URL from MyTuner/ORB/Streema hints');
+                  }
+                  onProbe();
+                } catch (e) {
+                  setCardError(e instanceof Error ? e.message : 'Refresh failed');
+                } finally {
+                  setRefreshingUrl(false);
+                }
+              }}
+              className="px-3 py-2 rounded-lg text-xs font-semibold border border-white/10 bg-black/30 hover:bg-black/50 disabled:opacity-40"
+            >
+              {refreshingUrl ? 'Refreshing…' : 'Auto-refresh from source'}
             </button>
           </div>
+          {station.streamRefreshedAt ? (
+            <p className="text-[10px] text-gray-600">URL auto-refreshed: {new Date(station.streamRefreshedAt).toLocaleString()}</p>
+          ) : null}
+          {cardError ? <p className="text-xs text-amber-300">{cardError}</p> : null}
+          {station.lastPollError && pollErr ? (
+            <p className="text-[11px] text-red-300/90 break-words" title={station.lastPollError}>
+              {station.lastPollError.length > 220 ? `${station.lastPollError.slice(0, 220)}…` : station.lastPollError}
+            </p>
+          ) : null}
         </div>
       </div>
 

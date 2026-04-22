@@ -2,6 +2,10 @@ import axios from "axios";
 import { logger } from "../lib/logger.js";
 import { MatchResult, NormalizedMetadata } from "../types.js";
 
+/** Deezer public search is unauthenticated; stay polite (MB is already ~1 rps). */
+let lastDeezerAt = 0;
+const DEEZER_MIN_INTERVAL_MS = 400;
+
 export class CatalogLookupService {
   static async lookupFromMetadata(metadata: NormalizedMetadata | null): Promise<MatchResult | null> {
     const title = metadata?.rawTitle?.trim();
@@ -24,11 +28,18 @@ export class CatalogLookupService {
       return itunesMatch;
     }
 
+    // 3) Deezer public search (no API key for basic search - rate-limit friendly)
+    if (process.env.DEEZER_LOOKUP_ENABLED !== "false") {
+      const dz = await this.deezerSearch(title, artist, combined);
+      if (dz) return dz;
+    }
+
     return null;
   }
 
   private static async musicbrainzSearch(title?: string, artist?: string, combined?: string): Promise<MatchResult | null> {
-    const userAgent = process.env.MUSICBRAINZ_USER_AGENT || "RadioPulseMonitor/1.0.0 ( contact@example.com )";
+    const userAgent =
+      process.env.MUSICBRAINZ_USER_AGENT || "MOSTIFY/1.0.0 ( chansamax198@gmail.com )";
     const query = this.toSearchQuery(title, artist, combined);
     if (!query) return null;
 
@@ -123,6 +134,74 @@ export class CatalogLookupService {
       };
     } catch (error) {
       logger.warn({ error, query }, "iTunes catalog lookup failed");
+      return null;
+    }
+  }
+
+  private static async deezerSearch(
+    title?: string,
+    artist?: string,
+    combined?: string
+  ): Promise<MatchResult | null> {
+    const q = [artist, title].filter(Boolean).join(" ").trim() || (combined ?? "").trim();
+    if (!q || q.length < 2) return null;
+
+    const now = Date.now();
+    const wait = lastDeezerAt + DEEZER_MIN_INTERVAL_MS - now;
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastDeezerAt = Date.now();
+
+    try {
+      const response = await axios.get("https://api.deezer.com/search", {
+        params: { q, limit: 5 },
+        timeout: 10000,
+        headers: {
+          "User-Agent":
+            process.env.MUSICBRAINZ_USER_AGENT || "MOSTIFY/1.0.0 ( chansamax198@gmail.com )",
+        },
+      });
+
+      const items = response.data?.data;
+      if (!Array.isArray(items) || items.length === 0) return null;
+
+      const titleLower = (title || "").toLowerCase();
+      const artistLower = (artist || "").toLowerCase();
+      let best = items[0];
+      let bestScore = 0;
+
+      for (const it of items) {
+        const tn = String(it.title || "").toLowerCase();
+        const an = String(it.artist?.name || "").toLowerCase();
+        let s = 0.55;
+        if (titleLower && (tn.includes(titleLower) || titleLower.includes(tn))) s += 0.12;
+        if (artistLower && (an.includes(artistLower) || artistLower.includes(an))) s += 0.12;
+        if (titleLower && artistLower && tn.includes(titleLower) && an.includes(artistLower)) s += 0.1;
+        if (s > bestScore) {
+          bestScore = s;
+          best = it;
+        }
+      }
+
+      const minScore = parseFloat(process.env.CATALOG_LOOKUP_MIN_SCORE || "0.65");
+      if (bestScore < minScore) return null;
+
+      const durSec = typeof best.duration === "number" ? best.duration : undefined;
+
+      return {
+        score: bestScore,
+        confidence: bestScore,
+        title: best.title,
+        artist: best.artist?.name,
+        releaseTitle: best.album?.title,
+        releaseDate: best.album?.release_date
+          ? String(best.album.release_date).slice(0, 10)
+          : undefined,
+        durationMs: durSec && durSec > 0 ? durSec * 1000 : undefined,
+        sourceProvider: "deezer_search",
+        reasonCode: "catalog_lookup_deezer",
+      };
+    } catch (error) {
+      logger.warn({ error, q }, "Deezer catalog lookup failed");
       return null;
     }
   }

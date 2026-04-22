@@ -15,6 +15,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { PrismaClient } from "@prisma/client";
+import { upsertSongSpinOnNewPlay } from "./song_spin_upsert.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATE_PATH = join(__dirname, "data", "orb_track_state.json");
@@ -112,7 +113,7 @@ async function main() {
       continue;
     }
 
-    await prisma.detectionLog.create({
+    const created = await prisma.detectionLog.create({
       data: {
         stationId: st.id,
         detectionMethod: "onlineradiobox_track",
@@ -124,6 +125,14 @@ async function main() {
         status: "matched",
         sourceProvider: "onlineradiobox",
       },
+      select: { id: true },
+    });
+    await upsertSongSpinOnNewPlay(prisma, {
+      stationId: st.id,
+      artist,
+      title: song || combined,
+      album: null,
+      detectionLogId: created.id,
     });
     state[radioId] = { l: data.updated };
     newRows++;

@@ -20,6 +20,7 @@ if (!Array.isArray(stations)) {
 const prisma = new PrismaClient();
 
 if (replaceAll) {
+  await prisma.stationSongSpin.deleteMany();
   await prisma.songSampleArchive.deleteMany();
   await prisma.detectionLog.deleteMany();
   await prisma.jobRun.deleteMany();
@@ -60,8 +61,10 @@ for (const row of stations) {
     isActive,
     metadataPriorityEnabled,
     fingerprintFallbackEnabled,
+    archiveSongSamples,
     metadataStaleSeconds,
     pollIntervalSeconds,
+    audioFingerprintIntervalSeconds,
     sampleSeconds,
   } = row;
 
@@ -81,9 +84,11 @@ for (const row of stations) {
       icySampleTitle: icySampleTitle || null,
       isActive: isActive ?? true,
       metadataPriorityEnabled: metadataPriorityEnabled ?? true,
-      fingerprintFallbackEnabled: fingerprintFallbackEnabled ?? false,
+      fingerprintFallbackEnabled: fingerprintFallbackEnabled ?? true,
+      archiveSongSamples: archiveSongSamples ?? true,
       metadataStaleSeconds: metadataStaleSeconds ?? 300,
       pollIntervalSeconds: pollIntervalSeconds ?? 120,
+      audioFingerprintIntervalSeconds: audioFingerprintIntervalSeconds ?? 300,
       sampleSeconds: sampleSeconds ?? 20,
     },
     update: {
@@ -99,9 +104,11 @@ for (const row of stations) {
       icySampleTitle: icySampleTitle || null,
       isActive: isActive ?? true,
       metadataPriorityEnabled: metadataPriorityEnabled ?? true,
-      fingerprintFallbackEnabled: fingerprintFallbackEnabled ?? false,
+      fingerprintFallbackEnabled: fingerprintFallbackEnabled ?? true,
+      archiveSongSamples: archiveSongSamples ?? true,
       metadataStaleSeconds: metadataStaleSeconds ?? 300,
       pollIntervalSeconds: pollIntervalSeconds ?? 120,
+      audioFingerprintIntervalSeconds: audioFingerprintIntervalSeconds ?? 300,
       sampleSeconds: sampleSeconds ?? 20,
     },
   });

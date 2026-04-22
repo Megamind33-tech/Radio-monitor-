@@ -3,6 +3,7 @@ import * as path from "path";
 import type { Station } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
+import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
 import { ResolverService } from "./resolver.service.js";
 import { MetadataService } from "./metadata.service.js";
 import { SamplerService } from "./sampler.service.js";
@@ -11,6 +12,8 @@ import { AcoustidService } from "./acoustid.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { CatalogLookupService } from "./catalog-lookup.service.js";
 import { NormalizedMetadata, MatchResult, DetectionMethod } from "../types.js";
+import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
+import { StreamRefreshService } from "./stream-refresh.service.js";
 
 function parseEnvMs(key: string, fallback: number): number {
   const v = process.env[key];
@@ -19,9 +22,26 @@ function parseEnvMs(key: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function parseEnvFloat(key: string, fallback: number): number {
+  const v = process.env[key];
+  if (!v) return fallback;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** ICY text too weak to drive MusicBrainz/iTunes (avoids garbage catalog hits). */
+function isJunkIcyMetadata(metadata: NormalizedMetadata | null): boolean {
+  if (!metadata) return true;
+  const raw = (metadata.combinedRaw ?? "").trim();
+  if (raw.length < 2) return true;
+  if (raw === "-" || raw === " - " || raw === "...") return true;
+  return false;
+}
+
 export class MonitorService {
   /**
    * Main logic for a single station poll.
+   * Audio fingerprint: on ICY change, on interval (audioFingerprintIntervalSeconds), or when metadata is missing/untrusted/stale.
    */
   static async pollStation(stationId: string): Promise<void> {
     const start = Date.now();
@@ -30,80 +50,181 @@ export class MonitorService {
 
     logger.info({ station: station.name }, "Polling station");
 
+    const markPollError = async (message: string) => {
+      await prisma.station.update({
+        where: { id: stationId },
+        data: {
+          lastPollAt: new Date(),
+          lastPollStatus: "error",
+          lastPollError: message.slice(0, 2000),
+        },
+      });
+    };
+
     try {
       const resolvedUrl = await ResolverService.resolveStreamUrl(station.streamUrl);
 
       let metadata: NormalizedMetadata | null = null;
-      let shouldFingerprint = false;
+      let legacyFingerprint = false;
       let reasonCode: string | null = null;
 
-      // 1. Try Metadata first
       if (station.metadataPriorityEnabled) {
         metadata = await MetadataService.readStreamMetadata(resolvedUrl);
         const latestNowPlaying = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
 
         if (!metadata) {
-          shouldFingerprint = true;
+          legacyFingerprint = true;
           reasonCode = "metadata_missing";
         } else {
           const check = MetadataService.isMetadataTrustworthy(metadata, latestNowPlaying?.streamText || undefined);
           if (!check.trusted) {
-            shouldFingerprint = true;
+            legacyFingerprint = true;
             reasonCode = check.reason || "metadata_untrusted";
           } else if (latestNowPlaying && latestNowPlaying.streamText === metadata.combinedRaw) {
             const staleAt = new Date(
               latestNowPlaying.updatedAt.getTime() + station.metadataStaleSeconds * 1000
             );
             if (Date.now() > staleAt.getTime()) {
-              shouldFingerprint = true;
+              legacyFingerprint = true;
               reasonCode = "metadata_stale";
             }
           }
         }
       } else {
-        shouldFingerprint = true;
+        legacyFingerprint = true;
         reasonCode = "metadata_disabled";
       }
 
-      let match: MatchResult | null = null;
-      let method: DetectionMethod = "stream_metadata";
+      const latestNp = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
+      const icyText = (metadata?.combinedRaw ?? "").trim();
+      const prevIcy = (latestNp?.streamText ?? "").trim();
+      const icyChanged =
+        !!metadata &&
+        icyText.length > 0 &&
+        prevIcy.length > 0 &&
+        icyText !== prevIcy;
 
-      // 2. Fingerprint fallback
-      if (shouldFingerprint && station.fingerprintFallbackEnabled) {
-        logger.info({ station: station.name, reason: reasonCode }, "Fallback to fingerprinting");
-        method = "fingerprint_acoustid";
+      const intervalSec = Math.max(30, station.audioFingerprintIntervalSeconds || 300);
+      const lastFp = station.lastAudioFingerprintAt;
+      const intervalElapsed =
+        !lastFp || Date.now() - lastFp.getTime() >= intervalSec * 1000;
 
-        const samplePath = await SamplerService.captureSample(resolvedUrl, station.sampleSeconds);
+      const acoustidKey = process.env.ACOUSTID_API_KEY;
+      const doAudioId =
+        !!station.fingerprintFallbackEnabled &&
+        !!acoustidKey &&
+        (legacyFingerprint || icyChanged || intervalElapsed);
+
+      let audioMatch: MatchResult | null = null;
+      let sampledForFingerprint = false;
+
+      if (doAudioId && resolvedUrl.startsWith("http")) {
+        const fpSec = Math.min(
+          120,
+          Math.max(
+            station.sampleSeconds,
+            parseInt(process.env.FINGERPRINT_SAMPLE_SECONDS || "25", 10) || 25
+          )
+        );
+        logger.info(
+          { station: station.name, reason: reasonCode, icyChanged, intervalElapsed, fpSec },
+          "Audio fingerprint sample (ICY change, interval, or metadata fallback)"
+        );
+        const samplePath = await SamplerService.captureSample(resolvedUrl, fpSec);
+        sampledForFingerprint = true;
         if (samplePath) {
           const fingerprint = await FingerprintService.generateFingerprint(samplePath);
           if (fingerprint) {
             const acoustidMatch = await AcoustidService.lookup(fingerprint);
             if (acoustidMatch) {
-              match = await MusicbrainzService.enrich(acoustidMatch);
+              audioMatch = await MusicbrainzService.enrich(acoustidMatch);
             }
           }
           SamplerService.cleanup(samplePath);
         }
       }
 
-      // 2b. Public catalog fallback based on stream metadata text when fingerprinting misses
-      if (!match && metadata) {
-        const catalogMatch = await CatalogLookupService.lookupFromMetadata(metadata);
-        if (catalogMatch) {
-          match = catalogMatch;
-          method = "catalog_lookup";
+      let catalogMatch: MatchResult | null = null;
+      if (metadata && !isJunkIcyMetadata(metadata)) {
+        catalogMatch = await CatalogLookupService.lookupFromMetadata(metadata);
+      }
+
+      const minAcoust = parseEnvFloat("ACOUSTID_PREFER_MIN_SCORE", 0.55);
+      const merged = mergeAcoustidAndCatalog(audioMatch, catalogMatch, minAcoust);
+
+      let match = merged.match;
+      let method: DetectionMethod = merged.method;
+      const mergeReason = merged.reasonCode;
+
+      if (!match && metadata && !legacyFingerprint && station.metadataPriorityEnabled) {
+        const check = MetadataService.isMetadataTrustworthy(metadata, latestNp?.streamText || undefined);
+        if (metadata && check.trusted) {
+          method = "stream_metadata";
         }
       }
 
+      if (sampledForFingerprint) {
+        await prisma.station.update({
+          where: { id: stationId },
+          data: { lastAudioFingerprintAt: new Date() },
+        });
+      }
+
+      const finalReason =
+        mergeReason ||
+        reasonCode ||
+        (icyChanged ? "icy_changed_audio" : null) ||
+        (intervalElapsed && !legacyFingerprint ? "audio_interval" : null);
+
       const processingMs = Date.now() - start;
-      await this.saveDetection(station, resolvedUrl, method, metadata, match, processingMs, reasonCode);
+      await this.saveDetection(station, resolvedUrl, method, metadata, match, processingMs, finalReason);
+      await prisma.station.update({
+        where: { id: stationId },
+        data: {
+          lastPollAt: new Date(),
+          lastPollStatus: "ok",
+          lastPollError: null,
+        },
+      });
     } catch (error) {
       logger.error({ error, station: station.name }, "Error polling station");
+      const errMsg = String(error);
+      await markPollError(errMsg);
+      const refreshed = await StreamRefreshService.refreshFromSourceHints(
+        station.sourceIdsJson,
+        station.streamUrl
+      );
+      if (refreshed) {
+        logger.info({ station: station.name }, "Auto-refreshed stream URL from source hints; retrying poll");
+        await prisma.station.update({
+          where: { id: stationId },
+          data: {
+            streamUrl: refreshed,
+            streamRefreshedAt: new Date(),
+            lastPollError: `recovered: url refreshed (${errMsg.slice(0, 400)})`,
+          },
+        });
+        try {
+          await MonitorService.pollStation(stationId);
+        } catch (e2) {
+          logger.error({ e2, station: station.name }, "Retry after stream refresh failed");
+          await markPollError(String(e2));
+          await prisma.jobRun.create({
+            data: {
+              stationId,
+              status: "failure",
+              error: `after refresh: ${String(e2)}`,
+              durationMs: Date.now() - start,
+            },
+          });
+        }
+        return;
+      }
       await prisma.jobRun.create({
         data: {
           stationId,
           status: "failure",
-          error: String(error),
+          error: errMsg,
           durationMs: Date.now() - start,
         },
       });
@@ -120,7 +241,15 @@ export class MonitorService {
     reasonCode: string | null
   ) {
     const stationId = station.id;
-    const isMatched = !!match || (method === "stream_metadata" && !!metadata && !reasonCode);
+    const npRow = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
+    const trustedMeta =
+      metadata &&
+      station.metadataPriorityEnabled &&
+      MetadataService.isMetadataTrustworthy(metadata, npRow?.streamText || undefined).trusted;
+
+    const isMatched =
+      !!match ||
+      (method === "stream_metadata" && !!metadata && trustedMeta && !isJunkIcyMetadata(metadata));
     const status = isMatched ? "matched" : "unresolved";
 
     const titleFinal = match?.title || metadata?.rawTitle;
@@ -191,7 +320,24 @@ export class MonitorService {
       select: { id: true },
     });
 
-    if (status === "matched" && station.archiveSongSamples && resolvedUrl.startsWith("http")) {
+    let spinPlayCount = 0;
+    if (status === "matched") {
+      const spin = await upsertSongSpinOnNewPlay(prisma, {
+        stationId,
+        artist: artistFinal,
+        title: titleFinal,
+        album: match?.releaseTitle,
+        detectionLogId: log.id,
+      });
+      spinPlayCount = spin.playCount;
+    }
+
+    if (
+      status === "matched" &&
+      station.archiveSongSamples &&
+      spinPlayCount === 1 &&
+      resolvedUrl.startsWith("http")
+    ) {
       const sec = Math.min(Math.max(parseInt(process.env.ARCHIVE_SAMPLE_SECONDS || "30", 10) || 30, 10), 120);
       const archiveRoot = process.env.SONG_SAMPLE_ARCHIVE_DIR || path.join(process.cwd(), "data/song_samples");
       const dir = path.join(archiveRoot, stationId);
