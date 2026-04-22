@@ -1,0 +1,22 @@
+[Unit]
+Description=MOSTIFY Zambian airplay monitor (Node dashboard + station poller)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Dedicated user recommended; must own writable dirs (e.g. song samples, ORB state).
+# User=mostify
+# Group=mostify
+WorkingDirectory=/opt/radio-monitor
+EnvironmentFile=-/etc/mostify-monitor/mostify-monitor.env
+# Replace with: which node
+ExecStart=/usr/bin/node dist/server/main.js
+Restart=always
+RestartSec=5
+# Hardening (optional; relax if something legitimate breaks)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
