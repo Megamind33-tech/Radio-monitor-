@@ -107,9 +107,13 @@ for (const row of stations) {
 
   const existing = await prisma.station.findUnique({
     where: { id },
-    select: { sourceIdsJson: true },
+    select: { sourceIdsJson: true, isActive: true },
   });
   const mergedSources = mergeSourceIdsJson(existing?.sourceIdsJson, sourceIdsJson);
+  const nextIsActive =
+    replaceStationCatalogOnly && existing
+      ? existing.isActive
+      : isActive ?? true;
 
   await prisma.station.upsert({
     where: { id },
@@ -125,7 +129,7 @@ for (const row of stations) {
       sourceIdsJson: mergedSources ?? sourceIdsJson ?? null,
       icyQualification: icyQualification ?? null,
       icySampleTitle: icySampleTitle || null,
-      isActive: isActive ?? true,
+      isActive: nextIsActive,
       metadataPriorityEnabled: metadataPriorityEnabled ?? true,
       fingerprintFallbackEnabled: fingerprintFallbackEnabled ?? true,
       metadataStaleSeconds: metadataStaleSeconds ?? 300,
@@ -145,7 +149,7 @@ for (const row of stations) {
       sourceIdsJson: mergedSources ?? sourceIdsJson ?? null,
       icyQualification: icyQualification ?? null,
       icySampleTitle: icySampleTitle || null,
-      isActive: isActive ?? true,
+      isActive: nextIsActive,
       metadataPriorityEnabled: metadataPriorityEnabled ?? true,
       fingerprintFallbackEnabled: fingerprintFallbackEnabled ?? true,
       metadataStaleSeconds: metadataStaleSeconds ?? 300,
