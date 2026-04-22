@@ -52,7 +52,8 @@ async function startServer() {
     const freeApisEnabled = {
       acoustid: acoustidApiKeyConfigured,
       musicbrainz: musicbrainzUserAgentConfigured,
-      itunesSearch: true
+      itunesSearch: true,
+      deezerSearch: process.env.DEEZER_LOOKUP_ENABLED !== "false",
     };
 
     const missing = [];
