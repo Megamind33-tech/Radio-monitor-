@@ -23,6 +23,7 @@ import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
 import { StreamRefreshService } from "./stream-refresh.service.js";
 import { StreamHealthService } from "./stream-health.service.js";
 import { classifyContent, deriveMonitorState } from "../lib/station-health.js";
+import { monitorEvents } from "../lib/monitor-events.js";
 
 function parseEnvMs(key: string, fallback: number): number {
   const v = process.env[key];
@@ -613,49 +614,54 @@ export class MonitorService {
       }
     }
 
-    const log = await prisma.detectionLog.create({
-      data: {
-        stationId,
-        detectionMethod: method,
-        rawStreamText: metadata?.combinedRaw,
-        parsedArtist: metadata?.rawArtist,
-        parsedTitle: metadata?.rawTitle,
-        confidence: match?.confidence,
-        acoustidScore: match?.score,
-        recordingMbid: match?.recordingId,
-        titleFinal,
-        artistFinal,
-        releaseFinal: match?.releaseTitle,
-        releaseDate: match?.releaseDate,
-        genreFinal: match?.genre,
-        sourceProvider:
-          match?.sourceProvider ||
-          (method === "stream_metadata"
-            ? metadataProgramLike
-              ? "stream_metadata_program"
-              : "stream_metadata"
-            : method),
-        isrcList: match?.isrcs ? JSON.stringify(match.isrcs) : null,
-        trackDurationMs: trackDurationMs ?? null,
-        sampleSeconds: station.sampleSeconds,
-        processingMs,
-        status,
-        reasonCode: detectionReason,
-      },
-      select: { id: true },
-    });
-
-    let spinPlayCount = 0;
-    if (status === "matched") {
-      const spin = await upsertSongSpinOnNewPlay(prisma, {
-        stationId,
-        artist: artistFinal,
-        title: titleFinal,
-        album: match?.releaseTitle,
-        detectionLogId: log.id,
+    const writeResult = await prisma.$transaction(async (tx) => {
+      const log = await tx.detectionLog.create({
+        data: {
+          stationId,
+          detectionMethod: method,
+          rawStreamText: metadata?.combinedRaw,
+          parsedArtist: metadata?.rawArtist,
+          parsedTitle: metadata?.rawTitle,
+          confidence: match?.confidence,
+          acoustidScore: match?.score,
+          recordingMbid: match?.recordingId,
+          titleFinal,
+          artistFinal,
+          releaseFinal: match?.releaseTitle,
+          releaseDate: match?.releaseDate,
+          genreFinal: match?.genre,
+          sourceProvider:
+            match?.sourceProvider ||
+            (method === "stream_metadata"
+              ? metadataProgramLike
+                ? "stream_metadata_program"
+                : "stream_metadata"
+              : method),
+          isrcList: match?.isrcs ? JSON.stringify(match.isrcs) : null,
+          trackDurationMs: trackDurationMs ?? null,
+          sampleSeconds: station.sampleSeconds,
+          processingMs,
+          status,
+          reasonCode: detectionReason,
+        },
+        select: { id: true, observedAt: true },
       });
-      spinPlayCount = spin.playCount;
-    }
+
+      let spinPlayCount = 0;
+      if (status === "matched") {
+        const spin = await upsertSongSpinOnNewPlay(tx, {
+          stationId,
+          artist: artistFinal,
+          title: titleFinal,
+          album: match?.releaseTitle,
+          detectionLogId: log.id,
+        });
+        spinPlayCount = spin.playCount;
+      }
+      return { log, spinPlayCount };
+    });
+    const log = writeResult.log;
+    const spinPlayCount = writeResult.spinPlayCount;
 
     if (
       status === "matched" &&
@@ -732,6 +738,16 @@ export class MonitorService {
         durationMs: processingMs,
       },
     });
+    if (status === "matched") {
+      monitorEvents.emitSongDetected({
+        stationId,
+        detectionLogId: log.id,
+        observedAt: log.observedAt.toISOString(),
+        title: titleFinal ?? null,
+        artist: artistFinal ?? null,
+        playCount: spinPlayCount,
+      });
+    }
     return { status, reasonCode: detectionReason ?? null };
   }
 

@@ -13,6 +13,7 @@ import { MonitorService } from "./services/monitor.service.js";
 import { StreamRefreshService } from "./services/stream-refresh.service.js";
 import { validateCandidateStreamUrl } from "./lib/stream-url-guard.js";
 import { StreamHealthService } from "./services/stream-health.service.js";
+import { monitorEvents } from "./lib/monitor-events.js";
 
 function isCommandAvailable(command: string, args: string[] = ["-version"]) {
   try {
@@ -32,6 +33,35 @@ async function startServer() {
     contentSecurityPolicy: false,
   }));
   app.use(express.json());
+
+  app.get("/api/events/monitoring", (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
+    const sendEvent = (event: string, payload: unknown) => {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    sendEvent("ready", { ok: true, ts: new Date().toISOString() });
+    const heartbeat = setInterval(() => {
+      sendEvent("heartbeat", { ts: new Date().toISOString() });
+    }, 15_000);
+
+    const onSongDetected = (payload: unknown) => {
+      sendEvent("song_detected", payload);
+    };
+    monitorEvents.on("song-detected", onSongDetected);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      monitorEvents.off("song-detected", onSongDetected);
+      res.end();
+    });
+  });
 
   // Health check
   app.get("/api/health", async (req, res) => {

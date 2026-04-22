@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 /** Normalize for stable per-station song identity (plays aggregate on this key). */
 export function normalizeSongPart(s: string | null | undefined): string {
@@ -14,7 +14,7 @@ export function normalizeSongPart(s: string | null | undefined): string {
  * Returns final playCount (1 = first time we see this song key at this station).
  */
 export async function upsertSongSpinOnNewPlay(
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
   params: {
     stationId: string;
     artist: string | null | undefined;

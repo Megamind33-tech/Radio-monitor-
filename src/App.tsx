@@ -159,6 +159,7 @@ function normalizeStationName(value: string): string {
 export default function App() {
   const STATION_REFRESH_MS = 30_000;
   const HISTORY_REFRESH_MS = 120_000;
+  const REALTIME_FALLBACK_REFRESH_MS = 15_000;
   const [stations, setStations] = useState<Station[]>([]);
   const [logs, setLogs] = useState<DetectionLog[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
@@ -243,6 +244,69 @@ export default function App() {
     if (activeTab === 'analytics') {
       fetchSongAnalytics();
     }
+  }, [activeTab, selectedStationId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let es: EventSource | null = null;
+    let fallbackTimer: ReturnType<typeof setInterval> | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const refreshFromRealtime = (stationId?: string) => {
+      if (cancelled) return;
+      void fetchData();
+      if (activeTab === 'history') {
+        const targetStation = selectedStationId === 'all' ? undefined : selectedStationId;
+        if (!targetStation || !stationId || targetStation === stationId) {
+          void fetchLogs(selectedStationId);
+        }
+      }
+      if (activeTab === 'analytics') {
+        void fetchSongAnalytics();
+      }
+    };
+
+    const connect = () => {
+      if (cancelled) return;
+      es = new EventSource('/api/events/monitoring');
+      es.addEventListener('song_detected', (event) => {
+        try {
+          const payload = JSON.parse((event as MessageEvent).data) as { stationId?: string };
+          refreshFromRealtime(payload.stationId);
+        } catch {
+          refreshFromRealtime();
+        }
+      });
+      es.addEventListener('error', () => {
+        es?.close();
+        es = null;
+        if (!fallbackTimer) {
+          fallbackTimer = setInterval(() => {
+            refreshFromRealtime();
+          }, REALTIME_FALLBACK_REFRESH_MS);
+        }
+        if (!retryTimer) {
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            connect();
+          }, 5000);
+        }
+      });
+      es.addEventListener('open', () => {
+        if (fallbackTimer) {
+          clearInterval(fallbackTimer);
+          fallbackTimer = null;
+        }
+      });
+    };
+
+    connect();
+    return () => {
+      cancelled = true;
+      es?.close();
+      if (fallbackTimer) clearInterval(fallbackTimer);
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [activeTab, selectedStationId]);
 
   useEffect(() => {
