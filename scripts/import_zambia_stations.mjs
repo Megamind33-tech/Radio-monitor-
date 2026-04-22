@@ -144,14 +144,16 @@ async function ensureZnbcBaselineStations() {
     {
       id: "zm_req_znbc_radio_1",
       name: "ZNBC RADIO 1",
-      streamUrl: "https://stream.zeno.fm/8v2ncp9v8f8uv",
-      sourceIdsJson: JSON.stringify({ zeno: "znbc-radio-1", requested_seed: "znbc" }),
+      frequencyMhz: "102.9",
+      streamUrl: "https://eu6.fastcast4u.com/proxy/radio1?mp=/1",
+      sourceIdsJson: JSON.stringify({ direct: "fastcast4u-radio1", requested_seed: "znbc" }),
     },
     {
       id: "zm_req_znbc_radio_2",
       name: "ZNBC RADIO 2",
-      streamUrl: "https://stream.zeno.fm/mt6z2x5v8f8uv",
-      sourceIdsJson: JSON.stringify({ zeno: "znbc-radio-2", requested_seed: "znbc" }),
+      frequencyMhz: "95.7",
+      streamUrl: "https://eu6.fastcast4u.com/proxy/radio2?mp=/1",
+      sourceIdsJson: JSON.stringify({ direct: "fastcast4u-radio2", requested_seed: "znbc" }),
     },
     {
       id: "zm_req_znbc_radio_4",
@@ -171,6 +173,7 @@ async function ensureZnbcBaselineStations() {
         country: "Zambia",
         district: "Zambia",
         province: "",
+        frequencyMhz: row.frequencyMhz ?? null,
         streamUrl: urlCheck.canonicalUrl,
         streamFormatHint: "icy",
         sourceIdsJson: row.sourceIdsJson,
@@ -194,6 +197,7 @@ async function ensureZnbcBaselineStations() {
       update: {
         name: row.name,
         country: "Zambia",
+        frequencyMhz: row.frequencyMhz ?? null,
         streamUrl: urlCheck.canonicalUrl,
         sourceIdsJson: row.sourceIdsJson,
         isActive: true,

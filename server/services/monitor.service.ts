@@ -23,6 +23,7 @@ import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
 import { StreamRefreshService } from "./stream-refresh.service.js";
 import { StreamHealthService } from "./stream-health.service.js";
 import { classifyContent, deriveMonitorState } from "../lib/station-health.js";
+import { monitorEvents } from "../lib/monitor-events.js";
 
 function parseEnvMs(key: string, fallback: number): number {
   const v = process.env[key];
@@ -642,7 +643,7 @@ export class MonitorService {
         status,
         reasonCode: detectionReason,
       },
-      select: { id: true },
+      select: { id: true, observedAt: true },
     });
 
     let spinPlayCount = 0;
@@ -732,6 +733,16 @@ export class MonitorService {
         durationMs: processingMs,
       },
     });
+    if (status === "matched") {
+      monitorEvents.emitSongDetected({
+        stationId,
+        detectionLogId: log.id,
+        observedAt: log.observedAt.toISOString(),
+        title: titleFinal ?? null,
+        artist: artistFinal ?? null,
+        playCount: spinPlayCount,
+      });
+    }
     return { status, reasonCode: detectionReason ?? null };
   }
 
@@ -754,6 +765,9 @@ export class MonitorService {
       });
 
       const keepRaw = parseEnvInt("UNRESOLVED_SAMPLE_MAX_PER_STATION", 25);
+      // Production retention mode:
+      // set UNRESOLVED_SAMPLE_MAX_PER_STATION=0 to disable pruning entirely.
+      if (keepRaw <= 0) return;
       const keep = Math.min(200, Math.max(1, keepRaw));
       const stale = await prisma.unresolvedSample.findMany({
         where: { stationId },
