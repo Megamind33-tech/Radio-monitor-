@@ -116,6 +116,29 @@ Each row includes **three ICY `StreamTitle` samples** and a verdict (`good` / `p
 
 **Operational habit:** before trusting a URL long-term, open it in **VLC** or `ffplay` once and confirm it matches the FM programme; then keep that URL as `streamUrl`. The audit script automates **reachability + ICY shape**, not subjective “sounds like FM”.
 
+## Node stack: Radio Garden (Zambia) + import
+
+The harvester `scripts/zambia_station_harvest.py` pulls **all Radio Garden stations** exposed for Zambia on their public API: the country page JSON at `https://radio.garden/api/ara/content/page/XbLRE6NT` includes a **Popular Stations** channel list plus **Places in Zambia** maps; every map’s `/channels` feed is merged (deduped by resolved stream URL). That matches what you see on [radio.garden](https://radio.garden/) for Zambia; there is no separate hidden catalog beyond what their API returns.
+
+```bash
+# One step: harvest + import (uses DATABASE_URL from .env)
+npm run sync:zambia
+
+# Or step-by-step:
+npm run harvest:zambia
+npm run import:zambia
+
+# Larger ICY probe cap (default 800 in package.json):
+# npm run sync:zambia -- --max-probe 1200
+
+# Optional full replace of Zambia catalog in Prisma (destructive):
+# npm run sync:zambia -- --replace
+```
+
+Stations that share the **same stream URL** across sites get a **merged** `sourceIdsJson` (e.g. `radio_garden` + `onlineradiobox` + `mytuner`) so ORB polling, MyTuner refresh, and Radio Garden listen URLs stay connected on one row.
+
+Harvest output enables **fingerprint fallback** and **archiveSongSamples** for imported rows (when present in JSON) to support audio matching alongside ICY.
+
 ## Inspect the data (Supabase SQL Editor)
 
 ```sql

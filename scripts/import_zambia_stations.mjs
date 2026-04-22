@@ -1,6 +1,7 @@
 /**
  * Usage: node scripts/import_zambia_stations.mjs [path/to/zambia_harvest.json]
  * Upserts stations from harvest JSON into Prisma (SQLite/Postgres).
+ * Merges sourceIdsJson on update so the same stream URL keeps hints from all sites (e.g. radio_garden + onlineradiobox).
  */
 import { readFileSync } from "fs";
 import { PrismaClient } from "@prisma/client";
@@ -15,6 +16,30 @@ const stations = data.stations;
 if (!Array.isArray(stations)) {
   console.error("Invalid JSON: expected { stations: [...] }");
   process.exit(1);
+}
+
+/** @param {string | null | undefined} json */
+function parseSourceIds(json) {
+  if (!json || typeof json !== "string") return {};
+  try {
+    const o = JSON.parse(json);
+    return o && typeof o === "object" && !Array.isArray(o) ? { ...o } : {};
+  } catch {
+    return {};
+  }
+}
+
+/** @param {string | null | undefined} a @param {string | null | undefined} b */
+function mergeSourceIdsJson(a, b) {
+  const merged = { ...parseSourceIds(a), ...parseSourceIds(b) };
+  const keys = Object.keys(merged).sort();
+  if (keys.length === 0) return null;
+  const out = {};
+  for (const k of keys) {
+    const v = merged[k];
+    if (typeof v === "string" && v.trim()) out[k] = v.trim();
+  }
+  return Object.keys(out).length ? JSON.stringify(out) : null;
 }
 
 const prisma = new PrismaClient();
@@ -61,12 +86,18 @@ for (const row of stations) {
     isActive,
     metadataPriorityEnabled,
     fingerprintFallbackEnabled,
-    archiveSongSamples,
     metadataStaleSeconds,
     pollIntervalSeconds,
     audioFingerprintIntervalSeconds,
     sampleSeconds,
+    archiveSongSamples,
   } = row;
+
+  const existing = await prisma.station.findUnique({
+    where: { id },
+    select: { sourceIdsJson: true },
+  });
+  const mergedSources = mergeSourceIdsJson(existing?.sourceIdsJson, sourceIdsJson);
 
   await prisma.station.upsert({
     where: { id },
@@ -79,17 +110,17 @@ for (const row of stations) {
       frequencyMhz: frequencyMhz ?? null,
       streamUrl,
       streamFormatHint: streamFormatHint ?? null,
-      sourceIdsJson: sourceIdsJson ?? null,
+      sourceIdsJson: mergedSources ?? sourceIdsJson ?? null,
       icyQualification: icyQualification ?? null,
       icySampleTitle: icySampleTitle || null,
       isActive: isActive ?? true,
       metadataPriorityEnabled: metadataPriorityEnabled ?? true,
       fingerprintFallbackEnabled: fingerprintFallbackEnabled ?? true,
-      archiveSongSamples: archiveSongSamples ?? true,
       metadataStaleSeconds: metadataStaleSeconds ?? 300,
       pollIntervalSeconds: pollIntervalSeconds ?? 120,
       audioFingerprintIntervalSeconds: audioFingerprintIntervalSeconds ?? 300,
       sampleSeconds: sampleSeconds ?? 20,
+      archiveSongSamples: archiveSongSamples ?? true,
     },
     update: {
       name,
@@ -99,17 +130,17 @@ for (const row of stations) {
       frequencyMhz: frequencyMhz ?? null,
       streamUrl,
       streamFormatHint: streamFormatHint ?? null,
-      sourceIdsJson: sourceIdsJson ?? null,
+      sourceIdsJson: mergedSources ?? sourceIdsJson ?? null,
       icyQualification: icyQualification ?? null,
       icySampleTitle: icySampleTitle || null,
       isActive: isActive ?? true,
       metadataPriorityEnabled: metadataPriorityEnabled ?? true,
       fingerprintFallbackEnabled: fingerprintFallbackEnabled ?? true,
-      archiveSongSamples: archiveSongSamples ?? true,
       metadataStaleSeconds: metadataStaleSeconds ?? 300,
       pollIntervalSeconds: pollIntervalSeconds ?? 120,
       audioFingerprintIntervalSeconds: audioFingerprintIntervalSeconds ?? 300,
       sampleSeconds: sampleSeconds ?? 20,
+      archiveSongSamples: archiveSongSamples ?? true,
     },
   });
   upserted++;
@@ -117,6 +148,12 @@ for (const row of stations) {
 
 const active = await prisma.station.count({ where: { isActive: true } });
 const total = await prisma.station.count();
-console.log(`Upserted ${upserted} stations. DB total=${total}, active=${active}.`);
+const rgLike = await prisma.station.count({
+  where: {
+    country: "Zambia",
+    sourceIdsJson: { contains: "radio_garden" },
+  },
+});
+console.log(`Upserted ${upserted} stations. DB total=${total}, active=${active}, with_radio_garden_hint=${rgLike}.`);
 
 await prisma.$disconnect();
