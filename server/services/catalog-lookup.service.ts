@@ -50,6 +50,9 @@ export class CatalogLookupService {
       const artistName = top["artist-credit"]?.[0]?.name;
       const releaseTitle = top.releases?.[0]?.title;
       const releaseDate = top["first-release-date"] || top.releases?.[0]?.date;
+      const lengthRaw = top.length;
+      const durationMs =
+        typeof lengthRaw === "number" && lengthRaw > 0 ? lengthRaw : undefined;
 
       const normalizedScore = Math.min(Math.max((Number(top.score) || 0) / 100, 0), 1);
       const minScore = parseFloat(process.env.CATALOG_LOOKUP_MIN_SCORE || "0.65");
@@ -65,6 +68,7 @@ export class CatalogLookupService {
         artist: artistName,
         releaseTitle,
         releaseDate,
+        durationMs,
         sourceProvider: "musicbrainz_search",
         reasonCode: "catalog_lookup_musicbrainz"
       };
@@ -100,6 +104,11 @@ export class CatalogLookupService {
       const minScore = parseFloat(process.env.CATALOG_LOOKUP_MIN_SCORE || "0.65");
       if (score < minScore) return null;
 
+      const trackTimeMs =
+        typeof best.trackTimeMillis === "number" && best.trackTimeMillis > 0
+          ? best.trackTimeMillis
+          : undefined;
+
       return {
         score,
         confidence: score,
@@ -108,6 +117,7 @@ export class CatalogLookupService {
         releaseTitle: best.collectionName,
         releaseDate: best.releaseDate ? String(best.releaseDate).slice(0, 10) : undefined,
         genre: best.primaryGenreName,
+        durationMs: trackTimeMs,
         sourceProvider: "itunes_search",
         reasonCode: "catalog_lookup_itunes"
       };

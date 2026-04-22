@@ -129,6 +129,34 @@ async function startServer() {
     res.json(airplays);
   });
 
+  /** Past detections (real rows in DetectionLog only — no synthetic backfill). */
+  app.get("/api/detections/history", async (req, res) => {
+    const stationId = typeof req.query.stationId === "string" ? req.query.stationId : undefined;
+    const daysRaw = typeof req.query.days === "string" ? Number(req.query.days) : undefined;
+    const takeRaw = typeof req.query.take === "string" ? Number(req.query.take) : 500;
+    const take = Number.isFinite(takeRaw) ? Math.min(Math.max(Math.trunc(takeRaw), 1), 5000) : 500;
+
+    const since =
+      daysRaw !== undefined && Number.isFinite(daysRaw) && daysRaw > 0
+        ? new Date(Date.now() - Math.trunc(daysRaw) * 86400000)
+        : undefined;
+
+    const logs = await prisma.detectionLog.findMany({
+      where: {
+        ...(stationId ? { stationId } : {}),
+        ...(since ? { observedAt: { gte: since } } : {}),
+        status: "matched",
+        titleFinal: { not: null },
+      },
+      orderBy: { observedAt: "desc" },
+      take,
+      include: {
+        station: { select: { id: true, name: true, province: true, district: true } },
+      },
+    });
+    res.json(logs);
+  });
+
   app.get("/api/logs", async (req, res) => {
     const stationIdQuery = typeof req.query.stationId === "string" ? req.query.stationId : undefined;
     const takeQuery = typeof req.query.take === "string" ? Number(req.query.take) : 100;

@@ -58,11 +58,13 @@ export class AcoustidService {
       if (!recording) return null;
 
       // Best effort extraction
+      const durSec = typeof recording.duration === "number" ? recording.duration : undefined;
       const match: MatchResult = {
         score: result.score,
         recordingId: recording.id,
         title: recording.title,
         artist: recording.artists?.[0]?.name,
+        durationMs: durSec && durSec > 0 ? Math.round(durSec * 1000) : undefined,
         sourceProvider: "acoustid",
         confidence: result.score,
         reasonCode: 'fingerprint_acoustid'

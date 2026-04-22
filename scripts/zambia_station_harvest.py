@@ -41,6 +41,12 @@ from onlineradio_zambia import (
     is_offline_placeholder,
     slug_to_city_name,
 )
+from streema_zambia import (
+    discover_streema_station_paths,
+    extract_station_title,
+    extract_stream_from_station_html,
+    fetch_html as streema_fetch_html,
+)
 
 UA_BROWSER = "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36"
 UA_ICY = "ZambiaStationHarvest/1.0"
@@ -57,7 +63,7 @@ class Candidate:
     province: str
     frequency_mhz: str | None
     stream_url: str
-    source: str  # radio_garden | tunein | radio_browser | mytuner | onlineradiobox
+    source: str  # radio_garden | tunein | radio_browser | mytuner | onlineradiobox | streema
     source_detail: str  # channel id or tunein id
     icy_qualification: str = "pending"
     icy_sample_title: str | None = None
@@ -309,6 +315,10 @@ def stable_id_orb(radio_id: str, stream_url: str) -> str:
     return f"zm_orb_{sha1_str(stream_url)[:16]}"
 
 
+def stable_id_streema(path: str) -> str:
+    return f"zm_st_{sha1_str(path)[:16]}"
+
+
 def sha1_str(s: str) -> str:
     import hashlib
 
@@ -414,6 +424,37 @@ def build_orb_candidates() -> list[Candidate]:
                     source_detail=rid or path,
                 )
             )
+    return out
+
+
+def build_streema_candidates() -> list[Candidate]:
+    """Stream URLs from Streema Zambia station profiles (#source-stream data-src)."""
+    out: list[Candidate] = []
+    for path in discover_streema_station_paths():
+        try:
+            html = streema_fetch_html("https://streema.com" + path)
+        except Exception:
+            continue
+        su = extract_stream_from_station_html(html)
+        if not su or not su.startswith("http"):
+            continue
+        title = extract_station_title(html)
+        fallback = path.rstrip("/").split("/")[-1].replace("_", " ")
+        name = ((title or "").strip() or fallback).strip()
+        dist = infer_district_from_tunein_name(name)
+        prov = province_for_tunein_district(dist) if dist != "Zambia" else ""
+        out.append(
+            Candidate(
+                stable_id=stable_id_streema(path),
+                name=name,
+                district=dist,
+                province=prov,
+                frequency_mhz=extract_frequency_mhz(name),
+                stream_url=su,
+                source="streema",
+                source_detail=path,
+            )
+        )
     return out
 
 
@@ -598,15 +639,17 @@ async def async_main():
     args = ap.parse_args()
 
     print(
-        "Discovering candidates (MyTuner + OnlineRadioBox + Radio Garden + "
+        "Discovering candidates (MyTuner + OnlineRadioBox + Streema + Radio Garden + "
         "radio-browser ZM + filtered TuneIn)..."
     )
     mt = build_mytuner_candidates()
     orb = build_orb_candidates()
+    st = build_streema_candidates()
     base = await build_candidates(args.max_probe)
-    cands = merge_candidates_priority(mt, orb, base)
+    cands = merge_candidates_priority(mt, orb, st, base)
     print(f"MyTuner decrypted URLs: {len(mt)}")
     print(f"OnlineRadioBox stream buttons: {len(orb)}")
+    print(f"Streema station profiles: {len(st)}")
     print(f"After merge (deduped by URL): {len(cands)}")
 
     to_probe = cands[: args.max_probe]

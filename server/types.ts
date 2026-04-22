@@ -17,6 +17,8 @@ export interface MatchResult {
   releaseDate?: string;
   isrcs?: string[];
   genre?: string;
+  /** Track length in ms (MusicBrainz / iTunes / AcoustID) — used to suppress duplicate logs during one long spin */
+  durationMs?: number;
   sourceProvider?: 'acoustid' | 'musicbrainz' | 'musicbrainz_search' | 'itunes_search' | 'stream_metadata';
   confidence: number;
   reasonCode?: string;

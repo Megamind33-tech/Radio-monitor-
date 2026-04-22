@@ -6,6 +6,24 @@ export class MusicbrainzService {
   private static lastRequestAt: number = 0;
   private static readonly RATE_LIMIT_MS = 1100; // 1 req/sec strict limit
 
+  /** Lightweight fetch of recording length (ms) for duplicate-suppression when enrich was skipped. */
+  static async getRecordingLengthMs(recordingId: string): Promise<number | undefined> {
+    await this.throttle();
+    const userAgent = process.env.MUSICBRAINZ_USER_AGENT || "RadioPulseMonitor/1.0.0 ( contact@example.com )";
+    try {
+      const response = await axios.get(`https://musicbrainz.org/ws/2/recording/${recordingId}`, {
+        params: { fmt: "json" },
+        headers: { "User-Agent": userAgent },
+        timeout: 10000,
+      });
+      const len = response.data?.length;
+      return typeof len === "number" && len > 0 ? len : undefined;
+    } catch (error) {
+      logger.warn({ error, recordingId }, "MusicBrainz recording length fetch failed");
+      return undefined;
+    }
+  }
+
   private static async throttle() {
     const now = Date.now();
     const wait = this.lastRequestAt + this.RATE_LIMIT_MS - now;
@@ -42,6 +60,10 @@ export class MusicbrainzService {
 
       const data = response.data;
       
+      const len = data.length;
+      const durationMs =
+        typeof len === "number" && len > 0 ? len : match.durationMs;
+
       const enriched: MatchResult = {
         ...match,
         title: data.title || match.title,
@@ -50,6 +72,7 @@ export class MusicbrainzService {
         releaseDate: data.releases?.[0]?.date,
         isrcs: data.isrcs,
         genre: data.genres?.[0]?.name,
+        durationMs,
         sourceProvider: "musicbrainz"
       };
 
