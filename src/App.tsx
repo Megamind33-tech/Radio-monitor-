@@ -113,6 +113,40 @@ interface DependencyStatus {
   missing: string[];
 }
 
+const REQUESTED_STATION_PRIORITY: string[] = [
+  'znbc radio 1',
+  'znbc radio 2',
+  'znbc radio 4',
+  'hot fm',
+  'hone fm',
+  'yar fm',
+  'chikuni',
+  'phoenix',
+  'faith radio',
+  'chongwe radio',
+  'ichengelo',
+  'oblate radio',
+  'unza',
+  'zamcom',
+  'kwithu',
+  'rock fm',
+  'money fm',
+  'pan african radio',
+  'komboni radio',
+  'chimwemwe radio',
+  'rooster fm',
+  'power fm',
+];
+
+function normalizeStationName(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 // --- Components ---
 
 export default function App() {
@@ -208,6 +242,21 @@ export default function App() {
   const stationNameById = new Map(stations.map((station) => [station.id, station.name]));
   const spinByStation = new Map(spinSummaries.map((s) => [s.stationId, s]));
   const monitoredCount = stations.filter((s) => s.isActive).length;
+  const orderedStations = React.useMemo(() => {
+    const rank = (station: Station): number => {
+      const nameNorm = normalizeStationName(station.name || '');
+      const idx = REQUESTED_STATION_PRIORITY.findIndex((token) =>
+        nameNorm.includes(token)
+      );
+      return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+    };
+    return [...stations].sort((a, b) => {
+      const ra = rank(a);
+      const rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      return a.name.localeCompare(b.name);
+    });
+  }, [stations]);
 
   const formatMethod = (method: string) => {
     if (method === 'stream_metadata') return 'Metadata';
@@ -269,7 +318,7 @@ export default function App() {
         {activeTab === 'stations' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <AnimatePresence mode="popLayout">
-              {stations.map((station) => (
+              {orderedStations.map((station) => (
                 <StationCard 
                   key={station.id} 
                   station={station} 
@@ -373,7 +422,7 @@ export default function App() {
                       className="bg-black/40 border border-white/10 rounded-lg px-3 py-1 text-sm outline-none"
                     >
                       <option value="all">All Stations</option>
-                      {stations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
+                      {orderedStations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
                    </select>
                    <button
                     onClick={() => fetchLogs(selectedStationId)}
