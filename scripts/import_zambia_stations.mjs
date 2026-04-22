@@ -64,6 +64,7 @@ for (const row of stations) {
     archiveSongSamples,
     metadataStaleSeconds,
     pollIntervalSeconds,
+    audioFingerprintIntervalSeconds,
     sampleSeconds,
   } = row;
 
@@ -87,6 +88,7 @@ for (const row of stations) {
       archiveSongSamples: archiveSongSamples ?? true,
       metadataStaleSeconds: metadataStaleSeconds ?? 300,
       pollIntervalSeconds: pollIntervalSeconds ?? 120,
+      audioFingerprintIntervalSeconds: audioFingerprintIntervalSeconds ?? 300,
       sampleSeconds: sampleSeconds ?? 20,
     },
     update: {
@@ -106,6 +108,7 @@ for (const row of stations) {
       archiveSongSamples: archiveSongSamples ?? true,
       metadataStaleSeconds: metadataStaleSeconds ?? 300,
       pollIntervalSeconds: pollIntervalSeconds ?? 120,
+      audioFingerprintIntervalSeconds: audioFingerprintIntervalSeconds ?? 300,
       sampleSeconds: sampleSeconds ?? 20,
     },
   });

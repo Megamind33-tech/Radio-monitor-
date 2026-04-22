@@ -624,6 +624,7 @@ def to_prisma_row(c: Candidate) -> dict | None:
         "archiveSongSamples": True,
         "metadataStaleSeconds": 300,
         "pollIntervalSeconds": 120,
+        "audioFingerprintIntervalSeconds": 300,
         "sampleSeconds": 20,
     }
 

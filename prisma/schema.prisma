@@ -34,6 +34,10 @@ model Station {
   metadataStaleSeconds       Int      @default(180)
   sampleSeconds              Int      @default(20)
   pollIntervalSeconds        Int      @default(60)
+  /// Minimum seconds between audio fingerprint samples (scheduled), even when ICY unchanged
+  audioFingerprintIntervalSeconds Int @default(300)
+  /// Last time we captured audio for Chromaprint/AcoustID (scheduled or ICY-change path)
+  lastAudioFingerprintAt     DateTime?
   /// First play of each distinct song only: ~30s WAV under SONG_SAMPLE_ARCHIVE_DIR (no duplicate file per repeat play)
   archiveSongSamples         Boolean  @default(true)
   createdAt                  DateTime @default(now())
