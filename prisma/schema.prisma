@@ -40,6 +40,14 @@ model Station {
   lastAudioFingerprintAt     DateTime?
   /// First play of each distinct song only: ~30s WAV under SONG_SAMPLE_ARCHIVE_DIR (no duplicate file per repeat play)
   archiveSongSamples         Boolean  @default(true)
+  /// Last monitor poll attempt (success or failure) for dashboard uptime
+  lastPollAt                 DateTime?
+  /// ok | error - set after each poll attempt
+  lastPollStatus             String?
+  /// Short error message when lastPollStatus is error
+  lastPollError              String?
+  /// When streamUrl was auto-updated from sourceIdsJson (MyTuner / ORB / Streema)
+  streamRefreshedAt          DateTime?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 

@@ -7,8 +7,10 @@ import helmet from "helmet";
 import { spawnSync } from "child_process";
 import { logger } from "./lib/logger.js";
 import { prisma } from "./lib/prisma.js";
+import { z } from "zod";
 import { SchedulerService } from "./services/scheduler.service.js";
 import { MonitorService } from "./services/monitor.service.js";
+import { StreamRefreshService } from "./services/stream-refresh.service.js";
 
 function isCommandAvailable(command: string, args: string[] = ["-version"]) {
   try {
@@ -90,12 +92,63 @@ async function startServer() {
     res.json(station);
   });
 
+  const stationPatchSchema = z
+    .object({
+      name: z.string().min(1).max(500).optional(),
+      country: z.string().min(1).max(120).optional(),
+      district: z.string().max(200).optional(),
+      province: z.string().max(200).optional(),
+      frequencyMhz: z.string().max(32).nullable().optional(),
+      streamUrl: z.string().url().max(4000).optional(),
+      streamFormatHint: z.string().max(64).nullable().optional(),
+      sourceIdsJson: z.string().max(8000).nullable().optional(),
+      icyQualification: z.string().max(32).nullable().optional(),
+      icySampleTitle: z.string().max(2000).nullable().optional(),
+      isActive: z.boolean().optional(),
+      metadataPriorityEnabled: z.boolean().optional(),
+      fingerprintFallbackEnabled: z.boolean().optional(),
+      metadataStaleSeconds: z.number().int().min(30).max(86400).optional(),
+      sampleSeconds: z.number().int().min(5).max(120).optional(),
+      pollIntervalSeconds: z.number().int().min(5).max(3600).optional(),
+      audioFingerprintIntervalSeconds: z.number().int().min(30).max(86400).optional(),
+      archiveSongSamples: z.boolean().optional(),
+    })
+    .strict();
+
   app.patch("/api/stations/:id", async (req, res) => {
+    const parsed = stationPatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+      return;
+    }
+    if (Object.keys(parsed.data).length === 0) {
+      res.status(400).json({ error: "No valid fields to update" });
+      return;
+    }
     const station = await prisma.station.update({
       where: { id: req.params.id },
-      data: req.body
+      data: parsed.data,
     });
     res.json(station);
+  });
+
+  /** Re-fetch stream URL from harvest hints (MyTuner page / ORB / Streema) when the CDN URL rotated. */
+  app.post("/api/stations/:id/refresh-stream", async (req, res) => {
+    const st = await prisma.station.findUnique({ where: { id: req.params.id } });
+    if (!st) {
+      res.status(404).json({ error: "Station not found" });
+      return;
+    }
+    const next = await StreamRefreshService.refreshFromSourceHints(st.sourceIdsJson, st.streamUrl);
+    if (!next) {
+      res.json({ updated: false, streamUrl: st.streamUrl, message: "No alternate URL from hints" });
+      return;
+    }
+    const updated = await prisma.station.update({
+      where: { id: req.params.id },
+      data: { streamUrl: next, streamRefreshedAt: new Date() },
+    });
+    res.json({ updated: true, streamUrl: updated.streamUrl });
   });
 
   app.get("/api/stations/:id/logs", async (req, res) => {

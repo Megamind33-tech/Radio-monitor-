@@ -13,6 +13,7 @@ import { MusicbrainzService } from "./musicbrainz.service.js";
 import { CatalogLookupService } from "./catalog-lookup.service.js";
 import { NormalizedMetadata, MatchResult, DetectionMethod } from "../types.js";
 import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
+import { StreamRefreshService } from "./stream-refresh.service.js";
 
 function parseEnvMs(key: string, fallback: number): number {
   const v = process.env[key];
@@ -48,6 +49,17 @@ export class MonitorService {
     if (!station || !station.isActive) return;
 
     logger.info({ station: station.name }, "Polling station");
+
+    const markPollError = async (message: string) => {
+      await prisma.station.update({
+        where: { id: stationId },
+        data: {
+          lastPollAt: new Date(),
+          lastPollStatus: "error",
+          lastPollError: message.slice(0, 2000),
+        },
+      });
+    };
 
     try {
       const resolvedUrl = await ResolverService.resolveStreamUrl(station.streamUrl);
@@ -166,13 +178,53 @@ export class MonitorService {
 
       const processingMs = Date.now() - start;
       await this.saveDetection(station, resolvedUrl, method, metadata, match, processingMs, finalReason);
+      await prisma.station.update({
+        where: { id: stationId },
+        data: {
+          lastPollAt: new Date(),
+          lastPollStatus: "ok",
+          lastPollError: null,
+        },
+      });
     } catch (error) {
       logger.error({ error, station: station.name }, "Error polling station");
+      const errMsg = String(error);
+      await markPollError(errMsg);
+      const refreshed = await StreamRefreshService.refreshFromSourceHints(
+        station.sourceIdsJson,
+        station.streamUrl
+      );
+      if (refreshed) {
+        logger.info({ station: station.name }, "Auto-refreshed stream URL from source hints; retrying poll");
+        await prisma.station.update({
+          where: { id: stationId },
+          data: {
+            streamUrl: refreshed,
+            streamRefreshedAt: new Date(),
+            lastPollError: `recovered: url refreshed (${errMsg.slice(0, 400)})`,
+          },
+        });
+        try {
+          await MonitorService.pollStation(stationId);
+        } catch (e2) {
+          logger.error({ e2, station: station.name }, "Retry after stream refresh failed");
+          await markPollError(String(e2));
+          await prisma.jobRun.create({
+            data: {
+              stationId,
+              status: "failure",
+              error: `after refresh: ${String(e2)}`,
+              durationMs: Date.now() - start,
+            },
+          });
+        }
+        return;
+      }
       await prisma.jobRun.create({
         data: {
           stationId,
           status: "failure",
-          error: String(error),
+          error: errMsg,
           durationMs: Date.now() - start,
         },
       });
