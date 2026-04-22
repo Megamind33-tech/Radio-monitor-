@@ -205,23 +205,24 @@ async function startServer() {
     });
   });
 
-  // Song spin analytics (aggregated from detection logs — no fake data)
+  // Song spin analytics (StationSongSpin: one row per song, playCount = total plays)
   app.get("/api/analytics/station-summaries", async (_req, res) => {
     const rows = await prisma.$queryRaw<
-      { stationId: string; uniqueSongs: bigint; detectionCount: bigint }[]
+      { stationId: string; uniqueSongs: bigint; totalPlays: bigint }[]
     >`
       SELECT "stationId",
-        COUNT(DISTINCT COALESCE("artistFinal",'') || '|' || COALESCE("titleFinal",'') || '|' || COALESCE("releaseFinal",'')) AS "uniqueSongs",
-        COUNT(*) AS "detectionCount"
-      FROM "DetectionLog"
-      WHERE "status" = 'matched' AND "titleFinal" IS NOT NULL AND TRIM("titleFinal") != ''
+        COUNT(*) AS "uniqueSongs",
+        COALESCE(SUM("playCount"), 0) AS "totalPlays"
+      FROM "StationSongSpin"
       GROUP BY "stationId"
     `;
     res.json(
       rows.map((r) => ({
         stationId: r.stationId,
         uniqueSongs: Number(r.uniqueSongs),
-        detectionCount: Number(r.detectionCount),
+        /** Total matched plays (sum of spin counts); same spirit as former detection row count */
+        detectionCount: Number(r.totalPlays),
+        totalPlays: Number(r.totalPlays),
       }))
     );
   });
@@ -238,23 +239,21 @@ async function startServer() {
           artist: string | null;
           title: string | null;
           album: string | null;
-          playCount: bigint;
+          playCount: number;
           lastPlayed: Date;
           firstPlayed: Date;
         }[]
       >`
         SELECT "stationId",
-          "artistFinal" AS artist,
-          "titleFinal" AS title,
-          "releaseFinal" AS album,
-          COUNT(*) AS "playCount",
-          MAX("observedAt") AS "lastPlayed",
-          MIN("observedAt") AS "firstPlayed"
-        FROM "DetectionLog"
-        WHERE "status" = 'matched'
-          AND "titleFinal" IS NOT NULL AND TRIM("titleFinal") != ''
-          AND "stationId" = ${stationId}
-        GROUP BY "stationId", "artistFinal", "titleFinal", "releaseFinal"
+          NULLIF(TRIM("artistLast"), '') AS artist,
+          NULLIF(TRIM("titleLast"), '') AS title,
+          NULLIF(TRIM("albumLast"), '') AS album,
+          "playCount",
+          "lastPlayedAt" AS "lastPlayed",
+          "firstPlayedAt" AS "firstPlayed"
+        FROM "StationSongSpin"
+        WHERE "stationId" = ${stationId}
+          AND TRIM("titleNorm") != ''
         ORDER BY "playCount" DESC
         LIMIT ${limit}
       `;
@@ -277,22 +276,20 @@ async function startServer() {
         artist: string | null;
         title: string | null;
         album: string | null;
-        playCount: bigint;
+        playCount: number;
         lastPlayed: Date;
         firstPlayed: Date;
       }[]
     >`
       SELECT "stationId",
-        "artistFinal" AS artist,
-        "titleFinal" AS title,
-        "releaseFinal" AS album,
-        COUNT(*) AS "playCount",
-        MAX("observedAt") AS "lastPlayed",
-        MIN("observedAt") AS "firstPlayed"
-      FROM "DetectionLog"
-      WHERE "status" = 'matched'
-        AND "titleFinal" IS NOT NULL AND TRIM("titleFinal") != ''
-      GROUP BY "stationId", "artistFinal", "titleFinal", "releaseFinal"
+        NULLIF(TRIM("artistLast"), '') AS artist,
+        NULLIF(TRIM("titleLast"), '') AS title,
+        NULLIF(TRIM("albumLast"), '') AS album,
+        "playCount",
+        "lastPlayedAt" AS "lastPlayed",
+        "firstPlayedAt" AS "firstPlayed"
+      FROM "StationSongSpin"
+      WHERE TRIM("titleNorm") != ''
       ORDER BY "playCount" DESC
       LIMIT ${limit}
     `;
@@ -327,23 +324,21 @@ async function startServer() {
               artist: string | null;
               title: string | null;
               album: string | null;
-              playCount: bigint;
+              playCount: number;
               lastPlayed: Date;
               firstPlayed: Date;
             }[]
           >`
             SELECT "stationId",
-              "artistFinal" AS artist,
-              "titleFinal" AS title,
-              "releaseFinal" AS album,
-              COUNT(*) AS "playCount",
-              MAX("observedAt") AS "lastPlayed",
-              MIN("observedAt") AS "firstPlayed"
-            FROM "DetectionLog"
-            WHERE "status" = 'matched'
-              AND "titleFinal" IS NOT NULL AND TRIM("titleFinal") != ''
+              NULLIF(TRIM("artistLast"), '') AS artist,
+              NULLIF(TRIM("titleLast"), '') AS title,
+              NULLIF(TRIM("albumLast"), '') AS album,
+              "playCount",
+              "lastPlayedAt" AS "lastPlayed",
+              "firstPlayedAt" AS "firstPlayed"
+            FROM "StationSongSpin"
+            WHERE TRIM("titleNorm") != ''
               AND "stationId" = ${stationId}
-            GROUP BY "stationId", "artistFinal", "titleFinal", "releaseFinal"
             ORDER BY "playCount" DESC
             LIMIT ${limit}
           `
@@ -353,22 +348,20 @@ async function startServer() {
               artist: string | null;
               title: string | null;
               album: string | null;
-              playCount: bigint;
+              playCount: number;
               lastPlayed: Date;
               firstPlayed: Date;
             }[]
           >`
             SELECT "stationId",
-              "artistFinal" AS artist,
-              "titleFinal" AS title,
-              "releaseFinal" AS album,
-              COUNT(*) AS "playCount",
-              MAX("observedAt") AS "lastPlayed",
-              MIN("observedAt") AS "firstPlayed"
-            FROM "DetectionLog"
-            WHERE "status" = 'matched'
-              AND "titleFinal" IS NOT NULL AND TRIM("titleFinal") != ''
-            GROUP BY "stationId", "artistFinal", "titleFinal", "releaseFinal"
+              NULLIF(TRIM("artistLast"), '') AS artist,
+              NULLIF(TRIM("titleLast"), '') AS title,
+              NULLIF(TRIM("albumLast"), '') AS album,
+              "playCount",
+              "lastPlayedAt" AS "lastPlayed",
+              "firstPlayedAt" AS "firstPlayed"
+            FROM "StationSongSpin"
+            WHERE TRIM("titleNorm") != ''
             ORDER BY "playCount" DESC
             LIMIT ${limit}
           `;

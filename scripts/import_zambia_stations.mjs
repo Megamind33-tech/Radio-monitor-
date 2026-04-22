@@ -20,6 +20,7 @@ if (!Array.isArray(stations)) {
 const prisma = new PrismaClient();
 
 if (replaceAll) {
+  await prisma.stationSongSpin.deleteMany();
   await prisma.songSampleArchive.deleteMany();
   await prisma.detectionLog.deleteMany();
   await prisma.jobRun.deleteMany();

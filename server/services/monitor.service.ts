@@ -11,6 +11,7 @@ import { AcoustidService } from "./acoustid.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { CatalogLookupService } from "./catalog-lookup.service.js";
 import { NormalizedMetadata, MatchResult, DetectionMethod } from "../types.js";
+import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
 
 function parseEnvMs(key: string, fallback: number): number {
   const v = process.env[key];
@@ -190,6 +191,16 @@ export class MonitorService {
       },
       select: { id: true },
     });
+
+    if (status === "matched") {
+      await upsertSongSpinOnNewPlay(prisma, {
+        stationId,
+        artist: artistFinal,
+        title: titleFinal,
+        album: match?.releaseTitle,
+        detectionLogId: log.id,
+      });
+    }
 
     if (status === "matched" && station.archiveSongSamples && resolvedUrl.startsWith("http")) {
       const sec = Math.min(Math.max(parseInt(process.env.ARCHIVE_SAMPLE_SECONDS || "30", 10) || 30, 10), 120);

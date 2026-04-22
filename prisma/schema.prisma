@@ -42,6 +42,7 @@ model Station {
   logs              DetectionLog[]
   currentNowPlaying CurrentNowPlaying?
   songSamples       SongSampleArchive[]
+  songSpins         StationSongSpin[]
 }
 
 model DetectionLog {
@@ -71,6 +72,27 @@ model DetectionLog {
 
   station Station @relation(fields: [stationId], references: [id])
   songSample SongSampleArchive?
+}
+
+/// Aggregated play counts per station + normalized song key (one row per song; increments on each new play)
+model StationSongSpin {
+  id        String   @id @default(cuid())
+  stationId String
+  artistNorm String @default("")
+  titleNorm  String
+  albumNorm  String @default("")
+  /// Latest display values (same spin key, updated each play)
+  artistLast String @default("")
+  titleLast  String @default("")
+  albumLast  String @default("")
+  playCount  Int     @default(0)
+  firstPlayedAt DateTime
+  lastPlayedAt  DateTime
+  lastDetectionLogId String?
+
+  station Station @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  @@unique([stationId, artistNorm, titleNorm, albumNorm])
 }
 
 /// Optional ~30s WAV per detection for future fingerprinting / dispute evidence

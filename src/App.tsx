@@ -599,7 +599,7 @@ function StationCard({ station, spin, onProbe }: { station: Station, spin?: Stat
             </div>
             {spin && spin.detectionCount > 0 ? (
               <p className="text-[11px] text-gray-500 mt-1">
-                Logged detections: {spin.detectionCount} · distinct tracks (approx.): {spin.uniqueSongs}
+                Total plays (matched): {spin.detectionCount} · distinct songs: {spin.uniqueSongs}
               </p>
             ) : null}
           </div>
