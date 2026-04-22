@@ -460,6 +460,9 @@ async function startServer() {
           playCount: number;
           lastPlayed: Date;
           firstPlayed: Date;
+          mixRuleApplied: string | null;
+          mixSplitConfidence: number | null;
+          originalCombinedRaw: string | null;
         }[]
       >`
         SELECT "stationId",
@@ -468,7 +471,10 @@ async function startServer() {
           NULLIF(TRIM("albumLast"), '') AS album,
           "playCount",
           "lastPlayedAt" AS "lastPlayed",
-          "firstPlayedAt" AS "firstPlayed"
+          "firstPlayedAt" AS "firstPlayed",
+          "mixRuleApplied",
+          "mixSplitConfidence",
+          "originalCombinedRaw"
         FROM "StationSongSpin"
         WHERE "stationId" = ${stationId}
           AND TRIM("titleNorm") != ''
@@ -484,6 +490,9 @@ async function startServer() {
           playCount: Number(r.playCount),
           lastPlayed: r.lastPlayed,
           firstPlayed: r.firstPlayed,
+          mixRuleApplied: r.mixRuleApplied,
+          mixSplitConfidence: r.mixSplitConfidence,
+          originalCombinedRaw: r.originalCombinedRaw,
         }))
       );
     }
@@ -497,6 +506,9 @@ async function startServer() {
         playCount: number;
         lastPlayed: Date;
         firstPlayed: Date;
+        mixRuleApplied: string | null;
+        mixSplitConfidence: number | null;
+        originalCombinedRaw: string | null;
       }[]
     >`
       SELECT "stationId",
@@ -505,7 +517,10 @@ async function startServer() {
         NULLIF(TRIM("albumLast"), '') AS album,
         "playCount",
         "lastPlayedAt" AS "lastPlayed",
-        "firstPlayedAt" AS "firstPlayed"
+        "firstPlayedAt" AS "firstPlayed",
+        "mixRuleApplied",
+        "mixSplitConfidence",
+        "originalCombinedRaw"
       FROM "StationSongSpin"
       WHERE TRIM("titleNorm") != ''
       ORDER BY "playCount" DESC
@@ -520,6 +535,9 @@ async function startServer() {
         playCount: Number(r.playCount),
         lastPlayed: r.lastPlayed,
         firstPlayed: r.firstPlayed,
+        mixRuleApplied: r.mixRuleApplied,
+        mixSplitConfidence: r.mixSplitConfidence,
+        originalCombinedRaw: r.originalCombinedRaw,
       }))
     );
   });

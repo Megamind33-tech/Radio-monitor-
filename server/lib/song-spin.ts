@@ -21,6 +21,9 @@ export async function upsertSongSpinOnNewPlay(
     title: string | null | undefined;
     album: string | null | undefined;
     detectionLogId: string;
+    mixRuleApplied?: string | null;
+    mixSplitConfidence?: number | null;
+    originalCombinedRaw?: string | null;
   }
 ): Promise<{ playCount: number }> {
   const titleNorm = normalizeSongPart(params.title);
@@ -48,6 +51,9 @@ export async function upsertSongSpinOnNewPlay(
       artistNorm,
       titleNorm,
       albumNorm,
+      mixRuleApplied: params.mixRuleApplied ?? null,
+      mixSplitConfidence: params.mixSplitConfidence ?? null,
+      originalCombinedRaw: params.originalCombinedRaw ?? null,
       artistLast,
       titleLast,
       albumLast,
@@ -63,6 +69,9 @@ export async function upsertSongSpinOnNewPlay(
       artistLast,
       titleLast,
       albumLast,
+      mixRuleApplied: params.mixRuleApplied ?? null,
+      mixSplitConfidence: params.mixSplitConfidence ?? null,
+      originalCombinedRaw: params.originalCombinedRaw ?? null,
     },
   });
 

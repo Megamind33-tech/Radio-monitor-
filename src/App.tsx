@@ -95,6 +95,9 @@ interface SongSpinRow {
   playCount: number;
   lastPlayed: string;
   firstPlayed: string;
+  mixRuleApplied?: string | null;
+  mixSplitConfidence?: number | null;
+  originalCombinedRaw?: string | null;
 }
 
 interface DependencyStatus {
@@ -1101,6 +1104,8 @@ function StationDetailPage({
   const [refreshingUrl, setRefreshingUrl] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [songSearch, setSongSearch] = useState('');
+  const [songFilter, setSongFilter] = useState<'all' | 'withArtist' | 'titleOnly' | 'mixedSplit'>('all');
 
   useEffect(() => {
     setStreamEdit(station.streamUrl);
@@ -1137,6 +1142,26 @@ function StationDetailPage({
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const filteredSongSpins = React.useMemo(() => {
+    const query = songSearch.trim().toLowerCase();
+    return songSpins.filter((row) => {
+      if (songFilter === 'withArtist' && !row.artist) return false;
+      if (songFilter === 'titleOnly' && !!row.artist) return false;
+      if (songFilter === 'mixedSplit' && !row.mixRuleApplied) return false;
+
+      if (!query) return true;
+      const haystack = [
+        row.title || '',
+        row.artist || '',
+        row.album || '',
+        row.originalCombinedRaw || '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [songSpins, songSearch, songFilter]);
 
   return (
     <div className="space-y-6">
@@ -1346,35 +1371,68 @@ function StationDetailPage({
         <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold">Logged songs for {station.name}</h3>
-            <span className="text-xs text-gray-500">{songSpins.length} rows</span>
+            <span className="text-xs text-gray-500">{filteredSongSpins.length} / {songSpins.length} rows</span>
+          </div>
+          <div className="mb-4 flex flex-wrap gap-2 items-center">
+            <input
+              value={songSearch}
+              onChange={(event) => setSongSearch(event.target.value)}
+              placeholder="Search title / artist / album / raw metadata"
+              className="flex-1 min-w-[220px] bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan/50"
+            />
+            <select
+              value={songFilter}
+              onChange={(event) => setSongFilter(event.target.value as 'all' | 'withArtist' | 'titleOnly' | 'mixedSplit')}
+              className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan/50"
+            >
+              <option value="all">All songs</option>
+              <option value="withArtist">With artist</option>
+              <option value="titleOnly">Title only</option>
+              <option value="mixedSplit">Mixed-title splits</option>
+            </select>
           </div>
           <div className="overflow-x-auto max-h-[480px]">
-            <table className="w-full text-sm min-w-[520px]">
+            <table className="w-full text-sm min-w-[760px]">
               <thead>
                 <tr className="border-b border-white/10 text-gray-400">
                   <th className="py-2.5 text-left font-medium">Title</th>
                   <th className="py-2.5 text-left font-medium">Artist</th>
                   <th className="py-2.5 text-left font-medium">Album</th>
+                  <th className="py-2.5 text-left font-medium">Normalization</th>
                   <th className="py-2.5 text-right font-medium">Plays</th>
                 </tr>
               </thead>
               <tbody>
-                {songSpins.map((row, idx) => (
+                {filteredSongSpins.map((row, idx) => (
                   <tr key={`${row.stationId}-${row.title}-${idx}`} className="border-b border-white/5 hover:bg-white/5">
                     <td className="py-2.5">{row.title || '—'}</td>
                     <td className="py-2.5 text-gray-400">{row.artist || '—'}</td>
                     <td className="py-2.5 text-gray-500">{row.album || '—'}</td>
+                    <td className="py-2.5 text-xs text-gray-500">
+                      {row.mixRuleApplied ? (
+                        <span className="inline-flex items-center gap-1">
+                          <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                            {row.mixRuleApplied}
+                          </span>
+                          {row.mixSplitConfidence != null ? (
+                            <span>{Math.round(row.mixSplitConfidence * 100)}%</span>
+                          ) : null}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
                     <td className="py-2.5 text-right font-mono">{row.playCount}</td>
                   </tr>
                 ))}
-                {!loading && songSpins.length === 0 && (
+                {!loading && filteredSongSpins.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="py-8 text-center text-gray-500">No matched songs logged yet for this station.</td>
+                    <td colSpan={5} className="py-8 text-center text-gray-500">No songs match the current search/filter.</td>
                   </tr>
                 )}
                 {loading && (
                   <tr>
-                    <td colSpan={4} className="py-8 text-center text-gray-500">Loading station songs…</td>
+                    <td colSpan={5} className="py-8 text-center text-gray-500">Loading station songs…</td>
                   </tr>
                 )}
               </tbody>

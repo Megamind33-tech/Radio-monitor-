@@ -654,6 +654,9 @@ export class MonitorService {
         title: titleFinal,
         album: match?.releaseTitle,
         detectionLogId: log.id,
+        mixRuleApplied: (metadata as { splitRuleApplied?: string | undefined } | null)?.splitRuleApplied || null,
+        mixSplitConfidence: (metadata as { splitConfidence?: number | undefined } | null)?.splitConfidence,
+        originalCombinedRaw: (metadata?.combinedRaw ?? "").trim() || null,
       });
       spinPlayCount = spin.playCount;
     }

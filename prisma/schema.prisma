@@ -186,6 +186,12 @@ model StationSongSpin {
   artistNorm String @default("")
   titleNorm  String
   albumNorm  String @default("")
+  /// Metadata split rule id used when raw stream metadata had mixed artist/title text.
+  mixRuleApplied String?
+  /// Confidence (0..1) for the metadata split result.
+  mixSplitConfidence Float?
+  /// Original raw combined metadata before split (for audit/search/filtering).
+  originalCombinedRaw String?
   /// Latest display values (same spin key, updated each play)
   artistLast String @default("")
   titleLast  String @default("")

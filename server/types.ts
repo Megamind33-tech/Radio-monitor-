@@ -14,6 +14,8 @@ export interface NormalizedMetadata {
   rawTitle?: string;
   rawArtist?: string;
   combinedRaw?: string;
+  splitRuleApplied?: string;
+  splitConfidence?: number;
   sourceType: DetectionMethod;
 }
 
