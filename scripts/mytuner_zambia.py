@@ -139,11 +139,11 @@ def decrypt_first_stream_url(html: str, page_url: str) -> tuple[str, str, str]:
     return su, name, rid
 
 
-def discover_mytuner_zambia_station_page_urls() -> list[str]:
-    """Unique station page URLs from country listing (pages 1–2)."""
+def discover_mytuner_zambia_station_page_urls(max_pages: int = 8) -> list[str]:
+    """Unique station page URLs from country listing pages."""
     all_urls: list[str] = []
-    for page in (1, 2):
-        url = LIST_BASE if page == 1 else f"{LIST_BASE}?page=2"
+    for page in range(1, max_pages + 1):
+        url = LIST_BASE if page == 1 else f"{LIST_BASE}?page={page}"
         html = fetch_text(url)
         all_urls.extend(parse_ld_station_urls(html))
     seen: set[str] = set()

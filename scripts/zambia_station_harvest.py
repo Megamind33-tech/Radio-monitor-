@@ -49,6 +49,7 @@ from streema_zambia import (
     fetch_html as streema_fetch_html,
 )
 from zeno_zambia import discover_zeno_zambia_stations
+from radio_zambia import discover_radio_zambia_streams
 
 UA_BROWSER = "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36"
 UA_ICY = "ZambiaStationHarvest/1.0"
@@ -65,7 +66,7 @@ class Candidate:
     province: str
     frequency_mhz: str | None
     stream_url: str
-    source: str  # radio_garden | tunein | radio_browser | mytuner | onlineradiobox | streema | zeno
+    source: str  # radio_garden | tunein | radio_browser | mytuner | onlineradiobox | streema | zeno | radio_zambia
     source_detail: str  # channel id or tunein id
     """All discovery sources for this stream URL (merged when same URL from multiple sites)."""
     source_map: dict[str, str] = field(default_factory=dict)
@@ -374,6 +375,15 @@ def stable_id_zeno(slug: str, stream_url: str) -> str:
     return f"zm_zn_{sha1_str(stream_url)[:16]}"
 
 
+def stable_id_rz(path: str, stream_url: str) -> str:
+    p = (path or "").strip()
+    if p:
+        safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", p).strip("_")
+        if safe:
+            return f"zm_rz_{safe[:56]}"
+    return f"zm_rz_{sha1_str(stream_url)[:16]}"
+
+
 def sha1_str(s: str) -> str:
     import hashlib
 
@@ -412,10 +422,10 @@ def infer_district_from_tunein_name(name: str) -> str:
     return "Zambia"
 
 
-def build_mytuner_candidates() -> list[Candidate]:
+def build_mytuner_candidates(max_pages: int = 8) -> list[Candidate]:
     """Decrypt stream URLs from MyTuner Zambia listing (same AES logic as audit script)."""
     out: list[Candidate] = []
-    for page_url in discover_mytuner_zambia_station_page_urls():
+    for page_url in discover_mytuner_zambia_station_page_urls(max_pages=max_pages):
         try:
             html = mytuner_fetch_text(page_url)
         except Exception:
@@ -535,6 +545,29 @@ def build_zeno_candidates(limit: int = 220) -> list[Candidate]:
                 stream_url=su,
                 source="zeno",
                 source_detail=z.slug,
+            )
+        )
+    return out
+
+
+def build_radio_zambia_candidates() -> list[Candidate]:
+    """Streams extracted from radio-zambia.com station pages."""
+    out: list[Candidate] = []
+    for path, name, su in discover_radio_zambia_streams():
+        if not su.startswith("http"):
+            continue
+        dist = infer_district_from_tunein_name(name)
+        prov = province_for_tunein_district(dist) if dist != "Zambia" else ""
+        out.append(
+            Candidate(
+                stable_id=stable_id_rz(path, su),
+                name=name,
+                district=dist,
+                province=prov,
+                frequency_mhz=extract_frequency_mhz(name),
+                stream_url=su,
+                source="radio_zambia",
+                source_detail=path,
             )
         )
     return out
@@ -719,9 +752,10 @@ SOURCE_PRIORITY_RANK: dict[str, int] = {
     "onlineradiobox": 1,
     "streema": 2,
     "radio_garden": 3,
-    "tunein": 4,
-    "zeno": 5,
-    "radio_browser": 6,
+    "radio_zambia": 4,
+    "tunein": 5,
+    "zeno": 6,
+    "radio_browser": 7,
 }
 
 
@@ -755,6 +789,8 @@ def stable_id_from_candidate(c: Candidate) -> str:
         return stable_id_rg(det)
     if src == "tunein":
         return stable_id_tunein(det)
+    if src == "radio_zambia":
+        return stable_id_rz(det, c.stream_url)
     if src == "radio_browser":
         return stable_id_rb(c.name, c.stream_url)
     if src == "zeno":
@@ -853,24 +889,32 @@ async def async_main():
         default=800,
         help="Max streams to ICY-probe (discovery can list more; raise for large merges).",
     )
+    ap.add_argument(
+        "--mytuner-pages",
+        type=int,
+        default=8,
+        help="How many MyTuner Zambia listing pages to crawl (default 8).",
+    )
     ap.add_argument("--out", type=str, default="scripts/data/zambia_harvest.json")
     args = ap.parse_args()
 
     print(
-        "Discovering candidates (MyTuner + OnlineRadioBox + Streema + Zeno + "
+        "Discovering candidates (MyTuner + OnlineRadioBox + Streema + Zeno + Radio-Zambia + "
         "Radio Garden [https://radio.garden Zambia API: country channels + all place maps] + "
         "radio-browser ZM + filtered TuneIn)..."
     )
-    mt = build_mytuner_candidates()
+    mt = build_mytuner_candidates(max_pages=max(1, args.mytuner_pages))
     orb = build_orb_candidates()
     st = build_streema_candidates()
     zn = build_zeno_candidates(limit=max(args.max_probe, 220))
+    rz = build_radio_zambia_candidates()
     base = await build_candidates(0)
-    cands = merge_candidates_priority(mt, orb, st, zn, base)
+    cands = merge_candidates_priority(mt, orb, st, zn, rz, base)
     print(f"MyTuner decrypted URLs: {len(mt)}")
     print(f"OnlineRadioBox stream buttons: {len(orb)}")
     print(f"Streema station profiles: {len(st)}")
     print(f"Zeno discovered pages: {len(zn)}")
+    print(f"Radio-Zambia extracted pages: {len(rz)}")
     print(f"After merge (deduped by URL): {len(cands)}")
 
     to_probe = cands[: args.max_probe]
