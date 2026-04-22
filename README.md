@@ -98,6 +98,24 @@ python monitor.py stations.csv
 
 Every track change gets written to Supabase in real time. Leave it running.
 
+## Automated stream health (working audio + real ICY samples)
+
+The Node app keeps stations in Prisma (`Station`). To **re-verify** every active URL against **live** streams (no invented titles):
+
+```bash
+# Uses DATABASE_URL from .env; writes CSV (UTF-8 BOM for Excel)
+npm run audit:stream-health
+
+# Options
+node scripts/stream_health_audit.mjs --out scripts/data/stream_health.csv
+node scripts/stream_health_audit.mjs --limit 10              # smoke test first N stations
+node scripts/stream_health_audit.mjs --no-acoustid           # ICY only (faster)
+```
+
+Each row includes **three ICY `StreamTitle` samples** and a verdict (`good` / `partial` / `weak` / `none` / `dead` / `error`) using the same rules as the harvester. With `ACOUSTID_API_KEY` and `ffmpeg` + `fpcalc` on `PATH`, an extra column tries a short **AcoustID** spot-check (still real audio — may return `no_match`).
+
+**Operational habit:** before trusting a URL long-term, open it in **VLC** or `ffplay` once and confirm it matches the FM programme; then keep that URL as `streamUrl`. The audit script automates **reachability + ICY shape**, not subjective “sounds like FM”.
+
 ## Inspect the data (Supabase SQL Editor)
 
 ```sql
