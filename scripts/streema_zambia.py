@@ -13,6 +13,59 @@ import urllib.request
 UA = "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36"
 STREEMA_ZM_LIST = "https://streema.com/radios/country/Zambia"
 
+# Streema links many geographic “browse by city/region” pages from the Zambia index.
+# Those pages have no #source-stream — we skip by slug so we never treat them as stations.
+# Real stations use slugs like Hot_FM_877 or Choma_Maanu_Radio_Station, not bare place names.
+STREEMA_GEO_LISTING_SLUGS: frozenset[str] = frozenset(
+    {
+        "Chama",
+        "Chibombo",
+        "Chiengi",
+        "Chikuni",
+        "Chingola",
+        "Chipata",
+        "Chirundu",
+        "Choma",
+        "Kabwe",
+        "Kafue",
+        "Kalomo",
+        "Kapiri_Mposhi",
+        "Kasama",
+        "Katete",
+        "Kawambwa",
+        "Kitwe",
+        "Livingstone",
+        "Luanshya",
+        "Lundazi",
+        "Lusaka",
+        "Mansa",
+        "Mazabuka",
+        "Mbala",
+        "Mkushi",
+        "Mongu",
+        "Mpongwe",
+        "Mpulungu",
+        "Muchinga",
+        "Mufulira",
+        "Mungwi",
+        "Ndola",
+        "Sesheke",
+        "Solwezi",
+        "Isoka",
+        "Itezhi_Tezhi",
+        "Kalulushi",
+        "Senga_Hill",
+        "White_Mwandi",
+        "Umezi",
+        "Lunga",
+        "Keembe",
+        "Petauke",
+        "Samfya",
+        "Mwinilunga",
+        "Nakonde",
+    }
+)
+
 
 def fetch_html(url: str) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
@@ -22,7 +75,7 @@ def fetch_html(url: str) -> str:
 
 
 def should_skip_listing_path(path: str) -> bool:
-    """Skip region/country indexes and non-station links."""
+    """Skip region/country indexes, city browse pages, and non-station links."""
     if not path.startswith("/radios/"):
         return True
     low = path.lower()
@@ -37,11 +90,13 @@ def should_skip_listing_path(path: str) -> bool:
     tail = path.rstrip("/").split("/")[-1]
     if not tail or len(tail) < 2:
         return True
+    if tail in STREEMA_GEO_LISTING_SLUGS:
+        return True
     return False
 
 
 def discover_streema_station_paths() -> list[str]:
-    """Unique station profile paths from paginated Zambia country listing."""
+    """Unique paths from the Zambia country listing (city/region slugs excluded — see above)."""
     seen: set[str] = set()
     page = 1
     max_pages = 35
