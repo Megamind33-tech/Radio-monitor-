@@ -60,6 +60,7 @@ function parseReasonSuffixFromStreamUrl(url: string): string {
   if (lower.includes("zeno.fm")) return "zeno_stream";
   if (lower.includes("icecast")) return "icecast_stream";
   if (lower.includes("shoutcast")) return "shoutcast_stream";
+  if (lower.includes("/proxy/")) return "proxy_stream";
   return "stream";
 }
 
