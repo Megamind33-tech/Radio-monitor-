@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Radio, 
-  Activity, 
-  Settings, 
-  History, 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Radio,
+  Activity,
+  Settings,
+  History,
   ArrowLeft,
-  Plus, 
-  RefreshCw, 
+  Plus,
+  RefreshCw,
   ExternalLink,
   Search,
   Copy,
@@ -18,7 +18,12 @@ import {
   MoreHorizontal,
   Globe,
   Music,
-  LineChart
+  LineChart,
+  Headphones,
+  Play,
+  Tag,
+  Save,
+  Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -137,6 +142,33 @@ interface DependencyStatus {
 
 type StationListFilter = 'all' | 'running' | 'degraded' | 'inactive' | 'unknown';
 
+interface AudioEditorSample {
+  id: string;
+  stationId: string;
+  stationName: string | null;
+  stationCountry: string | null;
+  stationProvince: string | null;
+  detectionLogId: string | null;
+  createdAt: string;
+  recoveryStatus: string;
+  recoveryAttempts: number;
+  lastRecoveryAt: string | null;
+  recoveredAt: string | null;
+  lastRecoveryError: string | null;
+  hasAudioFile: boolean;
+  detectedAt: string | null;
+  rawStreamText: string | null;
+  parsedArtist: string | null;
+  parsedTitle: string | null;
+  reasonCode: string | null;
+  titleFinal: string | null;
+  artistFinal: string | null;
+  releaseFinal: string | null;
+  genreFinal: string | null;
+  manuallyTagged: boolean;
+  manualTaggedAt: string | null;
+}
+
 const REQUESTED_STATION_PRIORITY: string[] = [
   'znbc radio 1',
   'znbc radio 2',
@@ -210,7 +242,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedStationId, setSelectedStationId] = useState<string>('all');
-  const [activeTab, setActiveTab] = useState<'stations' | 'history' | 'analytics' | 'settings'>('stations');
+  const [activeTab, setActiveTab] = useState<'stations' | 'history' | 'analytics' | 'audioeditor' | 'settings'>('stations');
   const [isAddingStation, setIsAddingStation] = useState(false);
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
@@ -228,6 +260,12 @@ export default function App() {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem('rm_include_hidden_stations') === '1';
   });
+
+  // Audio Editor state
+  const [audioSamples, setAudioSamples] = useState<AudioEditorSample[]>([]);
+  const [audioEditorLoading, setAudioEditorLoading] = useState(false);
+  const [audioEditorFilter, setAudioEditorFilter] = useState<'untagged' | 'tagged' | 'all'>('untagged');
+  const [audioEditorStationFilter, setAudioEditorStationFilter] = useState<string>('all');
 
   const fetchData = React.useCallback(async () => {
     try {
@@ -287,6 +325,21 @@ export default function App() {
     }
   };
 
+  const fetchAudioEditorSamples = React.useCallback(async (filter = audioEditorFilter, stationId = audioEditorStationFilter) => {
+    setAudioEditorLoading(true);
+    try {
+      const params = new URLSearchParams({ status: filter, take: '200' });
+      if (stationId !== 'all') params.set('stationId', stationId);
+      const res = await fetch(`/api/audio-editor/samples?${params}`);
+      const data = await res.json();
+      setAudioSamples(Array.isArray(data.items) ? data.items : []);
+    } catch (e) {
+      console.error('Failed to fetch audio editor samples', e);
+    } finally {
+      setAudioEditorLoading(false);
+    }
+  }, [audioEditorFilter, audioEditorStationFilter]);
+
   const fetchStationPageData = React.useCallback(async (stationId: string) => {
     setStationPageLoading(true);
     setStationPageError(null);
@@ -338,7 +391,10 @@ export default function App() {
     if (activeTab === 'analytics') {
       fetchSongAnalytics();
     }
-  }, [activeTab]);
+    if (activeTab === 'audioeditor') {
+      fetchAudioEditorSamples();
+    }
+  }, [activeTab, fetchAudioEditorSamples]);
 
   useEffect(() => {
     if (!stationPageId || activeTab !== 'stations') return;
@@ -508,6 +564,7 @@ export default function App() {
           <NavIcon icon={<Activity className="w-6 h-6" />} active={activeTab === 'stations'} onClick={() => setActiveTab('stations')} label="Monitor" />
           <NavIcon icon={<History className="w-6 h-6" />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="History" />
           <NavIcon icon={<LineChart className="w-6 h-6" />} active={activeTab === 'analytics'} onClick={() => setActiveTab('analytics')} label="Song spins" />
+          <NavIcon icon={<Headphones className="w-6 h-6" />} active={activeTab === 'audioeditor'} onClick={() => setActiveTab('audioeditor')} label="Audio Editor" />
           <NavIcon icon={<Settings className="w-6 h-6" />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Settings" />
         </div>
 
@@ -745,6 +802,30 @@ export default function App() {
                 </table>
              </div>
           </div>
+        )}
+
+        {activeTab === 'audioeditor' && (
+          <AudioEditorTab
+            samples={audioSamples}
+            loading={audioEditorLoading}
+            filter={audioEditorFilter}
+            stationFilter={audioEditorStationFilter}
+            stations={stations}
+            onFilterChange={(f) => {
+              setAudioEditorFilter(f);
+              fetchAudioEditorSamples(f, audioEditorStationFilter);
+            }}
+            onStationFilterChange={(s) => {
+              setAudioEditorStationFilter(s);
+              fetchAudioEditorSamples(audioEditorFilter, s);
+            }}
+            onRefresh={() => fetchAudioEditorSamples()}
+            onSampleUpdated={(updated) => {
+              setAudioSamples((prev) =>
+                prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s))
+              );
+            }}
+          />
         )}
 
         {activeTab === 'settings' && (
@@ -1919,4 +2000,362 @@ function monitorBadge(station: Station, pollErr: boolean, stalePoll: boolean, po
   if (stalePoll) return { text: 'No recent poll', className: 'border-amber-500/40 text-amber-200', title: signals };
   if (pollOk || lastPoll) return { text: 'Online', className: 'border-green-500/30 text-green-300', title: signals };
   return { text: 'Starting…', className: 'border-white/10 text-gray-500', title: signals };
+}
+
+// ─── Audio Editor Tab ─────────────────────────────────────────────────────────
+
+interface AudioEditorCardProps {
+  sample: AudioEditorSample;
+  onSaved: (updated: Partial<AudioEditorSample> & { id: string }) => void;
+}
+
+function AudioEditorCard({ sample, onSaved }: AudioEditorCardProps) {
+  const [title, setTitle] = React.useState(sample.titleFinal || sample.parsedTitle || '');
+  const [artist, setArtist] = React.useState(sample.artistFinal || sample.parsedArtist || '');
+  const [album, setAlbum] = React.useState(sample.releaseFinal || '');
+  const [genre, setGenre] = React.useState(sample.genreFinal || '');
+  const [saving, setSaving] = React.useState(false);
+  const [saveMsg, setSaveMsg] = React.useState<{ ok: boolean; text: string } | null>(null);
+  const [manuallyTagged, setManuallyTagged] = React.useState(sample.manuallyTagged);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  const displayTime = sample.detectedAt || sample.createdAt;
+
+  const statusBadge = () => {
+    if (manuallyTagged) {
+      return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-500/20 text-green-400 flex items-center gap-1"><Tag className="w-3 h-3" />Manually Tagged</span>;
+    }
+    if (sample.recoveryStatus === 'no_match') {
+      return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300">No Match</span>;
+    }
+    if (sample.recoveryStatus === 'pending') {
+      return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-300">Pending</span>;
+    }
+    if (sample.recoveryStatus === 'error') {
+      return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/20 text-red-400">Error</span>;
+    }
+    return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/10 text-gray-400">{sample.recoveryStatus}</span>;
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const res = await fetch(`/api/audio-editor/samples/${sample.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title.trim(), artist: artist.trim(), album: album.trim(), genre: genre.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSaveMsg({ ok: false, text: data.error || `HTTP ${res.status}` });
+        return;
+      }
+      setManuallyTagged(true);
+      setSaveMsg({ ok: true, text: 'Metadata saved & embedded in audio file.' });
+      onSaved({
+        id: sample.id,
+        titleFinal: title.trim() || null,
+        artistFinal: artist.trim() || null,
+        releaseFinal: album.trim() || null,
+        genreFinal: genre.trim() || null,
+        manuallyTagged: true,
+        manualTaggedAt: new Date().toISOString(),
+        recoveryStatus: 'recovered',
+      });
+    } catch (e) {
+      setSaveMsg({ ok: false, text: e instanceof Error ? e.message : 'Request failed' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className={`bg-black/30 border rounded-2xl p-5 space-y-4 transition-all ${manuallyTagged ? 'border-green-500/30' : 'border-white/10'}`}>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-white truncate">{sample.stationName || sample.stationId}</span>
+            {sample.stationCountry && (
+              <span className="text-xs text-gray-500">{sample.stationCountry}{sample.stationProvince ? ` · ${sample.stationProvince}` : ''}</span>
+            )}
+            {statusBadge()}
+          </div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            {new Date(displayTime).toLocaleString()} · {sample.recoveryAttempts} recovery attempt{sample.recoveryAttempts !== 1 ? 's' : ''}
+          </div>
+          {sample.rawStreamText && (
+            <div className="text-xs text-gray-400 mt-1 italic truncate" title={sample.rawStreamText}>
+              Stream text: "{sample.rawStreamText}"
+            </div>
+          )}
+        </div>
+        {manuallyTagged && (
+          <div className="shrink-0">
+            <CheckCircle2 className="w-5 h-5 text-green-400" />
+          </div>
+        )}
+      </div>
+
+      {/* Audio Player */}
+      {sample.hasAudioFile ? (
+        <div className="bg-black/40 rounded-xl p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Play className="w-3.5 h-3.5 text-brand-cyan shrink-0" />
+            <span className="text-xs text-gray-400">Recorded audio sample</span>
+          </div>
+          <audio
+            ref={audioRef}
+            controls
+            className="w-full h-9"
+            style={{ colorScheme: 'dark' }}
+            preload="metadata"
+            src={`/api/audio-editor/samples/${sample.id}/audio`}
+          />
+        </div>
+      ) : (
+        <div className="bg-black/20 border border-white/5 rounded-xl p-3 text-xs text-gray-500 flex items-center gap-2">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          Audio file not available on disk
+        </div>
+      )}
+
+      {/* Metadata Edit Form */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-xs font-medium text-gray-400 border-t border-white/5 pt-3">
+          <Pencil className="w-3.5 h-3.5" />
+          {manuallyTagged ? 'Edit metadata' : 'Enter metadata manually'}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-xs text-gray-500">Title <span className="text-brand-cyan">*</span></label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Song title"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan transition-colors"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-gray-500">Artist</label>
+            <input
+              type="text"
+              value={artist}
+              onChange={(e) => setArtist(e.target.value)}
+              placeholder="Artist name"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan transition-colors"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-gray-500">Album / Release</label>
+            <input
+              type="text"
+              value={album}
+              onChange={(e) => setAlbum(e.target.value)}
+              placeholder="Album name"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan transition-colors"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-gray-500">Genre</label>
+            <input
+              type="text"
+              value={genre}
+              onChange={(e) => setGenre(e.target.value)}
+              placeholder="e.g. Afrobeats"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan transition-colors"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 pt-1">
+          {saveMsg ? (
+            <p className={`text-xs ${saveMsg.ok ? 'text-green-400' : 'text-red-400'} flex items-center gap-1`}>
+              {saveMsg.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+              {saveMsg.text}
+            </p>
+          ) : (
+            <span className="text-xs text-gray-600">Changes are saved to database and embedded in the audio file.</span>
+          )}
+          <button
+            onClick={handleSave}
+            disabled={saving || !title.trim()}
+            className="shrink-0 flex items-center gap-2 bg-brand-cyan text-black font-bold px-4 py-2 rounded-xl text-sm hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(0,242,255,0.25)]"
+          >
+            <Save className="w-3.5 h-3.5" />
+            {saving ? 'Saving…' : manuallyTagged ? 'Update' : 'Save Metadata'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AudioEditorTab({
+  samples,
+  loading,
+  filter,
+  stationFilter,
+  stations,
+  onFilterChange,
+  onStationFilterChange,
+  onRefresh,
+  onSampleUpdated,
+}: {
+  samples: AudioEditorSample[];
+  loading: boolean;
+  filter: 'untagged' | 'tagged' | 'all';
+  stationFilter: string;
+  stations: Station[];
+  onFilterChange: (f: 'untagged' | 'tagged' | 'all') => void;
+  onStationFilterChange: (s: string) => void;
+  onRefresh: () => void;
+  onSampleUpdated: (updated: Partial<AudioEditorSample> & { id: string }) => void;
+}) {
+  const withAudio = samples.filter((s) => s.hasAudioFile);
+  const withoutAudio = samples.filter((s) => !s.hasAudioFile);
+  const untaggedCount = samples.filter((s) => !s.manuallyTagged).length;
+
+  const filterLabels: Record<typeof filter, string> = {
+    untagged: 'Needs Tagging',
+    tagged: 'Manually Tagged',
+    all: 'All Samples',
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold flex items-center gap-2">
+            <Headphones className="w-5 h-5 text-brand-cyan" />
+            Audio Metadata Editor
+          </h2>
+          <p className="text-sm text-gray-400 mt-1">
+            Listen to unidentified recordings and manually set their title, artist, and album.
+            Metadata is written to the audio file and saved system-wide.
+          </p>
+        </div>
+        <button
+          onClick={onRefresh}
+          disabled={loading}
+          className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-sm font-medium px-4 py-2 rounded-xl transition-all disabled:opacity-50"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
+      </div>
+
+      {/* Filter Bar */}
+      <div className="flex flex-wrap gap-3 items-center">
+        <div className="flex bg-black/40 border border-white/10 rounded-xl p-1 gap-1">
+          {(['untagged', 'tagged', 'all'] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => onFilterChange(f)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                filter === f
+                  ? 'bg-brand-cyan text-black shadow-[0_0_10px_rgba(0,242,255,0.3)]'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              {filterLabels[f]}
+              {f === 'untagged' && untaggedCount > 0 && filter !== 'untagged' && (
+                <span className="ml-1.5 bg-amber-500/30 text-amber-300 rounded-full px-1.5 text-[10px]">{untaggedCount}</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        <select
+          value={stationFilter}
+          onChange={(e) => onStationFilterChange(e.target.value)}
+          className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-gray-300 outline-none focus:border-brand-cyan transition-colors"
+        >
+          <option value="all">All stations</option>
+          {[...new Map(stations.map((s) => [s.id, s])).values()].map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+
+        <span className="text-xs text-gray-500">
+          {loading ? 'Loading…' : `${samples.length} sample${samples.length !== 1 ? 's' : ''}`}
+          {withoutAudio.length > 0 && ` · ${withoutAudio.length} without audio file`}
+        </span>
+      </div>
+
+      {/* Empty State */}
+      {!loading && samples.length === 0 && (
+        <div className="bg-white/5 border border-white/10 rounded-3xl p-16 text-center">
+          <Headphones className="w-12 h-12 text-gray-600 mx-auto mb-4" />
+          <p className="text-gray-400 font-medium">
+            {filter === 'tagged'
+              ? 'No manually tagged samples yet.'
+              : filter === 'untagged'
+              ? 'No unidentified audio samples in the queue.'
+              : 'No audio samples found.'}
+          </p>
+          <p className="text-xs text-gray-600 mt-2">
+            {filter === 'untagged' && 'Unresolved recordings appear here when the system cannot identify a playing song.'}
+          </p>
+        </div>
+      )}
+
+      {/* Loading skeleton */}
+      {loading && (
+        <div className="space-y-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="bg-black/30 border border-white/10 rounded-2xl p-5 animate-pulse">
+              <div className="h-4 bg-white/10 rounded w-1/3 mb-3" />
+              <div className="h-9 bg-white/5 rounded-xl mb-3" />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="h-10 bg-white/5 rounded-xl" />
+                <div className="h-10 bg-white/5 rounded-xl" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Sample Cards */}
+      {!loading && withAudio.length > 0 && (
+        <div className="space-y-4">
+          {withAudio.map((sample) => (
+            <AudioEditorCard key={sample.id} sample={sample} onSaved={onSampleUpdated} />
+          ))}
+        </div>
+      )}
+
+      {/* No-audio samples (collapsed list) */}
+      {!loading && withoutAudio.length > 0 && (
+        <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+          <p className="text-xs text-gray-500 mb-2 flex items-center gap-1.5">
+            <AlertCircle className="w-3.5 h-3.5" />
+            {withoutAudio.length} sample{withoutAudio.length !== 1 ? 's' : ''} without audio file on disk (metadata editing still possible)
+          </p>
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {withoutAudio.map((sample) => (
+              <AudioEditorCard key={sample.id} sample={sample} onSaved={onSampleUpdated} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Info box */}
+      {!loading && samples.length > 0 && (
+        <div className="bg-brand-cyan/5 border border-brand-cyan/15 rounded-2xl p-4 text-xs text-gray-400 space-y-1">
+          <p className="font-semibold text-brand-cyan">How manual tagging works</p>
+          <ul className="list-disc pl-4 space-y-0.5">
+            <li>Title is required. Artist, Album, and Genre are optional but recommended.</li>
+            <li>Saving updates the detection log and marks the song as <strong className="text-white">matched</strong> across the whole system.</li>
+            <li>The song will appear in Song Spins analytics and History.</li>
+            <li>Metadata is embedded directly into the WAV recording file (ID3 tags via ffmpeg).</li>
+            <li>If a Chromaprint fingerprint exists, the song is added to the local fingerprint library so future plays are auto-identified.</li>
+          </ul>
+        </div>
+      )}
+    </div>
+  );
 }
