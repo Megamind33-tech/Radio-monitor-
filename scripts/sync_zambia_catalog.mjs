@@ -25,12 +25,20 @@ const maxIdx = argv.findIndex((a) => a === "--max-probe");
 const maxProbe =
   maxIdx >= 0 && argv[maxIdx + 1] ? String(argv[maxIdx + 1]) : "800";
 
+const tuneinQueryArgs = [];
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === "--tunein-query" && argv[i + 1]) {
+    tuneinQueryArgs.push("--tunein-query", argv[++i]);
+  }
+}
+
 const harvestArgs = [
   join(root, "scripts/zambia_station_harvest.py"),
   "--max-probe",
   maxProbe,
   "--out",
   join(root, "scripts/data/zambia_harvest.json"),
+  ...tuneinQueryArgs,
 ];
 
 console.log("[sync:zambia] Harvest:", `python3 zambia_station_harvest.py --max-probe ${maxProbe}`);
