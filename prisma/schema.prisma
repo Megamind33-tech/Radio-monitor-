@@ -90,6 +90,14 @@ model Station {
   detectionLagSamples        Int      @default(0)
   /// When streamUrl was auto-updated from sourceIdsJson (MyTuner / ORB / Streema)
   streamRefreshedAt          DateTime?
+  /// 0=default ICY trust; 1=stricter branding filter; 2=stricter callsign-like filter
+  metadataTrustTightness     Int      @default(0)
+  /// Chromaprint capture attempts when first sample yields no match (1-4)
+  fingerprintRetries         Int      @default(2)
+  /// Delay before each retry sample (ms), staggered window
+  fingerprintRetryDelayMs    Int      @default(3500)
+  /// When set, catalog hits below this confidence are ignored for merge (null = accept catalog as returned)
+  catalogConfidenceFloor     Float?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 
@@ -176,6 +184,8 @@ model DetectionLog {
   trackDurationMs Int?
   status          String   // matched, unresolved, ignored
   reasonCode      String?
+  /// JSON: fingerprint attempts, metadata quality flags, merge hints (pipeline audit)
+  matchDiagnosticsJson String?
 
   station Station @relation(fields: [stationId], references: [id])
   songSample SongSampleArchive?

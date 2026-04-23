@@ -242,6 +242,10 @@ async function startServer() {
       sampleSeconds: z.number().int().min(5).max(120).optional(),
       pollIntervalSeconds: z.number().int().min(5).max(3600).optional(),
       audioFingerprintIntervalSeconds: z.number().int().min(30).max(86400).optional(),
+      metadataTrustTightness: z.number().int().min(0).max(2).optional(),
+      fingerprintRetries: z.number().int().min(1).max(4).optional(),
+      fingerprintRetryDelayMs: z.number().int().min(0).max(60000).optional(),
+      catalogConfidenceFloor: z.number().min(0.35).max(1).nullable().optional(),
       archiveSongSamples: z.boolean().optional(),
       visibilityEnabled: z.boolean().optional(),
       monitorState: z
@@ -628,6 +632,136 @@ async function startServer() {
       music_matched_24h: recentMusicMatched,
       errors_count: stationErrors,
     });
+  });
+
+  /** Match pipeline audit: unresolved reasons, JSON diagnostics, station hotspots (SQLite). */
+  app.get("/api/metrics/match-pipeline", async (req, res) => {
+    try {
+      const stationFilter =
+        typeof req.query.stationId === "string" && req.query.stationId.trim().length > 0
+          ? req.query.stationId.trim()
+          : null;
+      const since7d = new Date(Date.now() - 7 * 86400000);
+      const since24h = new Date(Date.now() - 86400000);
+
+      const baseWhere7 = stationFilter ? { stationId: stationFilter, observedAt: { gte: since7d } } : { observedAt: { gte: since7d } };
+      const baseWhere24 = stationFilter
+        ? { stationId: stationFilter, observedAt: { gte: since24h } }
+        : { observedAt: { gte: since24h } };
+
+      const [total7, matched7, total24, matched24] = await Promise.all([
+        prisma.detectionLog.count({ where: baseWhere7 }),
+        prisma.detectionLog.count({ where: { ...baseWhere7, status: "matched" } }),
+        prisma.detectionLog.count({ where: baseWhere24 }),
+        prisma.detectionLog.count({ where: { ...baseWhere24, status: "matched" } }),
+      ]);
+
+      const byReason = stationFilter
+        ? await prisma.$queryRaw<{ reasonCode: string | null; c: bigint }[]>`
+            SELECT "reasonCode" AS reasonCode, COUNT(*) AS c
+            FROM "DetectionLog"
+            WHERE "status" = 'unresolved' AND "observedAt" >= ${since7d} AND "stationId" = ${stationFilter}
+            GROUP BY "reasonCode"
+            ORDER BY c DESC
+            LIMIT 50
+          `
+        : await prisma.$queryRaw<{ reasonCode: string | null; c: bigint }[]>`
+            SELECT "reasonCode" AS reasonCode, COUNT(*) AS c
+            FROM "DetectionLog"
+            WHERE "status" = 'unresolved' AND "observedAt" >= ${since7d}
+            GROUP BY "reasonCode"
+            ORDER BY c DESC
+            LIMIT 50
+          `;
+
+      const byStation = stationFilter
+        ? []
+        : await prisma.$queryRaw<{ stationId: string; c: bigint }[]>`
+            SELECT "stationId", COUNT(*) AS c
+            FROM "DetectionLog"
+            WHERE "status" = 'unresolved' AND "observedAt" >= ${since7d}
+            GROUP BY "stationId"
+            ORDER BY c DESC
+            LIMIT 30
+          `;
+
+      const stationIdsForNames = byStation.map((r) => r.stationId);
+      const stationNames =
+        stationIdsForNames.length > 0
+          ? await prisma.station.findMany({
+              where: { id: { in: stationIdsForNames } },
+              select: { id: true, name: true, isActive: true, monitorState: true },
+            })
+          : [];
+      const nameById = new Map(stationNames.map((s) => [s.id, s]));
+
+      let pollReasonRows: { reason: string; c: bigint }[] = [];
+      try {
+        pollReasonRows = stationFilter
+          ? await prisma.$queryRaw<{ reason: string; c: bigint }[]>`
+              SELECT COALESCE(json_extract("matchDiagnosticsJson", '$.pollReason'), "reasonCode", 'unknown') AS reason,
+                     COUNT(*) AS c
+              FROM "DetectionLog"
+              WHERE "status" = 'unresolved' AND "observedAt" >= ${since7d} AND "stationId" = ${stationFilter}
+              GROUP BY 1 ORDER BY c DESC LIMIT 40
+            `
+          : await prisma.$queryRaw<{ reason: string; c: bigint }[]>`
+              SELECT COALESCE(json_extract("matchDiagnosticsJson", '$.pollReason'), "reasonCode", 'unknown') AS reason,
+                     COUNT(*) AS c
+              FROM "DetectionLog"
+              WHERE "status" = 'unresolved' AND "observedAt" >= ${since7d}
+              GROUP BY 1
+              ORDER BY c DESC
+              LIMIT 40
+            `;
+      } catch {
+        pollReasonRows = stationFilter
+          ? await prisma.$queryRaw<{ reason: string; c: bigint }[]>`
+              SELECT COALESCE("reasonCode", 'unknown') AS reason, COUNT(*) AS c
+              FROM "DetectionLog"
+              WHERE "status" = 'unresolved' AND "observedAt" >= ${since7d} AND "stationId" = ${stationFilter}
+              GROUP BY 1 ORDER BY c DESC LIMIT 40
+            `
+          : await prisma.$queryRaw<{ reason: string; c: bigint }[]>`
+              SELECT COALESCE("reasonCode", 'unknown') AS reason, COUNT(*) AS c
+              FROM "DetectionLog"
+              WHERE "status" = 'unresolved' AND "observedAt" >= ${since7d}
+              GROUP BY 1 ORDER BY c DESC LIMIT 40
+            `;
+      }
+
+      res.json({
+        stationId_filter: stationFilter,
+        window_days: 7,
+        match_rate_7d: total7 > 0 ? matched7 / total7 : 0,
+        detections_7d: total7,
+        matched_7d: matched7,
+        match_rate_24h: total24 > 0 ? matched24 / total24 : 0,
+        detections_24h: total24,
+        matched_24h: matched24,
+        unresolved_by_reason_code: byReason.map((r) => ({
+          reasonCode: r.reasonCode ?? "null",
+          count: Number(r.c),
+        })),
+        unresolved_by_poll_reason_json: pollReasonRows.map((r) => ({
+          pollReason: r.reason,
+          count: Number(r.c),
+        })),
+        top_unresolved_stations_7d: byStation.map((r) => ({
+          stationId: r.stationId,
+          count: Number(r.c),
+          station: nameById.get(r.stationId) ?? null,
+        })),
+        notes: [
+          "Compare music_match_rate in /api/metrics/summary for song-oriented rate.",
+          "pollReason groups use matchDiagnosticsJson when present (deploy migration).",
+          "Local vs server: compare match_rate_7d with same time window after deploy.",
+        ],
+      });
+    } catch (error) {
+      logger.error({ error }, "match-pipeline metrics failed");
+      res.status(500).json({ error: "match_pipeline_metrics_failed", detail: String(error) });
+    }
   });
 
   // Song spin analytics (StationSongSpin: one row per song, playCount = total plays)
