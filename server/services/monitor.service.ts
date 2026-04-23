@@ -217,10 +217,12 @@ export class MonitorService {
 
       const acoustidKey = process.env.ACOUSTID_API_KEY;
       const forceAudioFallback = parseEnvBool("FORCE_AUDIO_FALLBACK_WHEN_UNRESOLVED", true);
+      /** When true, capture+fingerprint on every poll (not only ICY gap/stale/change). Heavy on CPU/network; use for stations with bad or missing ICY. */
+      const fingerprintEveryPoll = parseEnvBool("FINGERPRINT_EVERY_POLL", false);
       const doAudioId =
         !!station.fingerprintFallbackEnabled &&
         (forceAudioFallback || !!acoustidKey) &&
-        (legacyFingerprint || icyChanged || intervalElapsed);
+        (legacyFingerprint || icyChanged || intervalElapsed || fingerprintEveryPoll);
       let audioMatch: MatchResult | null = null;
       let sampledForFingerprint = false;
       let sampledAudioPath: string | null = null;
