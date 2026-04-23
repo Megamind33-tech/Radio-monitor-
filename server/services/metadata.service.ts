@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import axios from 'axios';
 import { logger } from '../lib/logger.js';
 import { NormalizedMetadata } from '../types.js';
 
@@ -92,6 +93,72 @@ export class MetadataService {
         }
       });
     });
+  }
+
+  /**
+   * Provider fallback for streams that carry no in-band ICY StreamTitle.
+   * Supports Fastcast proxy paths that expose stats JSON / current song endpoints.
+   */
+  static async readProviderNowPlayingMetadata(url: string): Promise<NormalizedMetadata | null> {
+    const fastcastBase = this.extractFastcastProxyBase(url);
+    if (!fastcastBase) return null;
+
+    const statsUrl = `${fastcastBase}/stats?json=1`;
+    try {
+      const stats = await axios.get(statsUrl, { timeout: 6000 });
+      const title = this.pickProviderSongTitle(stats.data);
+      if (title) {
+        return this.parseStreamTitle(title);
+      }
+    } catch (error) {
+      logger.debug({ error, statsUrl }, 'Fastcast stats metadata fallback failed');
+    }
+
+    const currentSongUrl = `${fastcastBase}/currentsong`;
+    try {
+      const now = await axios.get(currentSongUrl, { timeout: 6000, responseType: 'text' });
+      const text = String(now.data || '').trim();
+      if (this.isUsefulSongText(text)) {
+        return this.parseStreamTitle(text);
+      }
+    } catch (error) {
+      logger.debug({ error, currentSongUrl }, 'Fastcast currentsong metadata fallback failed');
+    }
+
+    return null;
+  }
+
+  private static extractFastcastProxyBase(url: string): string | null {
+    const m = String(url || '').match(/^(https?:\/\/[^/]+\/proxy\/[^/?#]+)/i);
+    return m?.[1] ?? null;
+  }
+
+  private static pickProviderSongTitle(payload: unknown): string | null {
+    const data = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
+    if (!data) return null;
+    const candidates = [
+      data.songtitle,
+      data.songtitle_raw,
+      data.song,
+      data.nowplaying,
+      data.current_song,
+      data.currentsong,
+    ];
+    for (const c of candidates) {
+      const text = typeof c === 'string' ? c.trim() : '';
+      if (this.isUsefulSongText(text)) return text;
+    }
+    return null;
+  }
+
+  private static isUsefulSongText(text: string): boolean {
+    const t = String(text || '').trim();
+    if (!t) return false;
+    const low = t.toLowerCase();
+    if (low === '-' || low === 'n/a') return false;
+    if (low === 'no name' || low === 'unknown') return false;
+    if (low === 'offline' || low === 'not available') return false;
+    return true;
   }
 
   private static parseStreamTitle(title: string): NormalizedMetadata {

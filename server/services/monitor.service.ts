@@ -53,6 +53,38 @@ function parseEnvInt(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function parseReasonSuffixFromStreamUrl(url: string): string {
+  const lower = String(url || "").toLowerCase();
+  if (!lower) return "stream";
+  if (lower.includes("fastcast4u.com/proxy/")) return "fastcast_proxy";
+  if (lower.includes("zeno.fm")) return "zeno_stream";
+  if (lower.includes("icecast")) return "icecast_stream";
+  if (lower.includes("shoutcast")) return "shoutcast_stream";
+  return "stream";
+}
+
+function appendDebugLog(entry: {
+  hypothesisId: string;
+  location: string;
+  message: string;
+  data: Record<string, unknown>;
+}): void {
+  try {
+    fs.appendFileSync(
+      "/opt/cursor/logs/debug.log",
+      JSON.stringify({
+        hypothesisId: entry.hypothesisId,
+        location: entry.location,
+        message: entry.message,
+        data: entry.data,
+        timestamp: Date.now(),
+      }) + "\n"
+    );
+  } catch {
+    // best-effort debug logging only
+  }
+}
+
 function computeDetectionLagMs(
   station: {
     detectionLagMsAvg: number | null;
@@ -139,6 +171,21 @@ export class MonitorService {
     if (!station || !station.isActive) return;
 
     logger.info({ station: station.name }, "Polling station");
+    // #region agent log
+    appendDebugLog({
+      hypothesisId: "B",
+      location: "monitor.service.ts:143",
+      message: "poll_start_flags",
+      data: {
+        stationId: station.id,
+        stationName: station.name,
+        metadataPriorityEnabled: station.metadataPriorityEnabled,
+        fingerprintFallbackEnabled: station.fingerprintFallbackEnabled,
+        metadataStaleSeconds: station.metadataStaleSeconds,
+        audioFingerprintIntervalSeconds: station.audioFingerprintIntervalSeconds,
+      },
+    });
+    // #endregion
 
     const markPollError = async (message: string) => {
       await prisma.station.update({
@@ -160,9 +207,13 @@ export class MonitorService {
       let metadata: NormalizedMetadata | null = null;
       let legacyFingerprint = false;
       let reasonCode: string | null = null;
+      let noSongDataFallbackApplied = false;
 
       if (station.metadataPriorityEnabled) {
         metadata = await MetadataService.readStreamMetadata(resolvedUrl);
+        if (!metadata) {
+          metadata = await MetadataService.readProviderNowPlayingMetadata(resolvedUrl);
+        }
         const latestNowPlaying = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
 
         if (!metadata) {
@@ -187,6 +238,22 @@ export class MonitorService {
         legacyFingerprint = true;
         reasonCode = "metadata_disabled";
       }
+      // #region agent log
+      appendDebugLog({
+        hypothesisId: "A",
+        location: "monitor.service.ts:214",
+        message: "metadata_evaluation",
+        data: {
+          stationId,
+          metadataRead: !!metadata,
+          metadataCombinedRawLength: metadata?.combinedRaw?.length ?? 0,
+          metadataRawArtist: metadata?.rawArtist ?? null,
+          metadataRawTitle: metadata?.rawTitle ?? null,
+          legacyFingerprint,
+          reasonCode,
+        },
+      });
+      // #endregion
 
       const latestNp = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
       const icyText = (metadata?.combinedRaw ?? "").trim();
@@ -208,6 +275,24 @@ export class MonitorService {
         !!station.fingerprintFallbackEnabled &&
         (forceAudioFallback || !!acoustidKey) &&
         (legacyFingerprint || icyChanged || intervalElapsed);
+      // #region agent log
+      appendDebugLog({
+        hypothesisId: "B",
+        location: "monitor.service.ts:255",
+        message: "audio_fallback_gate",
+        data: {
+          stationId,
+          doAudioId,
+          fingerprintFallbackEnabled: station.fingerprintFallbackEnabled,
+          forceAudioFallback,
+          hasAcoustidKey: !!acoustidKey,
+          legacyFingerprint,
+          icyChanged,
+          intervalElapsed,
+          reasonCode,
+        },
+      });
+      // #endregion
 
       let audioMatch: MatchResult | null = null;
       let sampledForFingerprint = false;
@@ -237,6 +322,23 @@ export class MonitorService {
             }
           }
         }
+        // #region agent log
+        appendDebugLog({
+          hypothesisId: "C",
+          location: "monitor.service.ts:291",
+          message: "audio_fingerprint_attempt_result",
+          data: {
+            stationId,
+            sampledForFingerprint,
+            sampleCaptured: !!sampledAudioPath,
+            fingerprintGenerated: sampledAudioPath ? true : false,
+            audioMatchFound: !!audioMatch,
+            audioMatchProvider: audioMatch?.sourceProvider ?? null,
+            audioMatchScore: audioMatch?.score ?? null,
+            reasonCode,
+          },
+        });
+        // #endregion
       }
 
       let catalogMatch: MatchResult | null = null;
@@ -250,6 +352,29 @@ export class MonitorService {
       let match = merged.match;
       let method: DetectionMethod = merged.method;
       const mergeReason = merged.reasonCode;
+
+      const noMetadata = !metadata?.combinedRaw;
+      const noCatalog = !catalogMatch;
+      const noAudioMatch = !audioMatch;
+      const noAcoustidKey = !acoustidKey;
+      if (
+        !match &&
+        station.metadataPriorityEnabled &&
+        station.fingerprintFallbackEnabled &&
+        legacyFingerprint &&
+        reasonCode === "metadata_missing" &&
+        noMetadata &&
+        noCatalog &&
+        noAudioMatch &&
+        noAcoustidKey &&
+        health.reachable &&
+        health.audioFlowing &&
+        health.decoderOk
+      ) {
+        noSongDataFallbackApplied = true;
+        method = "unresolved";
+        reasonCode = `no_song_metadata_available:${parseReasonSuffixFromStreamUrl(resolvedUrl)}`;
+      }
 
       if (!match && metadata && !legacyFingerprint && station.metadataPriorityEnabled) {
         const check = MetadataService.isMetadataTrustworthy(metadata, latestNp?.streamText || undefined);
@@ -271,6 +396,23 @@ export class MonitorService {
           method = "catalog_lookup";
         }
       }
+      // #region agent log
+      appendDebugLog({
+        hypothesisId: "D",
+        location: "monitor.service.ts:337",
+        message: "merge_and_catalog_outcome",
+        data: {
+          stationId,
+          mergeReason,
+          method,
+          hasMatch: !!match,
+          matchProvider: match?.sourceProvider ?? null,
+          catalogMatchFound: !!catalogMatch,
+          audioMatchFound: !!audioMatch,
+          noSongDataFallbackApplied,
+        },
+      });
+      // #endregion
 
       if (sampledAudioPath && !match) {
         await this.archiveUnresolvedSample(stationId, sampledAudioPath);
@@ -303,6 +445,21 @@ export class MonitorService {
         processingMs,
         finalReason
       );
+      // #region agent log
+      appendDebugLog({
+        hypothesisId: "E",
+        location: "monitor.service.ts:370",
+        message: "save_detection_result",
+        data: {
+          stationId,
+          status: detection.status,
+          reasonCode: detection.reasonCode,
+          method,
+          metadataCombinedRawLength: metadata?.combinedRaw?.length ?? 0,
+          matched: !!match,
+        },
+      });
+      // #endregion
       const contentClassification: StationContentClassification =
         detection.status === "matched"
           ? "music"
