@@ -26,6 +26,88 @@ function isCommandAvailable(command: string, args: string[] = ["-version"]) {
   }
 }
 
+function normalizeStationName(value: string): string {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+type DedupableStation = {
+  id: string;
+  name: string;
+  country: string;
+  frequencyMhz?: string | null;
+  isActive: boolean;
+  visibilityEnabled?: boolean | null;
+  monitorState?: string | null;
+  lastGoodAudioAt?: Date | null;
+  lastPollAt?: Date | null;
+  lastPollStatus?: string | null;
+};
+
+function stationDedupKey(station: Pick<DedupableStation, "name" | "country">): string {
+  const country = String(station.country || "").trim().toLowerCase();
+  return `${country}|${normalizeStationName(station.name)}`;
+}
+
+function stationRank(station: DedupableStation): number {
+  let score = 0;
+  if (station.isActive) score += 100;
+  if (station.visibilityEnabled !== false) score += 8;
+  if (station.lastGoodAudioAt) score += 12;
+  if (station.lastPollStatus === "ok") score += 8;
+  if (station.frequencyMhz && String(station.frequencyMhz).trim()) score += 4;
+  switch (station.monitorState) {
+    case "ACTIVE_MUSIC":
+      score += 30;
+      break;
+    case "ACTIVE_NO_MATCH":
+      score += 24;
+      break;
+    case "ACTIVE_TALK":
+      score += 18;
+      break;
+    case "DEGRADED":
+      score += 8;
+      break;
+    case "INACTIVE":
+      score += 2;
+      break;
+    default:
+      break;
+  }
+  return score;
+}
+
+function dedupeStations<T extends DedupableStation>(stations: T[]): T[] {
+  const winners = new Map<string, T>();
+  for (const station of stations) {
+    const key = stationDedupKey(station);
+    const current = winners.get(key);
+    if (!current) {
+      winners.set(key, station);
+      continue;
+    }
+    const currentRank = stationRank(current);
+    const nextRank = stationRank(station);
+    if (nextRank > currentRank) {
+      winners.set(key, station);
+      continue;
+    }
+    if (nextRank === currentRank) {
+      const currentPoll = current.lastPollAt?.getTime?.() ?? 0;
+      const nextPoll = station.lastPollAt?.getTime?.() ?? 0;
+      if (nextPoll > currentPoll) {
+        winners.set(key, station);
+      }
+    }
+  }
+  return Array.from(winners.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -117,12 +199,14 @@ async function startServer() {
 
   // Stations API
   app.get("/api/stations", async (req, res) => {
+    const dedupe = String(req.query?.dedupe ?? "1") !== "0";
     const stations = await prisma.station.findMany({
       where: { visibilityEnabled: true },
       include: { currentNowPlaying: true },
       orderBy: [{ name: "asc" }],
     });
-    res.json(stations);
+    const out = dedupe ? dedupeStations(stations as unknown as DedupableStation[]) : stations;
+    res.json(out);
   });
 
   app.post("/api/stations", async (req, res) => {
@@ -416,7 +500,8 @@ async function startServer() {
     }
   });
 
-  app.get("/api/stations/status-overview", async (_req, res) => {
+  app.get("/api/stations/status-overview", async (req, res) => {
+    const dedupe = String(req.query?.dedupe ?? "1") !== "0";
     const stations = await prisma.station.findMany({
       where: { visibilityEnabled: true },
       select: {
@@ -434,7 +519,8 @@ async function startServer() {
       },
       orderBy: { name: "asc" },
     });
-    res.json(stations);
+    const out = dedupe ? dedupeStations(stations as unknown as DedupableStation[]) : stations;
+    res.json(out);
   });
 
   app.get("/api/stations/znbc", async (_req, res) => {
