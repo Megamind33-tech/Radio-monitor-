@@ -9,6 +9,7 @@ import { MetadataService } from "./metadata.service.js";
 import { SamplerService } from "./sampler.service.js";
 import { FingerprintService } from "./fingerprint.service.js";
 import { AcoustidService } from "./acoustid.service.js";
+import { LocalFingerprintService } from "./local-fingerprint.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { CatalogLookupService } from "./catalog-lookup.service.js";
 import {
@@ -224,6 +225,8 @@ export class MonitorService {
       let sampledForFingerprint = false;
       let sampledAudioPath: string | null = null;
 
+      let capturedFingerprint: Awaited<ReturnType<typeof FingerprintService.generateFingerprint>> = null;
+      let audioMatchSource: "local" | "acoustid" | null = null;
       if (doAudioId && resolvedUrl.startsWith("http")) {
         const fpSec = Math.min(
           120,
@@ -240,11 +243,25 @@ export class MonitorService {
         sampledForFingerprint = true;
         if (samplePath) {
           sampledAudioPath = samplePath;
-          const fingerprint = await FingerprintService.generateFingerprint(samplePath);
-          if (fingerprint) {
-            const acoustidMatch = await AcoustidService.lookup(fingerprint);
-            if (acoustidMatch) {
-              audioMatch = await MusicbrainzService.enrich(acoustidMatch);
+          capturedFingerprint = await FingerprintService.generateFingerprint(samplePath);
+          if (capturedFingerprint) {
+            // 1. Local self-learned fingerprint library (no external API — free, unlimited).
+            const localMatch = await LocalFingerprintService.lookup(capturedFingerprint);
+            if (localMatch) {
+              audioMatch = localMatch;
+              audioMatchSource = "local";
+            } else if (acoustidKey) {
+              // 2. Fall back to AcoustID only when the local library doesn't know this song yet.
+              const acoustidMatch = await AcoustidService.lookup(capturedFingerprint);
+              if (acoustidMatch) {
+                audioMatch = await MusicbrainzService.enrich(acoustidMatch);
+                audioMatchSource = "acoustid";
+              }
+            } else {
+              logger.debug(
+                { station: station.name },
+                "Local fingerprint miss and no ACOUSTID_API_KEY configured — skipping AcoustID"
+              );
             }
           }
         }
@@ -316,6 +333,19 @@ export class MonitorService {
         await prisma.station.update({
           where: { id: stationId },
           data: { lastAudioFingerprintAt: new Date() },
+        });
+      }
+
+      // Self-learning: persist the fingerprint whenever we have a confirmed match
+      // so future plays of the same track are resolved locally (no AcoustID / MB call).
+      if (capturedFingerprint && match && audioMatchSource !== "local") {
+        const learnSource: "acoustid" | "stream_metadata" =
+          audioMatchSource === "acoustid" ? "acoustid" : "stream_metadata";
+        await LocalFingerprintService.learn({
+          fp: capturedFingerprint,
+          match,
+          metadata,
+          source: learnSource,
         });
       }
 
@@ -672,6 +702,7 @@ export class MonitorService {
         parsedTitle: metadata?.rawTitle,
         confidence: match?.confidence,
         acoustidScore: match?.score,
+        acoustidId: match?.acoustidTrackId ?? null,
         recordingMbid: match?.recordingId,
         titleFinal,
         artistFinal,
