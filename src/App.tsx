@@ -989,7 +989,12 @@ function StationsManagementTable({
               <th className="py-3 px-3 font-medium w-[14%]">Location</th>
               <th className="py-3 px-3 font-medium w-[22%]">Now playing</th>
               <th className="py-3 px-3 font-medium w-[10%]">State</th>
-              <th className="py-3 px-3 font-medium w-[6%]">Plays</th>
+              <th
+                className="py-3 px-3 font-medium w-[10%] leading-tight"
+                title="Unique songs in the database vs total matched plays (repeats count as plays, not extra rows)."
+              >
+                Songs / plays
+              </th>
               <th className="py-3 px-3 font-medium text-right w-[6%]">Actions</th>
             </tr>
           </thead>
@@ -1095,7 +1100,17 @@ function StationTableRow({
           {badge.text}
         </span>
       </td>
-      <td className="py-3 px-3 text-gray-300 font-mono whitespace-nowrap">{spin?.detectionCount ?? 0}</td>
+      <td className="py-3 px-3 text-gray-300 font-mono text-xs whitespace-nowrap" title="Unique songs vs total plays (same station detail list vs repeat count).">
+        {spin ? (
+          <span>
+            <span className="text-gray-200">{spin.uniqueSongs}</span>
+            <span className="text-gray-500"> / </span>
+            <span>{spin.detectionCount}</span>
+          </span>
+        ) : (
+          <span>—</span>
+        )}
+      </td>
       <td className="py-3 px-3">
         <div className="flex justify-end items-center gap-2">
           <button
@@ -1291,7 +1306,11 @@ function StationDetailPage({
             <div><span className={`px-2 py-1 rounded-lg border font-semibold uppercase tracking-wide ${badge.className}`}>{badge.text}</span></div>
             <div>Last check: {station.lastPollAt ? new Date(station.lastPollAt).toLocaleString() : '—'}</div>
             <div>Last song: {station.lastSongDetectedAt ? new Date(station.lastSongDetectedAt).toLocaleString() : '—'}</div>
-            <div>Matched plays: {spin?.detectionCount ?? 0}</div>
+            <div title="Total matched plays = sum of play counts; repeats of the same song add here, not as new rows in the song list.">
+              Unique songs: {spin?.uniqueSongs ?? 0}
+              <span className="text-gray-600"> · </span>
+              Total plays: {spin?.detectionCount ?? 0}
+            </div>
           </div>
         </div>
 
@@ -1453,7 +1472,18 @@ function StationDetailPage({
         <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold">Logged songs for {station.name}</h3>
-            <span className="text-xs text-gray-500">{filteredSongSpins.length} / {songSpins.length} rows</span>
+            <span className="text-xs text-gray-500 text-right max-w-[min(100%,22rem)] leading-snug">
+              {filteredSongSpins.length} of {songSpins.length} rows shown
+              {spin != null ? (
+                <>
+                  {' '}
+                  · {spin.uniqueSongs} unique · {spin.detectionCount} total plays
+                </>
+              ) : null}
+              <span className="block text-[10px] text-gray-600 mt-0.5">
+                One row per distinct title key; high play counts are repeats (e.g. promos).
+              </span>
+            </span>
           </div>
           <div className="mb-4 flex flex-wrap gap-2 items-center">
             <input
