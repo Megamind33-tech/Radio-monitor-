@@ -198,11 +198,12 @@ async function startServer() {
     });
   });
 
-  // Stations API
+  // Stations API — `visibility=all` returns every row in Station (admin / full catalog); default hides visibilityEnabled=false.
   app.get("/api/stations", async (req, res) => {
     const dedupe = String(req.query?.dedupe ?? "1") !== "0";
+    const visibility = String(req.query?.visibility ?? "visible").toLowerCase();
     const stations = await prisma.station.findMany({
-      where: { visibilityEnabled: true },
+      where: visibility === "all" ? undefined : { visibilityEnabled: true },
       include: { currentNowPlaying: true },
       orderBy: [{ name: "asc" }],
     });
@@ -542,8 +543,9 @@ async function startServer() {
 
   app.get("/api/stations/status-overview", async (req, res) => {
     const dedupe = String(req.query?.dedupe ?? "1") !== "0";
+    const visibility = String(req.query?.visibility ?? "visible").toLowerCase();
     const stations = await prisma.station.findMany({
-      where: { visibilityEnabled: true },
+      where: visibility === "all" ? undefined : { visibilityEnabled: true },
       select: {
         id: true,
         name: true,
@@ -579,8 +581,8 @@ async function startServer() {
 
   app.get("/api/metrics/summary", async (req, res) => {
     const totalLogs = await prisma.detectionLog.count();
-    const matchedLogs = await prisma.detectionLog.count({ where: { status: 'matched' } });
-    const stationErrors = await prisma.jobRun.count({ where: { status: 'failure' } });
+    const matchedLogs = await prisma.detectionLog.count({ where: { status: "matched" } });
+    const stationErrors = await prisma.jobRun.count({ where: { status: "failure" } });
     const recentWindow = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const recentLogs = await prisma.detectionLog.count({
       where: { observedAt: { gte: recentWindow } },
@@ -588,13 +590,43 @@ async function startServer() {
     const recentMatched = await prisma.detectionLog.count({
       where: { observedAt: { gte: recentWindow }, status: "matched" },
     });
-    
+
+    const programNoiseWhere = {
+      OR: [
+        { reasonCode: "talk_or_program_content" },
+        { sourceProvider: "stream_metadata_program" },
+      ],
+    };
+    const musicCandidateLogs = await prisma.detectionLog.count({
+      where: { NOT: programNoiseWhere },
+    });
+    const musicMatchedLogs = await prisma.detectionLog.count({
+      where: { status: "matched", NOT: programNoiseWhere },
+    });
+    const recentMusicCandidates = await prisma.detectionLog.count({
+      where: { observedAt: { gte: recentWindow }, NOT: programNoiseWhere },
+    });
+    const recentMusicMatched = await prisma.detectionLog.count({
+      where: {
+        observedAt: { gte: recentWindow },
+        status: "matched",
+        NOT: programNoiseWhere,
+      },
+    });
+
     res.json({
       total_detections: totalLogs,
-      match_rate: totalLogs > 0 ? (matchedLogs / totalLogs) : 0,
-      match_rate_24h: recentLogs > 0 ? (recentMatched / recentLogs) : 0,
+      match_rate: totalLogs > 0 ? matchedLogs / totalLogs : 0,
+      match_rate_24h: recentLogs > 0 ? recentMatched / recentLogs : 0,
       detections_24h: recentLogs,
-      errors_count: stationErrors
+      /** Same as match_rate but excludes talk/program ICY rows (fairer “song ID” rate). */
+      music_match_rate: musicCandidateLogs > 0 ? musicMatchedLogs / musicCandidateLogs : 0,
+      music_detections: musicCandidateLogs,
+      music_matched: musicMatchedLogs,
+      music_match_rate_24h: recentMusicCandidates > 0 ? recentMusicMatched / recentMusicCandidates : 0,
+      music_detections_24h: recentMusicCandidates,
+      music_matched_24h: recentMusicMatched,
+      errors_count: stationErrors,
     });
   });
 

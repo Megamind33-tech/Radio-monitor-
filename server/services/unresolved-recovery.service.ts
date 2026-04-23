@@ -51,8 +51,8 @@ export class UnresolvedRecoveryService {
     this.lastRunAt = new Date();
     const started = Date.now();
 
-    const limit = Math.min(200, Math.max(1, opts?.limit ?? parseEnvInt("UNRESOLVED_RECOVERY_BATCH_SIZE", 20)));
-    const maxAttempts = Math.min(50, Math.max(1, parseEnvInt("UNRESOLVED_RECOVERY_MAX_ATTEMPTS", 10)));
+    const limit = Math.min(200, Math.max(1, opts?.limit ?? parseEnvInt("UNRESOLVED_RECOVERY_BATCH_SIZE", 50)));
+    const maxAttempts = Math.min(80, Math.max(1, parseEnvInt("UNRESOLVED_RECOVERY_MAX_ATTEMPTS", 24)));
 
     let processed = 0;
     let recovered = 0;
@@ -61,6 +61,24 @@ export class UnresolvedRecoveryService {
     let errored = 0;
 
     try {
+      const cooldownDays = Math.min(90, Math.max(1, parseEnvInt("UNRESOLVED_RECOVERY_NO_MATCH_COOLDOWN_DAYS", 7)));
+      const cooldownBefore = new Date(Date.now() - cooldownDays * 86400000);
+      const retried = await prisma.unresolvedSample.updateMany({
+        where: {
+          ...(opts?.stationId ? { stationId: opts.stationId } : {}),
+          recoveryStatus: "no_match",
+          lastRecoveryAt: { lt: cooldownBefore },
+        },
+        data: {
+          recoveryStatus: "pending",
+          recoveryAttempts: 0,
+          lastRecoveryError: null,
+        },
+      });
+      if (retried.count > 0) {
+        logger.info({ retried: retried.count, cooldownDays }, "Re-queued stale no_match unresolved samples for AcoustID retry");
+      }
+
       const rows = await prisma.unresolvedSample.findMany({
         where: {
           ...(opts?.stationId ? { stationId: opts.stationId } : {}),
