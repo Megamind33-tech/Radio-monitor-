@@ -186,6 +186,12 @@ model StationSongSpin {
   artistNorm String @default("")
   titleNorm  String
   albumNorm  String @default("")
+  /// Metadata split rule id used when raw stream metadata had mixed artist/title text.
+  mixRuleApplied String?
+  /// Confidence (0..1) for the metadata split result.
+  mixSplitConfidence Float?
+  /// Original raw combined metadata before split (for audit/search/filtering).
+  originalCombinedRaw String?
   /// Latest display values (same spin key, updated each play)
   artistLast String @default("")
   titleLast  String @default("")
@@ -228,10 +234,20 @@ model CurrentNowPlaying {
 }
 
 model UnresolvedSample {
-  id        String   @id @default(cuid())
-  stationId String
-  filePath  String
-  createdAt DateTime @default(now())
+  id               String   @id @default(cuid())
+  stationId        String
+  /// DetectionLog row associated with this unresolved capture (nullable for older rows).
+  detectionLogId   String?  @unique
+  filePath         String
+  createdAt        DateTime @default(now())
+  /// pending | recovered | no_match | error | skipped
+  recoveryStatus   String   @default("pending")
+  recoveryAttempts Int      @default(0)
+  lastRecoveryAt   DateTime?
+  recoveredAt      DateTime?
+  lastRecoveryError String?
+
+  @@index([stationId, recoveryStatus, createdAt])
 }
 
 model CacheEntry {

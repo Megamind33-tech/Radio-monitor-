@@ -14,6 +14,8 @@ export interface NormalizedMetadata {
   rawTitle?: string;
   rawArtist?: string;
   combinedRaw?: string;
+  splitRuleApplied?: string;
+  splitConfidence?: number;
   sourceType: DetectionMethod;
 }
 
@@ -30,11 +32,14 @@ export interface MatchResult {
   durationMs?: number;
   sourceProvider?:
     | 'acoustid'
+    | 'acoustid_open'
     | 'musicbrainz'
     | 'musicbrainz_search'
     | 'itunes_search'
     | 'deezer_search'
-    | 'stream_metadata';
+    | 'theaudiodb_search'
+    | 'stream_metadata'
+    | 'recovery_reprocess';
   confidence: number;
   reasonCode?: string;
 }

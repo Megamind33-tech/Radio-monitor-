@@ -2,6 +2,7 @@ import * as cron from "node-cron";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { MonitorService } from "./monitor.service.js";
+import { UnresolvedRecoveryService } from "./unresolved-recovery.service.js";
 
 type PollHandle = { stop: () => void };
 
@@ -11,6 +12,7 @@ export class SchedulerService {
   private static pollIntervals: Map<string, number> = new Map();
   private static pollRunning: Set<string> = new Set();
   private static masterJob: cron.ScheduledTask | null = null;
+  private static unresolvedRecoveryJob: cron.ScheduledTask | null = null;
 
   static async init() {
     logger.info("Initializing station scheduler");
@@ -20,8 +22,23 @@ export class SchedulerService {
     this.masterJob = cron.schedule("*/30 * * * * *", () => {
       void this.resyncStations();
     });
+    this.unresolvedRecoveryJob = cron.schedule("*/2 * * * *", () => {
+      void this.runUnresolvedRecoveryTick();
+    });
 
     await this.resyncStations();
+  }
+
+  private static async runUnresolvedRecoveryTick() {
+    if (!process.env.ACOUSTID_API_KEY) return;
+    try {
+      const out = await UnresolvedRecoveryService.runBatch();
+      if (out.processed > 0) {
+        logger.info({ out }, "Unresolved recovery scheduler tick");
+      }
+    } catch (error) {
+      logger.warn({ error }, "Unresolved recovery scheduler tick failed");
+    }
   }
 
   private static async resyncStations() {
@@ -97,6 +114,7 @@ export class SchedulerService {
 
   static stopAll() {
     this.masterJob?.stop();
+    this.unresolvedRecoveryJob?.stop();
     for (const h of this.tasks.values()) {
       h.stop();
     }

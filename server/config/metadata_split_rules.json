@@ -1,0 +1,42 @@
+{
+  "separators": [" - ", " – ", " — ", " | ", " / ", ": "],
+  "stripPrefixes": ["now playing:", "on air:", "currently playing:", "np:"],
+  "stripSuffixes": [" (live stream)", " [live]", " | live", " - live"],
+  "noiseTokens": [
+    "commercial break",
+    "station id",
+    "news bulletin",
+    "radio jingle",
+    "live stream"
+  ],
+  "titleHintTokens": [
+    "remix",
+    "mix",
+    "edit",
+    "version",
+    "radio edit",
+    "instrumental",
+    "live"
+  ],
+  "artistHintTokens": ["feat.", "ft.", "&", " x "],
+  "regexPatterns": [
+    {
+      "name": "artist_dash_title",
+      "regex": "^(?<artist>[^\\\\-|/]{2,100})\\\\s*(?:-|–|—|\\\\|)\\\\s*(?<title>[^\\\\-|/].{1,160})$",
+      "flags": "i",
+      "orientation": "artist_title"
+    },
+    {
+      "name": "title_by_artist",
+      "regex": "^(?<title>.+?)\\\\s+by\\\\s+(?<artist>.+)$",
+      "flags": "i",
+      "orientation": "title_artist"
+    },
+    {
+      "name": "quoted_title_by_artist",
+      "regex": "^[\\\"'“](?<title>.+)[\\\"'”]\\\\s+by\\\\s+(?<artist>.+)$",
+      "flags": "i",
+      "orientation": "title_artist"
+    }
+  ]
+}

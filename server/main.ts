@@ -14,6 +14,8 @@ import { StreamRefreshService } from "./services/stream-refresh.service.js";
 import { validateCandidateStreamUrl } from "./lib/stream-url-guard.js";
 import { StreamHealthService } from "./services/stream-health.service.js";
 import { monitorEvents } from "./lib/monitor-events.js";
+import { UnresolvedRecoveryService } from "./services/unresolved-recovery.service.js";
+import * as XLSX from "xlsx";
 
 function isCommandAvailable(command: string, args: string[] = ["-version"]) {
   try {
@@ -22,6 +24,88 @@ function isCommandAvailable(command: string, args: string[] = ["-version"]) {
   } catch {
     return false;
   }
+}
+
+function normalizeStationName(value: string): string {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+type DedupableStation = {
+  id: string;
+  name: string;
+  country: string;
+  frequencyMhz?: string | null;
+  isActive: boolean;
+  visibilityEnabled?: boolean | null;
+  monitorState?: string | null;
+  lastGoodAudioAt?: Date | null;
+  lastPollAt?: Date | null;
+  lastPollStatus?: string | null;
+};
+
+function stationDedupKey(station: Pick<DedupableStation, "name" | "country">): string {
+  const country = String(station.country || "").trim().toLowerCase();
+  return `${country}|${normalizeStationName(station.name)}`;
+}
+
+function stationRank(station: DedupableStation): number {
+  let score = 0;
+  if (station.isActive) score += 100;
+  if (station.visibilityEnabled !== false) score += 8;
+  if (station.lastGoodAudioAt) score += 12;
+  if (station.lastPollStatus === "ok") score += 8;
+  if (station.frequencyMhz && String(station.frequencyMhz).trim()) score += 4;
+  switch (station.monitorState) {
+    case "ACTIVE_MUSIC":
+      score += 30;
+      break;
+    case "ACTIVE_NO_MATCH":
+      score += 24;
+      break;
+    case "ACTIVE_TALK":
+      score += 18;
+      break;
+    case "DEGRADED":
+      score += 8;
+      break;
+    case "INACTIVE":
+      score += 2;
+      break;
+    default:
+      break;
+  }
+  return score;
+}
+
+function dedupeStations<T extends DedupableStation>(stations: T[]): T[] {
+  const winners = new Map<string, T>();
+  for (const station of stations) {
+    const key = stationDedupKey(station);
+    const current = winners.get(key);
+    if (!current) {
+      winners.set(key, station);
+      continue;
+    }
+    const currentRank = stationRank(current);
+    const nextRank = stationRank(station);
+    if (nextRank > currentRank) {
+      winners.set(key, station);
+      continue;
+    }
+    if (nextRank === currentRank) {
+      const currentPoll = current.lastPollAt?.getTime?.() ?? 0;
+      const nextPoll = station.lastPollAt?.getTime?.() ?? 0;
+      if (nextPoll > currentPoll) {
+        winners.set(key, station);
+      }
+    }
+  }
+  return Array.from(winners.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 async function startServer() {
@@ -89,6 +173,8 @@ async function startServer() {
       musicbrainz: musicbrainzUserAgentConfigured,
       itunesSearch: true,
       deezerSearch: process.env.DEEZER_LOOKUP_ENABLED !== "false",
+      theAudioDbSearch: process.env.THEAUDIODB_LOOKUP_ENABLED !== "false",
+      acoustidOpenClient: !!process.env.ACOUSTID_OPEN_CLIENT,
     };
 
     const missing = [];
@@ -113,12 +199,14 @@ async function startServer() {
 
   // Stations API
   app.get("/api/stations", async (req, res) => {
+    const dedupe = String(req.query?.dedupe ?? "1") !== "0";
     const stations = await prisma.station.findMany({
       where: { visibilityEnabled: true },
       include: { currentNowPlaying: true },
       orderBy: [{ name: "asc" }],
     });
-    res.json(stations);
+    const out = dedupe ? dedupeStations(stations as unknown as DedupableStation[]) : stations;
+    res.json(out);
   });
 
   app.post("/api/stations", async (req, res) => {
@@ -279,6 +367,51 @@ async function startServer() {
     res.json(logs);
   });
 
+  app.get("/api/recovery/unresolved/status", async (_req, res) => {
+    try {
+      const status = UnresolvedRecoveryService.status();
+      const totals = await prisma.unresolvedSample.groupBy({
+        by: ["recoveryStatus"],
+        _count: { _all: true },
+      });
+      const byStatus: Record<string, number> = {};
+      for (const row of totals) {
+        byStatus[row.recoveryStatus || "pending"] = Number(row._count._all || 0);
+      }
+      res.json({ ...status, totals: byStatus });
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved recovery status request");
+      res.status(500).json({ error: "failed_to_read_recovery_status" });
+    }
+  });
+
+  app.post("/api/recovery/unresolved/run", async (req, res) => {
+    try {
+      const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
+      const stationId = typeof body.stationId === "string" && body.stationId.trim() ? body.stationId.trim() : undefined;
+      const limitRaw = typeof body.limit === "number" ? body.limit : Number(body.limit);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 200) : undefined;
+      const out = await UnresolvedRecoveryService.runBatch({ stationId, limit });
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved recovery run request");
+      res.status(500).json({ error: "failed_to_run_recovery_batch" });
+    }
+  });
+
+  app.post("/api/recovery/unresolved/cleanup", async (req, res) => {
+    try {
+      const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
+      const keepRaw = typeof body.keepRecovered === "number" ? body.keepRecovered : Number(body.keepRecovered);
+      const keepRecovered = Number.isFinite(keepRaw) ? Math.max(0, Math.trunc(keepRaw)) : 0;
+      const out = await UnresolvedRecoveryService.cleanupRecoveredFiles(keepRecovered);
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved recovery cleanup request");
+      res.status(500).json({ error: "failed_to_cleanup_recovered_samples" });
+    }
+  });
+
   app.get("/api/stations/:id/airplays", async (req, res) => {
     const airplays = await prisma.detectionLog.findMany({
       where: {
@@ -367,7 +500,8 @@ async function startServer() {
     }
   });
 
-  app.get("/api/stations/status-overview", async (_req, res) => {
+  app.get("/api/stations/status-overview", async (req, res) => {
+    const dedupe = String(req.query?.dedupe ?? "1") !== "0";
     const stations = await prisma.station.findMany({
       where: { visibilityEnabled: true },
       select: {
@@ -385,7 +519,8 @@ async function startServer() {
       },
       orderBy: { name: "asc" },
     });
-    res.json(stations);
+    const out = dedupe ? dedupeStations(stations as unknown as DedupableStation[]) : stations;
+    res.json(out);
   });
 
   app.get("/api/stations/znbc", async (_req, res) => {
@@ -460,6 +595,9 @@ async function startServer() {
           playCount: number;
           lastPlayed: Date;
           firstPlayed: Date;
+          mixRuleApplied: string | null;
+          mixSplitConfidence: number | null;
+          originalCombinedRaw: string | null;
         }[]
       >`
         SELECT "stationId",
@@ -468,7 +606,10 @@ async function startServer() {
           NULLIF(TRIM("albumLast"), '') AS album,
           "playCount",
           "lastPlayedAt" AS "lastPlayed",
-          "firstPlayedAt" AS "firstPlayed"
+          "firstPlayedAt" AS "firstPlayed",
+          "mixRuleApplied",
+          "mixSplitConfidence",
+          "originalCombinedRaw"
         FROM "StationSongSpin"
         WHERE "stationId" = ${stationId}
           AND TRIM("titleNorm") != ''
@@ -484,6 +625,9 @@ async function startServer() {
           playCount: Number(r.playCount),
           lastPlayed: r.lastPlayed,
           firstPlayed: r.firstPlayed,
+          mixRuleApplied: r.mixRuleApplied,
+          mixSplitConfidence: r.mixSplitConfidence,
+          originalCombinedRaw: r.originalCombinedRaw,
         }))
       );
     }
@@ -497,6 +641,9 @@ async function startServer() {
         playCount: number;
         lastPlayed: Date;
         firstPlayed: Date;
+        mixRuleApplied: string | null;
+        mixSplitConfidence: number | null;
+        originalCombinedRaw: string | null;
       }[]
     >`
       SELECT "stationId",
@@ -505,7 +652,10 @@ async function startServer() {
         NULLIF(TRIM("albumLast"), '') AS album,
         "playCount",
         "lastPlayedAt" AS "lastPlayed",
-        "firstPlayedAt" AS "firstPlayed"
+        "firstPlayedAt" AS "firstPlayed",
+        "mixRuleApplied",
+        "mixSplitConfidence",
+        "originalCombinedRaw"
       FROM "StationSongSpin"
       WHERE TRIM("titleNorm") != ''
       ORDER BY "playCount" DESC
@@ -520,6 +670,9 @@ async function startServer() {
         playCount: Number(r.playCount),
         lastPlayed: r.lastPlayed,
         firstPlayed: r.firstPlayed,
+        mixRuleApplied: r.mixRuleApplied,
+        mixSplitConfidence: r.mixSplitConfidence,
+        originalCombinedRaw: r.originalCombinedRaw,
       }))
     );
   });
@@ -628,6 +781,181 @@ async function startServer() {
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="zambia-song-spins.csv"');
     res.send(csv);
+  });
+
+  app.get("/api/export/logs.xlsx", async (req, res) => {
+    const stationId = typeof req.query.stationId === "string" ? req.query.stationId : "all";
+    const limitRaw = typeof req.query.limit === "string" ? Number(req.query.limit) : 5000;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 50000) : 5000;
+
+    const stationWhere = stationId && stationId !== "all" ? { id: stationId } : undefined;
+    const stations = await prisma.station.findMany({
+      where: stationWhere,
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    });
+    const stationNameById = new Map(stations.map((s) => [s.id, s.name]));
+
+    const where = stationId && stationId !== "all" ? { stationId } : undefined;
+    const rows = await prisma.detectionLog.findMany({
+      where,
+      orderBy: { observedAt: "desc" },
+      take: limit,
+      select: {
+        id: true,
+        stationId: true,
+        observedAt: true,
+        rawStreamText: true,
+        titleFinal: true,
+        artistFinal: true,
+        releaseFinal: true,
+        trackDurationMs: true,
+        processingMs: true,
+        confidence: true,
+        sourceProvider: true,
+        releaseDate: true,
+        recordingMbid: true,
+        isrcList: true,
+        status: true,
+      },
+    });
+
+    const toNum = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? n : undefined);
+    const toSec = (ms: number | null) => (typeof ms === "number" && ms > 0 ? Math.round(ms / 1000) : undefined);
+    const parseIsrc = (v: string | null): string | undefined => {
+      if (!v) return undefined;
+      try {
+        const arr = JSON.parse(v);
+        if (Array.isArray(arr)) return arr.filter((x) => typeof x === "string").join(" / ") || undefined;
+      } catch {
+        return v || undefined;
+      }
+      return undefined;
+    };
+    const timestampLabel = "Timestamp(UTC-07:00)";
+
+    const allResults = rows.map((r, idx) => ({
+      No: idx,
+      "Channel Name": stationNameById.get(r.stationId) || r.stationId,
+      [timestampLabel]: r.observedAt.toISOString().replace("T", " ").slice(0, 19),
+      "Bucket ID": "",
+      From: stationNameById.get(r.stationId) || r.stationId,
+      Title: r.titleFinal || "",
+      Artist: r.artistFinal || "",
+      Album: r.releaseFinal || "",
+      Duration: toSec(r.trackDurationMs ?? null) ?? "",
+      "Played Duration": toSec(r.trackDurationMs ?? null) ?? "",
+      "Program Title": "",
+      Tag: r.sourceProvider || r.status || "",
+      Score: toNum(r.confidence ?? null) ?? "",
+      Label: "",
+      "Release Date": r.releaseDate || "",
+      ACRID: r.recordingMbid || "",
+      ISRC: parseIsrc(r.isrcList) || "",
+      ISWC: "",
+      UPC: "",
+      Deezer: "",
+      Spotify: "",
+      Youtube: "",
+      Composers: "",
+      Publishers: "",
+    }));
+
+    const statMap = new Map<
+      string,
+      {
+        title: string;
+        artist: string;
+        album: string;
+        from: string;
+        label: string;
+        isrc: string;
+        plays: number;
+        playTimeSeconds: number;
+        acrid: string;
+      }
+    >();
+    for (const r of rows) {
+      if (!r.titleFinal && !r.artistFinal) continue;
+      const title = r.titleFinal || "";
+      const artist = r.artistFinal || "";
+      const album = r.releaseFinal || "";
+      const from = stationNameById.get(r.stationId) || r.stationId;
+      const label = r.sourceProvider || "";
+      const isrc = parseIsrc(r.isrcList) || "";
+      const acrid = r.recordingMbid || "";
+      const key = [title, artist, album, from, isrc, acrid].join("||");
+      const current = statMap.get(key) || {
+        title,
+        artist,
+        album,
+        from,
+        label,
+        isrc,
+        plays: 0,
+        playTimeSeconds: 0,
+        acrid,
+      };
+      current.plays += 1;
+      current.playTimeSeconds += toSec(r.trackDurationMs ?? null) || 0;
+      statMap.set(key, current);
+    }
+
+    const statistic = Array.from(statMap.values())
+      .sort((a, b) => b.plays - a.plays)
+      .map((x, idx) => ({
+        No: idx,
+        Title: x.title,
+        Artist: x.artist,
+        Album: x.album,
+        From: x.from,
+        Label: x.label,
+        ISRC: x.isrc,
+        Plays: x.plays,
+        "Play Time(seconds)": x.playTimeSeconds,
+        ACRID: x.acrid,
+      }));
+
+    const wb = XLSX.utils.book_new();
+    const wsAll = XLSX.utils.json_to_sheet(allResults, {
+      header: [
+        "No",
+        "Channel Name",
+        timestampLabel,
+        "Bucket ID",
+        "From",
+        "Title",
+        "Artist",
+        "Album",
+        "Duration",
+        "Played Duration",
+        "Program Title",
+        "Tag",
+        "Score",
+        "Label",
+        "Release Date",
+        "ACRID",
+        "ISRC",
+        "ISWC",
+        "UPC",
+        "Deezer",
+        "Spotify",
+        "Youtube",
+        "Composers",
+        "Publishers",
+      ],
+    });
+    const wsStat = XLSX.utils.json_to_sheet(statistic, {
+      header: ["No", "Title", "Artist", "Album", "From", "Label", "ISRC", "Plays", "Play Time(seconds)", "ACRID"],
+    });
+    XLSX.utils.book_append_sheet(wb, wsAll, "All Results");
+    XLSX.utils.book_append_sheet(wb, wsStat, "Statistic");
+
+    const fileName = stationId && stationId !== "all" ? `station-${stationId}-logs.xlsx` : "all-stations-logs.xlsx";
+    const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.send(buffer);
   });
 
   // Initialize Scheduler

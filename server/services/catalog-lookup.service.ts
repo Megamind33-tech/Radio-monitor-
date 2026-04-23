@@ -17,21 +17,31 @@ export class CatalogLookupService {
     }
 
     // 1) Public MusicBrainz search (free, no API key)
-    const mbMatch = await this.musicbrainzSearch(title, artist, combined);
-    if (mbMatch) {
-      return mbMatch;
+    if (process.env.MUSICBRAINZ_SEARCH_ENABLED !== "false") {
+      const mbMatch = await this.musicbrainzSearch(title, artist, combined);
+      if (mbMatch) {
+        return mbMatch;
+      }
     }
 
     // 2) Public iTunes Search API fallback (free for lookup use-cases)
-    const itunesMatch = await this.iTunesSearch(title, artist, combined);
-    if (itunesMatch) {
-      return itunesMatch;
+    if (process.env.ITUNES_LOOKUP_ENABLED !== "false") {
+      const itunesMatch = await this.iTunesSearch(title, artist, combined);
+      if (itunesMatch) {
+        return itunesMatch;
+      }
     }
 
     // 3) Deezer public search (no API key for basic search - rate-limit friendly)
     if (process.env.DEEZER_LOOKUP_ENABLED !== "false") {
       const dz = await this.deezerSearch(title, artist, combined);
       if (dz) return dz;
+    }
+
+    // 4) TheAudioDB public search (free, no API key for basic metadata search)
+    if (process.env.THEAUDIODB_LOOKUP_ENABLED !== "false") {
+      const adb = await this.theAudioDbSearch(title, artist, combined);
+      if (adb) return adb;
     }
 
     return null;
@@ -211,5 +221,65 @@ export class CatalogLookupService {
     if (title) return `recording:"${title}"`;
     if (combined) return combined;
     return null;
+  }
+
+  private static async theAudioDbSearch(
+    title?: string,
+    artist?: string,
+    combined?: string
+  ): Promise<MatchResult | null> {
+    const queryTrack = (title || "").trim() || (combined || "").trim();
+    if (!queryTrack || queryTrack.length < 2) return null;
+    const queryArtist = (artist || "").trim();
+
+    try {
+      const response = await axios.get("https://www.theaudiodb.com/api/v1/json/2/searchtrack.php", {
+        params: {
+          s: queryArtist || undefined,
+          t: queryTrack,
+        },
+        timeout: 10000,
+      });
+      const tracks = response.data?.track;
+      if (!Array.isArray(tracks) || tracks.length === 0) return null;
+
+      const targetTitle = queryTrack.toLowerCase();
+      const targetArtist = queryArtist.toLowerCase();
+      let best = tracks[0];
+      let bestScore = 0.5;
+      for (const t of tracks) {
+        const tTitle = String(t?.strTrack || "").toLowerCase();
+        const tArtist = String(t?.strArtist || "").toLowerCase();
+        let score = 0.5;
+        if (targetTitle && (tTitle.includes(targetTitle) || targetTitle.includes(tTitle))) score += 0.15;
+        if (targetArtist && (tArtist.includes(targetArtist) || targetArtist.includes(tArtist))) score += 0.15;
+        if (targetTitle && targetArtist && tTitle.includes(targetTitle) && tArtist.includes(targetArtist)) score += 0.1;
+        if (score > bestScore) {
+          bestScore = score;
+          best = t;
+        }
+      }
+
+      const minScore = parseFloat(process.env.CATALOG_LOOKUP_MIN_SCORE || "0.65");
+      if (bestScore < minScore) return null;
+
+      const durMsRaw = Number(best?.intDuration);
+      const durationMs = Number.isFinite(durMsRaw) && durMsRaw > 0 ? Math.round(durMsRaw) : undefined;
+      return {
+        score: bestScore,
+        confidence: bestScore,
+        title: best?.strTrack || undefined,
+        artist: best?.strArtist || undefined,
+        releaseTitle: best?.strAlbum || undefined,
+        releaseDate: best?.intYearReleased ? String(best.intYearReleased) : undefined,
+        genre: best?.strGenre || undefined,
+        durationMs,
+        sourceProvider: "theaudiodb_search",
+        reasonCode: "catalog_lookup_theaudiodb",
+      };
+    } catch (error) {
+      logger.warn({ error, queryTrack, queryArtist }, "TheAudioDB catalog lookup failed");
+      return null;
+    }
   }
 }

@@ -53,6 +53,17 @@ function parseEnvInt(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function parseReasonSuffixFromStreamUrl(url: string): string {
+  const lower = String(url || "").toLowerCase();
+  if (!lower) return "stream";
+  if (lower.includes("fastcast4u.com/proxy/")) return "fastcast_proxy";
+  if (lower.includes("zeno.fm")) return "zeno_stream";
+  if (lower.includes("icecast")) return "icecast_stream";
+  if (lower.includes("shoutcast")) return "shoutcast_stream";
+  if (lower.includes("/proxy/")) return "proxy_stream";
+  return "stream";
+}
+
 function computeDetectionLagMs(
   station: {
     detectionLagMsAvg: number | null;
@@ -139,7 +150,6 @@ export class MonitorService {
     if (!station || !station.isActive) return;
 
     logger.info({ station: station.name }, "Polling station");
-
     const markPollError = async (message: string) => {
       await prisma.station.update({
         where: { id: stationId },
@@ -163,6 +173,9 @@ export class MonitorService {
 
       if (station.metadataPriorityEnabled) {
         metadata = await MetadataService.readStreamMetadata(resolvedUrl);
+        if (!metadata) {
+          metadata = await MetadataService.readProviderNowPlayingMetadata(resolvedUrl);
+        }
         const latestNowPlaying = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
 
         if (!metadata) {
@@ -187,7 +200,6 @@ export class MonitorService {
         legacyFingerprint = true;
         reasonCode = "metadata_disabled";
       }
-
       const latestNp = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
       const icyText = (metadata?.combinedRaw ?? "").trim();
       const prevIcy = (latestNp?.streamText ?? "").trim();
@@ -208,7 +220,6 @@ export class MonitorService {
         !!station.fingerprintFallbackEnabled &&
         (forceAudioFallback || !!acoustidKey) &&
         (legacyFingerprint || icyChanged || intervalElapsed);
-
       let audioMatch: MatchResult | null = null;
       let sampledForFingerprint = false;
       let sampledAudioPath: string | null = null;
@@ -251,6 +262,28 @@ export class MonitorService {
       let method: DetectionMethod = merged.method;
       const mergeReason = merged.reasonCode;
 
+      const noMetadata = !metadata?.combinedRaw;
+      const noCatalog = !catalogMatch;
+      const noAudioMatch = !audioMatch;
+      const noAcoustidKey = !acoustidKey;
+      if (
+        !match &&
+        station.metadataPriorityEnabled &&
+        station.fingerprintFallbackEnabled &&
+        legacyFingerprint &&
+        reasonCode === "metadata_missing" &&
+        noMetadata &&
+        noCatalog &&
+        noAudioMatch &&
+        noAcoustidKey &&
+        health.reachable &&
+        health.audioFlowing &&
+        health.decoderOk
+      ) {
+        method = "unresolved";
+        reasonCode = `no_song_metadata_available:${parseReasonSuffixFromStreamUrl(resolvedUrl)}`;
+      }
+
       if (!match && metadata && !legacyFingerprint && station.metadataPriorityEnabled) {
         const check = MetadataService.isMetadataTrustworthy(metadata, latestNp?.streamText || undefined);
         if (metadata && check.trusted) {
@@ -271,9 +304,9 @@ export class MonitorService {
           method = "catalog_lookup";
         }
       }
-
+      let unresolvedSamplePath: string | null = null;
       if (sampledAudioPath && !match) {
-        await this.archiveUnresolvedSample(stationId, sampledAudioPath);
+        unresolvedSamplePath = await this.archiveUnresolvedSample(stationId, sampledAudioPath);
       }
       if (sampledAudioPath) {
         SamplerService.cleanup(sampledAudioPath);
@@ -303,6 +336,22 @@ export class MonitorService {
         processingMs,
         finalReason
       );
+      if (
+        unresolvedSamplePath &&
+        detection.status === "unresolved" &&
+        detection.detectionLogId
+      ) {
+        await prisma.unresolvedSample.updateMany({
+          where: {
+            stationId,
+            filePath: unresolvedSamplePath,
+            detectionLogId: null,
+          },
+          data: {
+            detectionLogId: detection.detectionLogId,
+          },
+        });
+      }
       const contentClassification: StationContentClassification =
         detection.status === "matched"
           ? "music"
@@ -546,7 +595,7 @@ export class MonitorService {
     match: MatchResult | null,
     processingMs: number,
     reasonCode: string | null
-  ): Promise<{ status: "matched" | "unresolved"; reasonCode: string | null }> {
+  ): Promise<{ status: "matched" | "unresolved"; reasonCode: string | null; detectionLogId?: string }> {
     const stationId = station.id;
     const npRow = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
     const trustedMeta =
@@ -610,7 +659,7 @@ export class MonitorService {
           update: { updatedAt: new Date() },
           create: { stationId, title: titleFinal, artist: artistFinal },
         });
-        return { status, reasonCode: detectionReason ?? null };
+        return { status, reasonCode: detectionReason ?? null, detectionLogId: latestLog.id };
       }
     }
 
@@ -654,6 +703,9 @@ export class MonitorService {
         title: titleFinal,
         album: match?.releaseTitle,
         detectionLogId: log.id,
+        mixRuleApplied: (metadata as { splitRuleApplied?: string | undefined } | null)?.splitRuleApplied || null,
+        mixSplitConfidence: (metadata as { splitConfidence?: number | undefined } | null)?.splitConfidence,
+        originalCombinedRaw: (metadata?.combinedRaw ?? "").trim() || null,
       });
       spinPlayCount = spin.playCount;
     }
@@ -743,11 +795,11 @@ export class MonitorService {
         playCount: spinPlayCount,
       });
     }
-    return { status, reasonCode: detectionReason ?? null };
+    return { status, reasonCode: detectionReason ?? null, detectionLogId: log.id };
   }
 
-  private static async archiveUnresolvedSample(stationId: string, samplePath: string): Promise<void> {
-    if (!parseEnvBool("ARCHIVE_UNRESOLVED_SAMPLES", true)) return;
+  private static async archiveUnresolvedSample(stationId: string, samplePath: string): Promise<string | null> {
+    if (!parseEnvBool("ARCHIVE_UNRESOLVED_SAMPLES", true)) return null;
     try {
       const root =
         process.env.UNRESOLVED_SAMPLE_DIR || path.join(process.cwd(), "data/unresolved_samples");
@@ -767,7 +819,7 @@ export class MonitorService {
       const keepRaw = parseEnvInt("UNRESOLVED_SAMPLE_MAX_PER_STATION", 25);
       // Production retention mode:
       // set UNRESOLVED_SAMPLE_MAX_PER_STATION=0 to disable pruning entirely.
-      if (keepRaw <= 0) return;
+      if (keepRaw <= 0) return destPath;
       const keep = Math.min(200, Math.max(1, keepRaw));
       const stale = await prisma.unresolvedSample.findMany({
         where: { stationId },
@@ -783,8 +835,10 @@ export class MonitorService {
         }
         await prisma.unresolvedSample.delete({ where: { id: row.id } });
       }
+      return destPath;
     } catch (error) {
       logger.warn({ error, stationId }, "Failed to archive unresolved sample");
+      return null;
     }
   }
 }

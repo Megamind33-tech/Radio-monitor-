@@ -4,6 +4,7 @@ import {
   Activity, 
   Settings, 
   History, 
+  ArrowLeft,
   Plus, 
   RefreshCw, 
   ExternalLink,
@@ -12,20 +13,14 @@ import {
   CheckCircle2,
   AlertCircle,
   BarChart3,
+  Download,
+  Eye,
+  MoreHorizontal,
   Globe,
   Music,
   LineChart
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer 
-} from 'recharts';
 
 // --- Types ---
 interface Station {
@@ -101,6 +96,9 @@ interface SongSpinRow {
   playCount: number;
   lastPlayed: string;
   firstPlayed: string;
+  mixRuleApplied?: string | null;
+  mixSplitConfidence?: number | null;
+  originalCombinedRaw?: string | null;
 }
 
 interface DependencyStatus {
@@ -119,6 +117,8 @@ interface DependencyStatus {
   fingerprintReady: boolean;
   missing: string[];
 }
+
+type StationListFilter = 'all' | 'running' | 'degraded' | 'inactive' | 'unknown';
 
 const REQUESTED_STATION_PRIORITY: string[] = [
   'znbc radio 1',
@@ -154,6 +154,31 @@ function normalizeStationName(value: string): string {
     .trim();
 }
 
+function formatMethod(method: string) {
+  if (method === 'stream_metadata') return 'Metadata';
+  if (method === 'fingerprint_acoustid') return 'Fingerprint';
+  if (method === 'catalog_lookup') return 'Catalog';
+  return method;
+}
+
+function parseStationHash(): string | null {
+  if (typeof window === 'undefined') return null;
+  const match = window.location.hash.match(/^#\/stations\/([^?]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function setStationHash(stationId?: string) {
+  if (typeof window === 'undefined') return;
+  window.location.hash = stationId ? `#/stations/${encodeURIComponent(stationId)}` : '#/stations';
+}
+
+function stationGroup(station: Station): Exclude<StationListFilter, 'all'> {
+  if (!station.isActive || station.monitorState === 'INACTIVE') return 'inactive';
+  if (station.monitorState === 'DEGRADED') return 'degraded';
+  if (!station.monitorState || station.monitorState === 'UNKNOWN') return 'unknown';
+  return 'running';
+}
+
 // --- Components ---
 
 export default function App() {
@@ -174,6 +199,13 @@ export default function App() {
   const [spinSummaries, setSpinSummaries] = useState<StationSpinSummary[]>([]);
   const [songSpins, setSongSpins] = useState<SongSpinRow[]>([]);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [stationSearch, setStationSearch] = useState('');
+  const [stationFilter, setStationFilter] = useState<StationListFilter>('all');
+  const [stationPageId, setStationPageId] = useState<string | null>(() => parseStationHash());
+  const [stationPageLogs, setStationPageLogs] = useState<DetectionLog[]>([]);
+  const [stationPageSongSpins, setStationPageSongSpins] = useState<SongSpinRow[]>([]);
+  const [stationPageLoading, setStationPageLoading] = useState(false);
+  const [stationPageError, setStationPageError] = useState<string | null>(null);
 
   const fetchData = async () => {
     try {
@@ -232,6 +264,45 @@ export default function App() {
     }
   };
 
+  const fetchStationPageData = React.useCallback(async (stationId: string) => {
+    setStationPageLoading(true);
+    setStationPageError(null);
+    try {
+      const [logsRes, songsRes] = await Promise.all([
+        fetch(`/api/stations/${encodeURIComponent(stationId)}/logs?take=300`),
+        fetch(`/api/analytics/songs?stationId=${encodeURIComponent(stationId)}&limit=1200`),
+      ]);
+      if (!logsRes.ok) throw new Error(`Failed loading station logs (HTTP ${logsRes.status})`);
+      if (!songsRes.ok) throw new Error(`Failed loading station songs (HTTP ${songsRes.status})`);
+      const logsData = await logsRes.json();
+      const songsData = await songsRes.json();
+      setStationPageLogs(Array.isArray(logsData) ? logsData : []);
+      setStationPageSongSpins(Array.isArray(songsData) ? songsData : []);
+    } catch (error) {
+      setStationPageError(error instanceof Error ? error.message : 'Failed loading station page data');
+    } finally {
+      setStationPageLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const syncFromHash = () => {
+      setStationPageId(parseStationHash());
+    };
+    if (typeof window !== 'undefined') {
+      if (!window.location.hash) {
+        setStationHash();
+      } else {
+        syncFromHash();
+      }
+      window.addEventListener('hashchange', syncFromHash);
+      return () => {
+        window.removeEventListener('hashchange', syncFromHash);
+      };
+    }
+    return () => undefined;
+  }, []);
+
   useEffect(() => {
     fetchData();
     fetchDependencies();
@@ -244,7 +315,24 @@ export default function App() {
     if (activeTab === 'analytics') {
       fetchSongAnalytics();
     }
-  }, [activeTab, selectedStationId]);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!stationPageId || activeTab !== 'stations') return;
+    fetchStationPageData(stationPageId);
+    const interval = setInterval(() => {
+      fetchStationPageData(stationPageId);
+    }, HISTORY_REFRESH_MS);
+    return () => clearInterval(interval);
+  }, [stationPageId, activeTab, fetchStationPageData]);
+
+  useEffect(() => {
+    if (!stationPageId) {
+      setStationPageLogs([]);
+      setStationPageSongSpins([]);
+      setStationPageError(null);
+    }
+  }, [stationPageId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -263,6 +351,9 @@ export default function App() {
       }
       if (activeTab === 'analytics') {
         void fetchSongAnalytics();
+      }
+      if (activeTab === 'stations' && stationPageId && (!stationId || stationId === stationPageId)) {
+        void fetchStationPageData(stationPageId);
       }
     };
 
@@ -307,7 +398,7 @@ export default function App() {
       if (fallbackTimer) clearInterval(fallbackTimer);
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [activeTab, selectedStationId]);
+  }, [activeTab, selectedStationId, stationPageId, fetchStationPageData]);
 
   useEffect(() => {
     if (activeTab !== 'history') return;
@@ -337,12 +428,45 @@ export default function App() {
     });
   }, [stations]);
 
-  const formatMethod = (method: string) => {
-    if (method === 'stream_metadata') return 'Metadata';
-    if (method === 'fingerprint_acoustid') return 'Fingerprint';
-    if (method === 'catalog_lookup') return 'Catalog';
-    return method;
-  };
+  const stationById = new Map(orderedStations.map((station) => [station.id, station]));
+
+  const stateCounts = React.useMemo(() => {
+    const counts: Record<StationListFilter, number> = {
+      all: orderedStations.length,
+      running: 0,
+      degraded: 0,
+      inactive: 0,
+      unknown: 0,
+    };
+    for (const station of orderedStations) {
+      counts[stationGroup(station)] += 1;
+    }
+    return counts;
+  }, [orderedStations]);
+
+  const filteredStations = React.useMemo(() => {
+    const searchQuery = stationSearch.trim().toLowerCase();
+    return orderedStations.filter((station) => {
+      if (stationFilter !== 'all' && stationGroup(station) !== stationFilter) {
+        return false;
+      }
+      if (!searchQuery) return true;
+
+      const haystack = [
+        station.id,
+        station.name,
+        station.country,
+        station.province || '',
+        station.district || '',
+        station.frequencyMhz || '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(searchQuery);
+    });
+  }, [orderedStations, stationFilter, stationSearch]);
+
+  const activeStation = stationPageId ? stationById.get(stationPageId) || null : null;
 
   return (
     <div className="min-h-screen bg-brand-bg text-gray-100 selection:bg-brand-cyan/30">
@@ -370,14 +494,18 @@ export default function App() {
       </nav>
 
       {/* Main Content */}
-      <main className="pl-32 pr-8 py-12 max-w-7xl mx-auto">
+      <main className="pl-28 pr-6 py-10 max-w-[1650px] mx-auto">
         {/* Header */}
-        <header className="mb-12 flex justify-between items-end">
+        <header className="mb-8 flex flex-wrap justify-between items-end gap-6">
           <div>
             <h1 className="text-4xl font-bold tracking-tight mb-2 flex items-center gap-3">
               Radio Pulse <span className="text-brand-cyan">Monitor</span>
             </h1>
-            <p className="text-gray-400">Production-grade MVP for radio now-playing detection.</p>
+            <p className="text-gray-400">
+              {activeTab === 'stations' && stationPageId
+                ? 'Station profile, logs, and per-station export.'
+                : 'Table-driven station operations and reliable song detection.'}
+            </p>
           </div>
           
           <div className="flex gap-4">
@@ -394,19 +522,47 @@ export default function App() {
           </div>
         </header>
 
-        {activeTab === 'stations' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <AnimatePresence mode="popLayout">
-              {orderedStations.map((station) => (
-                <StationCard 
-                  key={station.id} 
-                  station={station} 
-                  spin={spinByStation.get(station.id)}
-                  onProbe={() => fetchData()} 
-                />
-              ))}
-            </AnimatePresence>
+        {activeTab === 'stations' && stationPageId && activeStation && (
+          <StationDetailPage
+            station={activeStation}
+            spin={spinByStation.get(activeStation.id)}
+            logs={stationPageLogs}
+            songSpins={stationPageSongSpins}
+            loading={stationPageLoading}
+            error={stationPageError}
+            onBack={() => setStationHash()}
+            onRefreshAll={fetchData}
+            onRefreshStation={() => fetchStationPageData(activeStation.id)}
+          />
+        )}
+
+        {activeTab === 'stations' && stationPageId && !activeStation && (
+          <div className="bg-white/5 border border-white/10 rounded-3xl p-10 text-center">
+            <h2 className="text-xl font-semibold">Station page not found</h2>
+            <p className="text-sm text-gray-400 mt-2">This station may have been removed or hidden.</p>
+            <button
+              type="button"
+              onClick={() => setStationHash()}
+              className="mt-5 px-4 py-2 rounded-xl border border-white/10 bg-black/30 hover:bg-black/50"
+            >
+              Back to station list
+            </button>
           </div>
+        )}
+
+        {activeTab === 'stations' && !stationPageId && (
+          <StationsManagementTable
+            loading={loading}
+            stations={filteredStations}
+            spinByStation={spinByStation}
+            stateCounts={stateCounts}
+            stationSearch={stationSearch}
+            stationFilter={stationFilter}
+            onSearchChange={setStationSearch}
+            onFilterChange={setStationFilter}
+            onOpenStation={(id) => setStationHash(id)}
+            onRefreshAll={fetchData}
+          />
         )}
 
         {activeTab === 'analytics' && (
@@ -415,40 +571,32 @@ export default function App() {
               <div>
                 <h2 className="text-xl font-semibold flex items-center gap-2">
                   <BarChart3 className="w-5 h-5 text-brand-cyan" />
-                  Song spins (from real detections)
+                  Song spins (all stations)
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">
-                  Play counts are derived from stored detection logs only — no invented spins. FM frequency is parsed from the station name when present (not from the audio stream).
+                  Per-station CSV exports now live on each station page so song extraction is not one massive file.
                 </p>
               </div>
-              <div className="flex gap-2">
-                <a
-                  href="/api/export/songs.csv?stationId=all&limit=50000"
-                  className="px-4 py-2 rounded-xl bg-brand-cyan text-black font-semibold text-sm hover:brightness-110"
-                >
-                  Download Excel (CSV)
-                </a>
-                <button
-                  type="button"
-                  onClick={() => fetchSongAnalytics()}
-                  className="px-4 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50"
-                >
-                  Refresh
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => fetchSongAnalytics()}
+                className="px-4 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50"
+              >
+                Refresh
+              </button>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="w-full text-left text-sm table-fixed min-w-[980px]">
                 <thead>
                   <tr className="border-b border-white/5 text-gray-500">
-                    <th className="pb-3 font-medium">Station</th>
-                    <th className="pb-3 font-medium">Province</th>
-                    <th className="pb-3 font-medium">District</th>
-                    <th className="pb-3 font-medium">Title</th>
-                    <th className="pb-3 font-medium">Artist</th>
-                    <th className="pb-3 font-medium">Album</th>
-                    <th className="pb-3 font-medium text-right">Plays</th>
+                    <th className="pb-3 font-medium w-[20%]">Station</th>
+                    <th className="pb-3 font-medium w-[13%]">Province</th>
+                    <th className="pb-3 font-medium w-[13%]">District</th>
+                    <th className="pb-3 font-medium w-[20%]">Title</th>
+                    <th className="pb-3 font-medium w-[16%]">Artist</th>
+                    <th className="pb-3 font-medium w-[12%]">Album</th>
+                    <th className="pb-3 font-medium text-right w-[6%]">Plays</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -463,12 +611,12 @@ export default function App() {
                       const st = stations.find((s) => s.id === row.stationId);
                       return (
                         <tr key={`${row.stationId}-${row.title}-${i}`} className="border-b border-white/5 hover:bg-white/5">
-                          <td className="py-3 font-medium">{st?.name ?? row.stationId}</td>
-                          <td className="py-3 text-gray-400">{st?.province || '—'}</td>
-                          <td className="py-3 text-gray-400">{st?.district || '—'}</td>
-                          <td className="py-3">{row.title || '—'}</td>
-                          <td className="py-3 text-gray-400">{row.artist || '—'}</td>
-                          <td className="py-3 text-gray-500">{row.album || '—'}</td>
+                          <td className="py-3 font-medium truncate pr-2" title={st?.name ?? row.stationId}>{st?.name ?? row.stationId}</td>
+                          <td className="py-3 text-gray-400 truncate pr-2" title={st?.province || '—'}>{st?.province || '—'}</td>
+                          <td className="py-3 text-gray-400 truncate pr-2" title={st?.district || '—'}>{st?.district || '—'}</td>
+                          <td className="py-3 truncate pr-2" title={row.title || '—'}>{row.title || '—'}</td>
+                          <td className="py-3 text-gray-400 truncate pr-2" title={row.artist || '—'}>{row.artist || '—'}</td>
+                          <td className="py-3 text-gray-500 truncate pr-2" title={row.album || '—'}>{row.album || '—'}</td>
                           <td className="py-3 text-right font-mono">{row.playCount}</td>
                         </tr>
                       );
@@ -513,26 +661,26 @@ export default function App() {
              </div>
              
              <div className="overflow-x-auto">
-                <table className="w-full text-left">
+                <table className="w-full text-left table-fixed min-w-[980px]">
                   <thead>
                     <tr className="border-b border-white/5 text-gray-500 text-sm">
-                      <th className="pb-4 font-medium">Time</th>
-                      <th className="pb-4 font-medium">Station</th>
-                      <th className="pb-4 font-medium">Track Info</th>
-                      <th className="pb-4 font-medium">Method</th>
-                      <th className="pb-4 font-medium">Status</th>
+                      <th className="pb-4 font-medium w-[18%]">Time</th>
+                      <th className="pb-4 font-medium w-[20%]">Station</th>
+                      <th className="pb-4 font-medium w-[42%]">Track Info</th>
+                      <th className="pb-4 font-medium w-[12%]">Method</th>
+                      <th className="pb-4 font-medium w-[8%]">Status</th>
                     </tr>
                   </thead>
                   <tbody className="text-sm">
                     {logs.map((log) => (
                       <tr key={log.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
                         <td className="py-4 text-gray-400 whitespace-nowrap">{new Date(log.observedAt).toLocaleString()}</td>
-                        <td className="py-4 font-medium">{log.station?.name || stationNameById.get(log.stationId) || "Unknown station"}</td>
+                        <td className="py-4 font-medium truncate pr-2" title={log.station?.name || stationNameById.get(log.stationId) || "Unknown station"}>{log.station?.name || stationNameById.get(log.stationId) || "Unknown station"}</td>
                         <td className="py-4">
-                          <div className="flex flex-col">
-                            <span className="font-semibold group-hover:text-brand-cyan transition-colors">{log.titleFinal || "Unknown track"}</span>
-                            <span className="text-xs text-gray-500">{log.artistFinal || "Unknown artist"}</span>
-                            <span className="text-xs text-gray-600">
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-semibold group-hover:text-brand-cyan transition-colors truncate" title={log.titleFinal || "Unknown track"}>{log.titleFinal || "Unknown track"}</span>
+                            <span className="text-xs text-gray-500 truncate" title={log.artistFinal || "Unknown artist"}>{log.artistFinal || "Unknown artist"}</span>
+                            <span className="text-xs text-gray-600 truncate">
                               {log.genreFinal ? `Genre: ${log.genreFinal}` : ''}
                               {log.sourceProvider ? `${log.genreFinal ? ' • ' : ''}Source: ${log.sourceProvider}` : ''}
                             </span>
@@ -711,6 +859,676 @@ export default function App() {
   );
 }
 
+
+function StationsManagementTable({
+  loading,
+  stations,
+  spinByStation,
+  stateCounts,
+  stationSearch,
+  stationFilter,
+  onSearchChange,
+  onFilterChange,
+  onOpenStation,
+  onRefreshAll,
+}: {
+  loading: boolean;
+  stations: Station[];
+  spinByStation: Map<string, StationSpinSummary>;
+  stateCounts: Record<StationListFilter, number>;
+  stationSearch: string;
+  stationFilter: StationListFilter;
+  onSearchChange: (value: string) => void;
+  onFilterChange: (value: StationListFilter) => void;
+  onOpenStation: (stationId: string) => void;
+  onRefreshAll: () => void;
+}) {
+  const filters: Array<{ key: StationListFilter; label: string }> = [
+    { key: 'all', label: 'All-State' },
+    { key: 'running', label: 'Running' },
+    { key: 'degraded', label: 'Degraded' },
+    { key: 'inactive', label: 'Paused' },
+    { key: 'unknown', label: 'Other' },
+  ];
+
+  return (
+    <div className="bg-white/5 border border-white/10 rounded-3xl p-6 lg:p-8 backdrop-blur-sm space-y-5">
+      <div className="flex flex-wrap gap-2">
+        {filters.map((filter) => {
+          const active = stationFilter === filter.key;
+          return (
+            <button
+              key={filter.key}
+              type="button"
+              onClick={() => onFilterChange(filter.key)}
+              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs border transition-colors ${
+                active
+                  ? 'bg-brand-cyan/20 border-brand-cyan/40 text-brand-cyan'
+                  : 'bg-black/30 border-white/10 text-gray-300 hover:bg-black/50'
+              }`}
+            >
+              <span>{filter.label}</span>
+              <span className="px-1.5 py-0.5 rounded-md bg-white/10 text-[10px]">{stateCounts[filter.key]}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[250px]">
+          <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            value={stationSearch}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Search station name, country, province, district, frequency, or ID"
+            className="w-full bg-black/40 border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none focus:border-brand-cyan/40"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={onRefreshAll}
+          className="px-4 py-2.5 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50"
+        >
+          Refresh
+        </button>
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border border-white/5">
+        <table className="w-full text-sm min-w-[1200px] table-fixed">
+          <thead>
+            <tr className="border-b border-white/10 text-left text-gray-400">
+              <th className="py-3 px-3 font-medium w-[12%]">Station ID</th>
+              <th className="py-3 px-3 font-medium w-[20%]">Name</th>
+              <th className="py-3 px-3 font-medium w-[10%]">Country</th>
+              <th className="py-3 px-3 font-medium w-[14%]">Location</th>
+              <th className="py-3 px-3 font-medium w-[22%]">Now playing</th>
+              <th className="py-3 px-3 font-medium w-[10%]">State</th>
+              <th className="py-3 px-3 font-medium w-[6%]">Plays</th>
+              <th className="py-3 px-3 font-medium text-right w-[6%]">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stations.map((station) => (
+              <StationTableRow
+                key={station.id}
+                station={station}
+                spin={spinByStation.get(station.id)}
+                onOpenStation={onOpenStation}
+                onRefreshAll={onRefreshAll}
+              />
+            ))}
+            {!loading && stations.length === 0 && (
+              <tr>
+                <td colSpan={8} className="py-10 text-center text-gray-500">
+                  No stations found for the current filter/search.
+                </td>
+              </tr>
+            )}
+            {loading && (
+              <tr>
+                <td colSpan={8} className="py-10 text-center text-gray-500">
+                  Loading stations…
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function StationTableRow({
+  station,
+  spin,
+  onOpenStation,
+  onRefreshAll,
+}: {
+  station: Station;
+  spin?: StationSpinSummary;
+  onOpenStation: (stationId: string) => void;
+  onRefreshAll: () => void;
+}) {
+  const [probing, setProbing] = useState(false);
+  const [toggling, setToggling] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const lastPoll = station.lastPollAt ? new Date(station.lastPollAt) : null;
+  const pollOk = station.lastPollStatus === 'ok';
+  const pollErr = station.lastPollStatus === 'error';
+  const pollMs = (station.pollIntervalSeconds || 60) * 1000;
+  const stalePoll =
+    lastPoll != null && Number.isFinite(lastPoll.getTime()) && Date.now() - lastPoll.getTime() > Math.max(120_000, pollMs * 4);
+  const badge = monitorBadge(station, pollErr, stalePoll, pollOk, lastPoll);
+
+  const handleProbe = async () => {
+    setProbing(true);
+    try {
+      await fetch(`/api/stations/${station.id}/probe`, { method: 'POST' });
+      onRefreshAll();
+    } finally {
+      setTimeout(() => setProbing(false), 600);
+    }
+  };
+
+  const handleToggle = async () => {
+    setToggling(true);
+    try {
+      await fetch(`/api/stations/${station.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: !station.isActive }),
+      });
+      onRefreshAll();
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [station.id]);
+
+  return (
+    <tr className="border-b border-white/5 hover:bg-white/5">
+      <td className="py-3 px-3 text-xs text-gray-400 font-mono whitespace-nowrap truncate" title={station.id}>{station.id}</td>
+      <td className="py-3 px-3 min-w-0">
+        <div className="font-medium">{station.name}</div>
+        <div className="text-[11px] text-gray-500 mt-0.5 truncate">{station.frequencyMhz ? `${station.frequencyMhz} MHz` : 'Frequency not set'}</div>
+      </td>
+      <td className="py-3 px-3 text-gray-300 truncate" title={station.country}>{station.country}</td>
+      <td className="py-3 px-3 text-gray-400 truncate" title={[station.province, station.district].filter(Boolean).join(' / ') || '—'}>
+        {[station.province, station.district].filter(Boolean).join(' / ') || '—'}
+      </td>
+      <td className="py-3 px-3 min-w-0">
+        <div className="font-medium text-gray-200 truncate" title={station.currentNowPlaying?.title || '—'}>{station.currentNowPlaying?.title || '—'}</div>
+        <div className="text-xs text-gray-500 truncate" title={station.currentNowPlaying?.artist || 'No current track'}>{station.currentNowPlaying?.artist || 'No current track'}</div>
+      </td>
+      <td className="py-3 px-3">
+        <span className={`text-[11px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg border ${badge.className}`}>
+          {badge.text}
+        </span>
+      </td>
+      <td className="py-3 px-3 text-gray-300 font-mono whitespace-nowrap">{spin?.detectionCount ?? 0}</td>
+      <td className="py-3 px-3">
+        <div className="flex justify-end items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenStation(station.id)}
+            className="px-2.5 py-1.5 rounded-lg border border-brand-cyan/30 text-brand-cyan hover:bg-brand-cyan/10 text-xs inline-flex items-center gap-1"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            View
+          </button>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label="More actions"
+              onClick={() => setMenuOpen((open) => !open)}
+              className="px-2.5 py-1.5 rounded-lg border border-white/10 bg-black/30 hover:bg-black/50 text-xs inline-flex items-center gap-1"
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" />
+              More
+            </button>
+            {menuOpen ? (
+              <div className="absolute right-0 mt-1 w-44 bg-zinc-900 border border-white/10 rounded-xl shadow-xl z-20 p-1">
+                <button
+                  type="button"
+                  disabled={probing || !station.isActive}
+                  onClick={async () => {
+                    setMenuOpen(false);
+                    await handleProbe();
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-lg text-xs hover:bg-white/10 disabled:opacity-40"
+                >
+                  {probing ? 'Probing…' : 'Probe now'}
+                </button>
+                <button
+                  type="button"
+                  disabled={toggling}
+                  onClick={async () => {
+                    setMenuOpen(false);
+                    await handleToggle();
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-lg text-xs hover:bg-white/10 disabled:opacity-40"
+                >
+                  {station.isActive ? 'Pause monitoring' : 'Resume monitoring'}
+                </button>
+                <a
+                  href={station.streamUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setMenuOpen(false)}
+                  className="block px-3 py-2 rounded-lg text-xs hover:bg-white/10 text-gray-200"
+                >
+                  Open stream URL
+                </a>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function StationDetailPage({
+  station,
+  spin,
+  logs,
+  songSpins,
+  loading,
+  error,
+  onBack,
+  onRefreshAll,
+  onRefreshStation,
+}: {
+  station: Station;
+  spin?: StationSpinSummary;
+  logs: DetectionLog[];
+  songSpins: SongSpinRow[];
+  loading: boolean;
+  error: string | null;
+  onBack: () => void;
+  onRefreshAll: () => void;
+  onRefreshStation: () => void;
+}) {
+  const [probing, setProbing] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [streamEdit, setStreamEdit] = useState(station.streamUrl);
+  const [savingUrl, setSavingUrl] = useState(false);
+  const [refreshingUrl, setRefreshingUrl] = useState(false);
+  const [toggling, setToggling] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [songSearch, setSongSearch] = useState('');
+  const [songFilter, setSongFilter] = useState<'all' | 'withArtist' | 'titleOnly' | 'mixedSplit'>('all');
+
+  useEffect(() => {
+    setStreamEdit(station.streamUrl);
+  }, [station.id, station.streamUrl]);
+
+  const lastPoll = station.lastPollAt ? new Date(station.lastPollAt) : null;
+  const pollOk = station.lastPollStatus === 'ok';
+  const pollErr = station.lastPollStatus === 'error';
+  const pollMs = (station.pollIntervalSeconds || 60) * 1000;
+  const stalePoll =
+    lastPoll != null && Number.isFinite(lastPoll.getTime()) && Date.now() - lastPoll.getTime() > Math.max(120_000, pollMs * 4);
+  const badge = monitorBadge(station, pollErr, stalePoll, pollOk, lastPoll);
+
+  const handleProbe = async () => {
+    setProbing(true);
+    setPageError(null);
+    try {
+      const res = await fetch(`/api/stations/${station.id}/probe`, { method: 'POST' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setPageError(typeof body.error === 'string' ? body.error : `Probe failed (${res.status})`);
+      }
+      onRefreshAll();
+      onRefreshStation();
+    } catch (err) {
+      setPageError(err instanceof Error ? err.message : 'Probe failed');
+    } finally {
+      setTimeout(() => setProbing(false), 700);
+    }
+  };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(streamEdit);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const filteredSongSpins = React.useMemo(() => {
+    const query = songSearch.trim().toLowerCase();
+    return songSpins.filter((row) => {
+      if (songFilter === 'withArtist' && !row.artist) return false;
+      if (songFilter === 'titleOnly' && !!row.artist) return false;
+      if (songFilter === 'mixedSplit' && !row.mixRuleApplied) return false;
+
+      if (!query) return true;
+      const haystack = [
+        row.title || '',
+        row.artist || '',
+        row.album || '',
+        row.originalCombinedRaw || '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [songSpins, songSearch, songFilter]);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-white/10 bg-black/30 hover:bg-black/50 text-sm"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to stations
+        </button>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href={`/api/export/logs.xlsx?stationId=${encodeURIComponent(station.id)}&limit=50000`}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-cyan text-black font-semibold text-sm hover:brightness-110"
+          >
+            <Download className="w-4 h-4" />
+            Export {station.name} logs (XLSX template)
+          </a>
+          <button
+            type="button"
+            onClick={onRefreshStation}
+            className="px-3 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50"
+          >
+            Refresh page
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white/5 border border-white/10 rounded-3xl p-6 md:p-8 space-y-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-3xl font-bold">{station.name}</h2>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-gray-400">
+              <span className="px-2 py-1 rounded-lg border border-white/10 bg-black/30">{station.country}</span>
+              {station.province ? <span>{station.province}</span> : null}
+              {station.district ? <span>/ {station.district}</span> : null}
+              {station.frequencyMhz ? <span>• {station.frequencyMhz} MHz</span> : null}
+            </div>
+          </div>
+
+          <div className="text-right space-y-1 text-xs text-gray-500">
+            <div><span className={`px-2 py-1 rounded-lg border font-semibold uppercase tracking-wide ${badge.className}`}>{badge.text}</span></div>
+            <div>Last check: {station.lastPollAt ? new Date(station.lastPollAt).toLocaleString() : '—'}</div>
+            <div>Last song: {station.lastSongDetectedAt ? new Date(station.lastSongDetectedAt).toLocaleString() : '—'}</div>
+            <div>Matched plays: {spin?.detectionCount ?? 0}</div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={handleProbe}
+            disabled={probing || !station.isActive}
+            className="px-3 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50 disabled:opacity-40"
+          >
+            {probing ? 'Probing…' : 'Probe now'}
+          </button>
+          <button
+            type="button"
+            disabled={toggling}
+            onClick={async () => {
+              setToggling(true);
+              setPageError(null);
+              try {
+                const res = await fetch(`/api/stations/${station.id}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ isActive: !station.isActive }),
+                });
+                if (!res.ok) {
+                  const body = await res.json().catch(() => ({}));
+                  setPageError(typeof body.error === 'string' ? body.error : `HTTP ${res.status}`);
+                  return;
+                }
+                onRefreshAll();
+              } catch (apiError) {
+                setPageError(apiError instanceof Error ? apiError.message : 'Update failed');
+              } finally {
+                setToggling(false);
+              }
+            }}
+            className="px-3 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50 disabled:opacity-40"
+          >
+            {station.isActive ? 'Pause monitoring' : 'Resume monitoring'}
+          </button>
+          <a
+            href={station.streamUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50 inline-flex items-center gap-2"
+          >
+            Open stream <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div className="bg-black/30 rounded-2xl p-5 border border-white/10">
+            <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold mb-3">Current now playing</div>
+            {station.currentNowPlaying ? (
+              <div className="flex items-start gap-3">
+                <div className="w-12 h-12 rounded-xl border border-white/10 bg-gradient-to-br from-brand-cyan/20 to-brand-purple/20 flex items-center justify-center">
+                  <Music className="w-6 h-6 text-brand-cyan" />
+                </div>
+                <div>
+                  <p className="font-semibold">{station.currentNowPlaying.title}</p>
+                  <p className="text-sm text-gray-400">{station.currentNowPlaying.artist}</p>
+                  <p className="text-xs text-gray-500 mt-1">Detected {new Date(station.currentNowPlaying.updatedAt).toLocaleString()}</p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">No current metadata track. Probe to refresh.</p>
+            )}
+          </div>
+
+          <div className="bg-black/30 rounded-2xl p-5 border border-white/10 space-y-3">
+            <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Station stream URL</div>
+            <textarea
+              rows={3}
+              value={streamEdit}
+              onChange={(event) => setStreamEdit(event.target.value)}
+              className="w-full text-xs font-mono bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-gray-300 outline-none focus:border-brand-cyan/50 resize-y"
+              spellCheck={false}
+            />
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={copyToClipboard}
+                className={`p-2 rounded-lg text-xs flex items-center gap-1 ${copied ? 'bg-green-500/20 text-green-500' : 'bg-white/5 text-gray-500 hover:text-white'}`}
+              >
+                {copied ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                Copy
+              </button>
+              <button
+                type="button"
+                disabled={savingUrl || streamEdit.trim() === station.streamUrl}
+                onClick={async () => {
+                  setSavingUrl(true);
+                  setPageError(null);
+                  try {
+                    const res = await fetch(`/api/stations/${station.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ streamUrl: streamEdit.trim() }),
+                    });
+                    const body = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      setPageError(typeof body.error === 'string' ? body.error : 'Invalid stream URL');
+                      return;
+                    }
+                    onRefreshAll();
+                  } catch (saveError) {
+                    setPageError(saveError instanceof Error ? saveError.message : 'Save failed');
+                  } finally {
+                    setSavingUrl(false);
+                  }
+                }}
+                className="px-3 py-2 rounded-lg text-xs font-semibold bg-brand-purple/30 border border-brand-purple/40 hover:bg-brand-purple/50 disabled:opacity-40"
+              >
+                {savingUrl ? 'Saving…' : 'Save URL'}
+              </button>
+              <button
+                type="button"
+                disabled={refreshingUrl}
+                onClick={async () => {
+                  setRefreshingUrl(true);
+                  setPageError(null);
+                  try {
+                    const res = await fetch(`/api/stations/${station.id}/refresh-stream`, { method: 'POST' });
+                    const body = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      setPageError(typeof body.error === 'string' ? body.error : `HTTP ${res.status}`);
+                      return;
+                    }
+                    if (body.streamUrl) setStreamEdit(String(body.streamUrl));
+                    if (!body.updated) {
+                      setPageError(typeof body.message === 'string' ? body.message : 'No replacement stream found from source hints');
+                    }
+                    onRefreshAll();
+                  } catch (refreshError) {
+                    setPageError(refreshError instanceof Error ? refreshError.message : 'Refresh failed');
+                  } finally {
+                    setRefreshingUrl(false);
+                  }
+                }}
+                className="px-3 py-2 rounded-lg text-xs font-semibold border border-white/10 bg-black/30 hover:bg-black/50 disabled:opacity-40"
+              >
+                {refreshingUrl ? 'Refreshing…' : 'Auto-refresh from source'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {(pageError || error || station.monitorStateReason || station.lastPollError) && (
+          <div className="space-y-1 text-sm">
+            {pageError ? <p className="text-amber-300">{pageError}</p> : null}
+            {error ? <p className="text-amber-300">{error}</p> : null}
+            {station.monitorStateReason ? <p className="text-amber-200">Reason: {station.monitorStateReason}</p> : null}
+            {station.lastPollError ? <p className="text-red-300">Last poll error: {station.lastPollError}</p> : null}
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">Logged songs for {station.name}</h3>
+            <span className="text-xs text-gray-500">{filteredSongSpins.length} / {songSpins.length} rows</span>
+          </div>
+          <div className="mb-4 flex flex-wrap gap-2 items-center">
+            <input
+              value={songSearch}
+              onChange={(event) => setSongSearch(event.target.value)}
+              placeholder="Search title / artist / album / raw metadata"
+              className="flex-1 min-w-[220px] bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan/50"
+            />
+            <select
+              value={songFilter}
+              onChange={(event) => setSongFilter(event.target.value as 'all' | 'withArtist' | 'titleOnly' | 'mixedSplit')}
+              className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan/50"
+            >
+              <option value="all">All songs</option>
+              <option value="withArtist">With artist</option>
+              <option value="titleOnly">Title only</option>
+              <option value="mixedSplit">Mixed-title splits</option>
+            </select>
+          </div>
+          <div className="overflow-x-auto max-h-[480px]">
+            <table className="w-full text-sm min-w-[760px] table-fixed">
+              <thead>
+                <tr className="border-b border-white/10 text-gray-400">
+                  <th className="py-2.5 text-left font-medium w-[28%]">Title</th>
+                  <th className="py-2.5 text-left font-medium w-[22%]">Artist</th>
+                  <th className="py-2.5 text-left font-medium w-[20%]">Album</th>
+                  <th className="py-2.5 text-left font-medium w-[22%]">Normalization</th>
+                  <th className="py-2.5 text-right font-medium w-[8%]">Plays</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredSongSpins.map((row, idx) => (
+                  <tr key={`${row.stationId}-${row.title}-${idx}`} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="py-2.5 truncate pr-2" title={row.title || '—'}>{row.title || '—'}</td>
+                    <td className="py-2.5 text-gray-400 truncate pr-2" title={row.artist || '—'}>{row.artist || '—'}</td>
+                    <td className="py-2.5 text-gray-500 truncate pr-2" title={row.album || '—'}>{row.album || '—'}</td>
+                    <td className="py-2.5 text-xs text-gray-500 truncate pr-2">
+                      {row.mixRuleApplied ? (
+                        <span className="inline-flex items-center gap-1">
+                          <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                            {row.mixRuleApplied}
+                          </span>
+                          {row.mixSplitConfidence != null ? (
+                            <span>{Math.round(row.mixSplitConfidence * 100)}%</span>
+                          ) : null}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="py-2.5 text-right font-mono">{row.playCount}</td>
+                  </tr>
+                ))}
+                {!loading && filteredSongSpins.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-gray-500">No songs match the current search/filter.</td>
+                  </tr>
+                )}
+                {loading && (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-gray-500">Loading station songs…</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">Recent detection logs</h3>
+            <span className="text-xs text-gray-500">{logs.length} rows</span>
+          </div>
+          <div className="overflow-x-auto max-h-[480px]">
+            <table className="w-full text-sm min-w-[560px] table-fixed">
+              <thead>
+                <tr className="border-b border-white/10 text-gray-400">
+                  <th className="py-2.5 text-left font-medium w-[24%]">Time</th>
+                  <th className="py-2.5 text-left font-medium w-[44%]">Track</th>
+                  <th className="py-2.5 text-left font-medium w-[18%]">Method</th>
+                  <th className="py-2.5 text-left font-medium w-[14%]">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((log) => (
+                  <tr key={log.id} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="py-2.5 text-gray-400 whitespace-nowrap">{new Date(log.observedAt).toLocaleString()}</td>
+                    <td className="py-2.5">
+                      <div className="truncate" title={log.titleFinal || 'Unknown track'}>{log.titleFinal || 'Unknown track'}</div>
+                      <div className="text-xs text-gray-500 truncate" title={log.artistFinal || 'Unknown artist'}>{log.artistFinal || 'Unknown artist'}</div>
+                    </td>
+                    <td className="py-2.5 text-xs text-gray-400">{formatMethod(log.detectionMethod)}</td>
+                    <td className="py-2.5">
+                      {log.status === 'matched' ? (
+                        <span className="text-green-400 inline-flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />Matched</span>
+                      ) : (
+                        <span className="text-yellow-300 inline-flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" />{log.status}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {!loading && logs.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="py-8 text-center text-gray-500">No logs yet for this station.</td>
+                  </tr>
+                )}
+                {loading && (
+                  <tr>
+                    <td colSpan={4} className="py-8 text-center text-gray-500">Loading station logs…</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function NavIcon({ icon, active, onClick, label }: any) {
   return (
     <button 
@@ -760,301 +1578,4 @@ function monitorBadge(station: Station, pollErr: boolean, stalePoll: boolean, po
   if (stalePoll) return { text: 'No recent poll', className: 'border-amber-500/40 text-amber-200' };
   if (pollOk || lastPoll) return { text: 'Active', className: 'border-green-500/30 text-green-300' };
   return { text: 'Starting…', className: 'border-white/10 text-gray-500' };
-}
-
-function StationCard({ station, spin, onProbe }: { station: Station, spin?: StationSpinSummary, onProbe: () => void }) {
-  const [probing, setProbing] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [streamEdit, setStreamEdit] = useState(station.streamUrl);
-  const [savingUrl, setSavingUrl] = useState(false);
-  const [refreshingUrl, setRefreshingUrl] = useState(false);
-  const [toggling, setToggling] = useState(false);
-  const [cardError, setCardError] = useState<string | null>(null);
-  const np = station.currentNowPlaying;
-
-  React.useEffect(() => {
-    setStreamEdit(station.streamUrl);
-  }, [station.streamUrl]);
-
-  const lastPoll = station.lastPollAt ? new Date(station.lastPollAt) : null;
-  const pollOk = station.lastPollStatus === 'ok';
-  const pollErr = station.lastPollStatus === 'error';
-  const pollMs = (station.pollIntervalSeconds || 60) * 1000;
-  const stalePoll =
-    lastPoll != null &&
-    Number.isFinite(lastPoll.getTime()) &&
-    Date.now() - lastPoll.getTime() > Math.max(120_000, pollMs * 4);
-  const badge = monitorBadge(station, pollErr, stalePoll, pollOk, lastPoll);
-
-  const handleProbe = async () => {
-    setProbing(true);
-    setCardError(null);
-    try {
-      const res = await fetch(`/api/stations/${station.id}/probe`, { method: 'POST' });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        setCardError(typeof j.error === 'string' ? j.error : `Probe failed (${res.status})`);
-      }
-      onProbe();
-    } catch (e) {
-      setCardError(e instanceof Error ? e.message : 'Probe failed');
-    } finally {
-      setTimeout(() => setProbing(false), 800);
-    }
-  };
-
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(streamEdit);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <motion.div 
-      layout
-      className="group bg-white/5 border border-white/10 hover:border-brand-cyan/30 rounded-[2.5rem] p-8 transition-all hover:bg-white/10 flex flex-col gap-8 relative overflow-hidden"
-    >
-      <div className="absolute top-0 right-0 p-8 flex flex-col items-end gap-2">
-        <div className={`w-2 h-2 rounded-full ${station.isActive && station.monitorState !== 'INACTIVE' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-        <span
-          className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-lg border ${badge.className}`}
-          title={station.monitorStateReason || station.lastPollError || undefined}
-        >
-          {badge.text}
-        </span>
-      </div>
-
-      <div className="flex justify-between items-start">
-        <div className="flex gap-4 items-center">
-          <div className="w-12 h-12 bg-black/40 rounded-2xl flex items-center justify-center border border-white/5">
-            <Globe className="w-6 h-6 text-gray-400" />
-          </div>
-          <div className="flex flex-col">
-            <h3 className="text-xl font-bold">{station.name}</h3>
-            {lastPoll ? (
-              <p className="text-[11px] text-gray-500 mt-0.5">
-                Last check: {lastPoll.toLocaleString()}
-                {station.pollIntervalSeconds != null ? ` · poll every ${station.pollIntervalSeconds}s` : ''}
-              </p>
-            ) : station.isActive ? (
-              <p className="text-[11px] text-gray-500 mt-0.5">Waiting for first poll…</p>
-            ) : null}
-            <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
-              <span className="px-1.5 py-0.5 bg-white/5 rounded border border-white/10 uppercase">{station.country}</span>
-              {station.province ? (
-                <>
-                  <span>•</span>
-                  <span className="text-gray-400">{station.province}</span>
-                </>
-              ) : null}
-              {station.district ? (
-                <>
-                  <span>•</span>
-                  <span className="text-gray-400">{station.district}</span>
-                </>
-              ) : null}
-              {station.frequencyMhz ? (
-                <>
-                  <span>•</span>
-                  <span className="text-amber-200/90">{station.frequencyMhz} MHz</span>
-                </>
-              ) : null}
-              <span>•</span>
-              <span>{station.isActive ? `State: ${station.monitorState || 'UNKNOWN'}` : 'Inactive'}</span>
-            </div>
-            <div className="text-[11px] text-gray-500 mt-1 space-y-0.5">
-              <p>Last checked: {station.lastPollAt ? new Date(station.lastPollAt).toLocaleString() : '—'}</p>
-              <p>Last healthy: {station.lastHealthyAt ? new Date(station.lastHealthyAt).toLocaleString() : '—'}</p>
-              <p>Last good audio: {station.lastGoodAudioAt ? new Date(station.lastGoodAudioAt).toLocaleString() : '—'}</p>
-              <p>Last song detected: {station.lastSongDetectedAt ? new Date(station.lastSongDetectedAt).toLocaleString() : '—'}</p>
-            </div>
-            {spin && spin.detectionCount > 0 ? (
-              <p className="text-[11px] text-gray-500 mt-1">
-                Total plays (matched): {spin.detectionCount} · distinct songs: {spin.uniqueSongs}
-              </p>
-            ) : null}
-          </div>
-        </div>
-        
-        <div className="flex gap-2">
-          <button
-            type="button"
-            title={station.isActive ? 'Pause monitoring' : 'Resume monitoring'}
-            onClick={async () => {
-              setToggling(true);
-              setCardError(null);
-              try {
-                const res = await fetch(`/api/stations/${station.id}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ isActive: !station.isActive }),
-                });
-                if (!res.ok) {
-                  const j = await res.json().catch(() => ({}));
-                  setCardError(typeof j.error === 'string' ? j.error : `HTTP ${res.status}`);
-                  return;
-                }
-                onProbe();
-              } catch (e) {
-                setCardError(e instanceof Error ? e.message : 'Update failed');
-              } finally {
-                setToggling(false);
-              }
-            }}
-            disabled={toggling}
-            className="px-3 py-2 text-xs font-semibold rounded-xl border border-white/10 bg-black/40 hover:bg-white/10 disabled:opacity-50"
-          >
-            {station.isActive ? 'Pause' : 'Resume'}
-          </button>
-          <button 
-            type="button"
-            onClick={handleProbe}
-            disabled={probing || !station.isActive}
-            className="p-3 bg-black/40 border border-white/10 rounded-2xl hover:bg-brand-cyan hover:text-black transition-all group/btn disabled:opacity-40"
-          >
-            <RefreshCw className={`w-5 h-5 ${probing ? 'animate-spin' : 'group-hover/btn:rotate-180 transition-transform duration-500'}`} />
-          </button>
-        </div>
-      </div>
-
-      <div className="space-y-4">
-        <div className="bg-black/30 rounded-3xl p-6 border border-white/5 space-y-4">
-          <div className="flex items-center justify-between text-[10px] text-gray-500 font-bold uppercase tracking-widest">
-            <span>Current Stream</span>
-            <div className="flex items-center gap-1 text-brand-cyan">
-               <BarChart3 className="w-3 h-3" />
-               LIVE
-            </div>
-          </div>
-
-          {np ? (
-            <div className="flex items-center gap-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
-              <div className="w-16 h-16 bg-gradient-to-br from-brand-cyan/20 to-brand-purple/20 rounded-2xl border border-white/10 flex items-center justify-center">
-                <Music className="w-8 h-8 text-brand-cyan" />
-              </div>
-              <div className="overflow-hidden">
-                <h4 className="text-xl font-bold truncate leading-tight mb-1">{np.title}</h4>
-                <p className="text-gray-400 truncate">{np.artist}</p>
-                {(np.genre || np.sourceProvider) && (
-                  <p className="text-xs text-gray-500 truncate">
-                    {np.genre ? `Genre: ${np.genre}` : ''}
-                    {np.sourceProvider ? `${np.genre ? ' • ' : ''}Source: ${np.sourceProvider}` : ''}
-                  </p>
-                )}
-                <p className="text-xs text-gray-500 mt-1">Detected {new Date(np.updatedAt).toLocaleTimeString()}</p>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-4 opacity-50">
-               <div className="w-16 h-16 bg-white/5 rounded-2xl animate-pulse" />
-               <div className="space-y-2">
-                  <div className="w-32 h-4 bg-white/5 rounded animate-pulse" />
-                  <div className="w-24 h-3 bg-white/5 rounded animate-pulse" />
-               </div>
-            </div>
-          )}
-        </div>
-
-        <div className="bg-black/20 rounded-2xl p-4 border border-white/5 flex flex-col gap-3">
-          <div className="flex justify-between items-center text-[10px] text-gray-500 font-bold uppercase tracking-widest">
-            <span>Stream URL (edit if the CDN link changed)</span>
-            <span className="font-mono lowercase opacity-50">{station.id}</span>
-          </div>
-          <textarea
-            value={streamEdit}
-            onChange={(e) => setStreamEdit(e.target.value)}
-            rows={2}
-            className="w-full text-xs font-mono bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-gray-300 outline-none focus:border-brand-cyan/50 resize-y min-h-[2.5rem]"
-            spellCheck={false}
-          />
-          <div className="flex flex-wrap gap-2 items-center">
-            <button
-              type="button"
-              onClick={copyToClipboard}
-              className={`p-2 rounded-lg text-xs flex items-center gap-1 ${copied ? 'bg-green-500/20 text-green-500' : 'bg-white/5 text-gray-500 hover:text-white'}`}
-            >
-              {copied ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              Copy
-            </button>
-            <button
-              type="button"
-              disabled={savingUrl || streamEdit.trim() === station.streamUrl}
-              onClick={async () => {
-                setSavingUrl(true);
-                setCardError(null);
-                try {
-                  const res = await fetch(`/api/stations/${station.id}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ streamUrl: streamEdit.trim() }),
-                  });
-                  const j = await res.json().catch(() => ({}));
-                  if (!res.ok) {
-                    setCardError(typeof j.error === 'string' ? j.error : 'Invalid stream URL');
-                    return;
-                  }
-                  onProbe();
-                } catch (e) {
-                  setCardError(e instanceof Error ? e.message : 'Save failed');
-                } finally {
-                  setSavingUrl(false);
-                }
-              }}
-              className="px-3 py-2 rounded-lg text-xs font-semibold bg-brand-purple/30 border border-brand-purple/40 hover:bg-brand-purple/50 disabled:opacity-40"
-            >
-              {savingUrl ? 'Saving…' : 'Save URL'}
-            </button>
-            <button
-              type="button"
-              disabled={refreshingUrl}
-              onClick={async () => {
-                setRefreshingUrl(true);
-                setCardError(null);
-                try {
-                  const res = await fetch(`/api/stations/${station.id}/refresh-stream`, { method: 'POST' });
-                  const j = await res.json().catch(() => ({}));
-                  if (!res.ok) {
-                    setCardError(typeof j.error === 'string' ? j.error : `HTTP ${res.status}`);
-                    return;
-                  }
-                  if (j.streamUrl) setStreamEdit(String(j.streamUrl));
-                  if (!j.updated) {
-                    setCardError(typeof j.message === 'string' ? j.message : 'No new URL from MyTuner/ORB/Streema hints');
-                  }
-                  onProbe();
-                } catch (e) {
-                  setCardError(e instanceof Error ? e.message : 'Refresh failed');
-                } finally {
-                  setRefreshingUrl(false);
-                }
-              }}
-              className="px-3 py-2 rounded-lg text-xs font-semibold border border-white/10 bg-black/30 hover:bg-black/50 disabled:opacity-40"
-            >
-              {refreshingUrl ? 'Refreshing…' : 'Auto-refresh from source'}
-            </button>
-          </div>
-          {station.streamRefreshedAt ? (
-            <p className="text-[10px] text-gray-600">URL auto-refreshed: {new Date(station.streamRefreshedAt).toLocaleString()}</p>
-          ) : null}
-          {cardError ? <p className="text-xs text-amber-300">{cardError}</p> : null}
-          {station.lastPollError && (pollErr || station.monitorState === 'DEGRADED' || station.monitorState === 'INACTIVE') ? (
-            <p className="text-[11px] text-red-300/90 break-words" title={station.lastPollError}>
-              {station.lastPollError.length > 220 ? `${station.lastPollError.slice(0, 220)}…` : station.lastPollError}
-            </p>
-          ) : null}
-          {station.monitorStateReason ? (
-            <p className="text-[11px] text-amber-200/90 break-words" title={station.monitorStateReason}>
-              Reason: {station.monitorStateReason}
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="flex justify-end items-center px-2">
-        <a href={station.streamUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-gray-400 hover:text-brand-cyan flex items-center gap-1.5 transition-colors font-medium">
-          Open Direct Stream <ExternalLink className="w-3.5 h-3.5" />
-        </a>
-      </div>
-    </motion.div>
-  );
 }
