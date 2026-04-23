@@ -32,10 +32,12 @@ export interface MatchResult {
   durationMs?: number;
   sourceProvider?:
     | 'acoustid'
+    | 'acoustid_open'
     | 'musicbrainz'
     | 'musicbrainz_search'
     | 'itunes_search'
     | 'deezer_search'
+    | 'theaudiodb_search'
     | 'stream_metadata'
     | 'recovery_reprocess';
   confidence: number;

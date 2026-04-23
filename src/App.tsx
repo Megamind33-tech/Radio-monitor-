@@ -1213,11 +1213,11 @@ function StationDetailPage({
 
         <div className="flex flex-wrap items-center gap-2">
           <a
-            href={`/api/export/songs.csv?stationId=${encodeURIComponent(station.id)}&limit=50000`}
+            href={`/api/export/logs.xlsx?stationId=${encodeURIComponent(station.id)}&limit=50000`}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-cyan text-black font-semibold text-sm hover:brightness-110"
           >
             <Download className="w-4 h-4" />
-            Export {station.name} songs (CSV)
+            Export {station.name} logs (XLSX template)
           </a>
           <button
             type="button"

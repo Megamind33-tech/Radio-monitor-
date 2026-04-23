@@ -18,9 +18,10 @@ export class AcoustidService {
   static async lookup(fp: FingerprintResult): Promise<MatchResult | null> {
     // Free for non-commercial use: register an app at https://acoustid.org/new-application
     // (Chromaprint/fpcalc is always local; only this HTTP lookup needs a client key.)
-    const apiKey = process.env.ACOUSTID_API_KEY;
+    const configuredClient = process.env.ACOUSTID_API_KEY;
+    const apiKey = configuredClient || process.env.ACOUSTID_OPEN_CLIENT;
     if (!apiKey) {
-      logger.warn("ACOUSTID_API_KEY not set, skipping AcoustID lookup (use MusicBrainz/iTunes/Deezer text fallbacks)");
+      logger.warn("No AcoustID client configured (set ACOUSTID_API_KEY or ACOUSTID_OPEN_CLIENT)");
       return null;
     }
 
@@ -67,9 +68,9 @@ export class AcoustidService {
         title: recording.title,
         artist: recording.artists?.[0]?.name,
         durationMs: durSec && durSec > 0 ? Math.round(durSec * 1000) : undefined,
-        sourceProvider: "acoustid",
+        sourceProvider: configuredClient ? "acoustid" : "acoustid_open",
         confidence: result.score,
-        reasonCode: 'fingerprint_acoustid'
+        reasonCode: configuredClient ? "fingerprint_acoustid" : "fingerprint_acoustid_open"
       };
 
       return match;
