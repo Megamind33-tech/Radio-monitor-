@@ -169,10 +169,12 @@ async function startServer() {
     const ffprobe = isCommandAvailable("ffprobe");
     const fpcalc = isCommandAvailable("fpcalc");
     const acoustidApiKeyConfigured = !!process.env.ACOUSTID_API_KEY;
+    const auddTokenConfigured = !!(process.env.AUDD_API_TOKEN || process.env.AUDD_TOKEN || "").trim();
     const musicbrainzUserAgentConfigured = !!process.env.MUSICBRAINZ_USER_AGENT;
     const catalogLookupReady = musicbrainzUserAgentConfigured;
     const freeApisEnabled = {
       acoustid: acoustidApiKeyConfigured,
+      audd: auddTokenConfigured,
       musicbrainz: musicbrainzUserAgentConfigured,
       itunesSearch: true,
       deezerSearch: process.env.DEEZER_LOOKUP_ENABLED !== "false",
@@ -195,7 +197,8 @@ async function startServer() {
       musicbrainzUserAgentConfigured,
       catalogLookupReady,
       freeApisEnabled,
-      fingerprintReady: ffmpeg && ffprobe && fpcalc && acoustidApiKeyConfigured,
+      fingerprintReady:
+        ffmpeg && ffprobe && fpcalc && (acoustidApiKeyConfigured || auddTokenConfigured),
       missing
     });
   });

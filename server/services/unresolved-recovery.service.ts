@@ -5,10 +5,11 @@ import { logger } from "../lib/logger.js";
 import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
 import { FingerprintService } from "./fingerprint.service.js";
 import { AcoustidService } from "./acoustid.service.js";
+import { AuddService } from "./audd.service.js";
 import { LocalFingerprintService } from "./local-fingerprint.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
-import { MatchResult } from "../types.js";
+import { MatchResult, type DetectionMethod } from "../types.js";
 
 function parseEnvInt(key: string, fallback: number): number {
   const raw = process.env[key];
@@ -33,6 +34,7 @@ export class UnresolvedRecoveryService {
       running: this.running,
       lastRunAt: this.lastRunAt,
       acoustidEnabled: !!process.env.ACOUSTID_API_KEY,
+      auddEnabled: !!(process.env.AUDD_API_TOKEN || process.env.AUDD_TOKEN || "").trim(),
       fpcalcExpected: true,
     };
   }
@@ -126,13 +128,43 @@ export class UnresolvedRecoveryService {
 
           // Try the self-learned library first — avoids hitting AcoustID/MB for repeat songs.
           let audioMatch: MatchResult | null = await LocalFingerprintService.lookup(fingerprint);
+          /** local | audd | acoustid — enrich() no longer overwrites audd/acoustid on sourceProvider. */
+          let audioChain: "local" | "audd" | "acoustid" | null = null;
+          if (audioMatch) {
+            audioChain = "local";
+          }
           let recoveredViaAcoustid = false;
           if (!audioMatch) {
-            const acoustid = await AcoustidService.lookup(fingerprint);
-            if (acoustid) {
-              audioMatch = await MusicbrainzService.enrich(acoustid);
-              recoveredViaAcoustid = !!audioMatch;
+            const auddFirst =
+              String(process.env.AUDD_BEFORE_ACOUSTID || "true").toLowerCase() !== "false";
+            const hasAudd = !!(process.env.AUDD_API_TOKEN || process.env.AUDD_TOKEN || "").trim();
+            const hasAcoustid = !!process.env.ACOUSTID_API_KEY;
+
+            const tryAuddFile = async () => {
+              if (!hasAudd) return;
+              const m = await AuddService.recognizeFile(row.filePath);
+              if (m) {
+                audioChain = "audd";
+                audioMatch = await MusicbrainzService.enrich(m);
+              }
+            };
+            const tryAcoustidFp = async () => {
+              if (!hasAcoustid) return;
+              const acoustid = await AcoustidService.lookup(fingerprint);
+              if (acoustid) {
+                audioChain = "acoustid";
+                audioMatch = await MusicbrainzService.enrich(acoustid);
+              }
+            };
+
+            if (auddFirst) {
+              await tryAuddFile();
+              if (!audioMatch) await tryAcoustidFp();
+            } else {
+              await tryAcoustidFp();
+              if (!audioMatch) await tryAuddFile();
             }
+            recoveredViaAcoustid = !!audioMatch;
           }
           if (!audioMatch) {
             noMatch += 1;
@@ -141,7 +173,7 @@ export class UnresolvedRecoveryService {
               data: {
                 ...baseUpdate,
                 recoveryStatus: "no_match",
-                lastRecoveryError: "acoustid_no_match",
+                lastRecoveryError: "fingerprint_no_match",
               },
             });
             continue;
@@ -177,11 +209,17 @@ export class UnresolvedRecoveryService {
           const titleFinal = (match.title || "").trim();
           const artistFinal = (match.artist || "").trim() || null;
 
+          const detectionMethod: DetectionMethod =
+            audioChain === "audd"
+              ? "fingerprint_audd"
+              : audioChain === "local"
+                ? "fingerprint_local"
+                : "fingerprint_acoustid";
           const recoveredLog = await prisma.detectionLog.create({
             data: {
               stationId: row.stationId,
               observedAt,
-              detectionMethod: "fingerprint_acoustid",
+              detectionMethod,
               rawStreamText: linkedDetection?.rawStreamText ?? null,
               parsedArtist: linkedDetection?.parsedArtist ?? artistFinal,
               parsedTitle: linkedDetection?.parsedTitle ?? titleFinal,
@@ -194,7 +232,14 @@ export class UnresolvedRecoveryService {
               releaseFinal: match.releaseTitle,
               releaseDate: match.releaseDate,
               genreFinal: match.genre,
-              sourceProvider: match.sourceProvider || "acoustid",
+              sourceProvider:
+                audioChain === "audd"
+                  ? "audd"
+                  : audioChain === "local"
+                    ? "local_fingerprint"
+                    : match.sourceProvider === "musicbrainz"
+                      ? "acoustid"
+                      : match.sourceProvider || "acoustid",
               isrcList: match.isrcs?.length ? JSON.stringify(match.isrcs) : null,
               trackDurationMs: match.durationMs ?? null,
               sampleSeconds: null,
@@ -217,11 +262,11 @@ export class UnresolvedRecoveryService {
             originalCombinedRaw: linkedDetection?.rawStreamText ?? null,
           });
 
-          if (recoveredViaAcoustid) {
+          if (recoveredViaAcoustid && audioChain && audioChain !== "local") {
             await LocalFingerprintService.learn({
               fp: fingerprint,
               match,
-              source: "acoustid",
+              source: audioChain,
             });
           }
 
