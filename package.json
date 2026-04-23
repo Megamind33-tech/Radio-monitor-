@@ -19,6 +19,7 @@
     "poll:orb-tracks": "node scripts/orb_track_poller.mjs",
     "backfill:song-spins": "node scripts/backfill_station_song_spins.mjs",
     "audit:stream-health": "node scripts/stream_health_audit.mjs",
+    "fetch:radiotime:zambia": "python3 scripts/radiotime_zambia_fetch.py --out scripts/data/radiotime_zambia.json",
     "test:station-health": "tsx server/lib/station-health.spec.ts",
     "test:stream-url-guard": "tsx server/lib/stream-url-guard.spec.ts",
     "test:local-fingerprint": "tsx server/services/local-fingerprint.service.spec.ts"
