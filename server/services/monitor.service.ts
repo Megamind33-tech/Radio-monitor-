@@ -180,9 +180,21 @@ export class MonitorService {
         const latestNowPlaying = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
 
         if (!metadata) {
+          const tuneStub = await MetadataService.readTuneInStubMetadata(station.sourceIdsJson, station.name);
+          if (tuneStub) {
+            metadata = tuneStub;
+            reasonCode = "tunein_stub_metadata";
+          }
+        }
+
+        if (!metadata) {
           legacyFingerprint = true;
           reasonCode = "metadata_missing";
         } else {
+          if (isJunkIcyMetadata(metadata)) {
+            legacyFingerprint = true;
+            reasonCode = "metadata_junk";
+          }
           const check = MetadataService.isMetadataTrustworthy(metadata, latestNowPlaying?.streamText || undefined);
           if (!check.trusted) {
             legacyFingerprint = true;

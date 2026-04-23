@@ -99,6 +99,74 @@ export class MetadataService {
    * Provider fallback for streams that carry no in-band ICY StreamTitle.
    * Supports Fastcast proxy paths that expose stats JSON / current song endpoints.
    */
+  /**
+   * When `sourceIdsJson` contains `tunein` (RadioTime guide id, e.g. `s131737`), fetch TuneIn OPML
+   * search results and read `playing=` / `subtext` for that station — many streams have no ICY but
+   * TuneIn still exposes a current title string for catalog lookup.
+   */
+  static async readTuneInStubMetadata(
+    sourceIdsJson: string | null | undefined,
+    stationNameHint: string | null | undefined
+  ): Promise<NormalizedMetadata | null> {
+    const raw = String(sourceIdsJson || "").trim();
+    if (!raw) return null;
+    let ids: Record<string, unknown>;
+    try {
+      ids = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+    const tune = ids.tunein;
+    const guide =
+      typeof tune === "string" && tune.trim()
+        ? tune.trim()
+        : typeof tune === "number"
+          ? String(tune)
+          : "";
+    if (!guide) return null;
+    const want = guide.toLowerCase();
+    const nameQ = String(stationNameHint || "").trim() || guide;
+    const queries = nameQ.toLowerCase() === want ? [nameQ] : [nameQ, guide];
+
+    for (const query of queries) {
+      const searchUrl = `https://opml.radiotime.com/Search.ashx?${new URLSearchParams({ query }).toString()}`;
+      try {
+        const res = await axios.get(searchUrl, {
+          timeout: 12000,
+          responseType: "text",
+          headers: { "User-Agent": "RadioMonitor/1.0 (tunein-opml-stub)" },
+        });
+        const xml = String(res.data || "");
+        const outlines = [...xml.matchAll(/<outline\s+([^>]+)>/gi)];
+        for (const m of outlines) {
+          const attrs = m[1] || "";
+          const gid = (attrs.match(/\bguide_id="([^"]*)"/i) || attrs.match(/\bguide_id='([^']*)'/i))?.[1]?.trim() || "";
+          const urlM = (attrs.match(/\bURL="([^"]*)"/i) || [])[1] || "";
+          const type = (attrs.match(/\btype="([^"]*)"/i) || [])[1]?.toLowerCase() || "";
+          const item = (attrs.match(/\bitem="([^"]*)"/i) || [])[1]?.toLowerCase() || "";
+          if (type !== "audio" || item !== "station") continue;
+          const idInUrl = urlM.toLowerCase().includes(`id=${want}`) || urlM.toLowerCase().includes(`id=${encodeURIComponent(guide).toLowerCase()}`);
+          if (gid.toLowerCase() !== want && !idInUrl) continue;
+
+          const playing = (attrs.match(/\bplaying="([^"]*)"/i) || [])[1]?.trim();
+          const subtext = (attrs.match(/\bsubtext="([^"]*)"/i) || [])[1]?.trim();
+          const text = (attrs.match(/\btext="([^"]*)"/i) || [])[1]?.trim();
+          const line = playing || subtext || text || "";
+          const decoded = line
+            .replace(/&apos;/g, "'")
+            .replace(/&quot;/g, '"')
+            .replace(/&amp;/g, "&")
+            .trim();
+          if (!decoded || !this.isUsefulSongText(decoded)) continue;
+          return this.parseStreamTitle(decoded);
+        }
+      } catch (error) {
+        logger.debug({ error, searchUrl }, "TuneIn OPML stub metadata failed");
+      }
+    }
+    return null;
+  }
+
   static async readProviderNowPlayingMetadata(url: string): Promise<NormalizedMetadata | null> {
     const fastcastBase = this.extractFastcastProxyBase(url);
     if (!fastcastBase) return null;
