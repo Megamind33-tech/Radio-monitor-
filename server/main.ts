@@ -14,6 +14,7 @@ import { StreamRefreshService } from "./services/stream-refresh.service.js";
 import { validateCandidateStreamUrl } from "./lib/stream-url-guard.js";
 import { StreamHealthService } from "./services/stream-health.service.js";
 import { monitorEvents } from "./lib/monitor-events.js";
+import { UnresolvedRecoveryService } from "./services/unresolved-recovery.service.js";
 
 function isCommandAvailable(command: string, args: string[] = ["-version"]) {
   try {
@@ -277,6 +278,51 @@ async function startServer() {
       take
     });
     res.json(logs);
+  });
+
+  app.get("/api/recovery/unresolved/status", async (_req, res) => {
+    try {
+      const status = UnresolvedRecoveryService.status();
+      const totals = await prisma.unresolvedSample.groupBy({
+        by: ["recoveryStatus"],
+        _count: { _all: true },
+      });
+      const byStatus: Record<string, number> = {};
+      for (const row of totals) {
+        byStatus[row.recoveryStatus || "pending"] = Number(row._count._all || 0);
+      }
+      res.json({ ...status, totals: byStatus });
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved recovery status request");
+      res.status(500).json({ error: "failed_to_read_recovery_status" });
+    }
+  });
+
+  app.post("/api/recovery/unresolved/run", async (req, res) => {
+    try {
+      const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
+      const stationId = typeof body.stationId === "string" && body.stationId.trim() ? body.stationId.trim() : undefined;
+      const limitRaw = typeof body.limit === "number" ? body.limit : Number(body.limit);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 200) : undefined;
+      const out = await UnresolvedRecoveryService.runBatch({ stationId, limit });
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved recovery run request");
+      res.status(500).json({ error: "failed_to_run_recovery_batch" });
+    }
+  });
+
+  app.post("/api/recovery/unresolved/cleanup", async (req, res) => {
+    try {
+      const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
+      const keepRaw = typeof body.keepRecovered === "number" ? body.keepRecovered : Number(body.keepRecovered);
+      const keepRecovered = Number.isFinite(keepRaw) ? Math.max(0, Math.trunc(keepRaw)) : 0;
+      const out = await UnresolvedRecoveryService.cleanupRecoveredFiles(keepRecovered);
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved recovery cleanup request");
+      res.status(500).json({ error: "failed_to_cleanup_recovered_samples" });
+    }
   });
 
   app.get("/api/stations/:id/airplays", async (req, res) => {

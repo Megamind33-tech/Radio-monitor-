@@ -234,10 +234,20 @@ model CurrentNowPlaying {
 }
 
 model UnresolvedSample {
-  id        String   @id @default(cuid())
-  stationId String
-  filePath  String
-  createdAt DateTime @default(now())
+  id               String   @id @default(cuid())
+  stationId        String
+  /// DetectionLog row associated with this unresolved capture (nullable for older rows).
+  detectionLogId   String?  @unique
+  filePath         String
+  createdAt        DateTime @default(now())
+  /// pending | recovered | no_match | error | skipped
+  recoveryStatus   String   @default("pending")
+  recoveryAttempts Int      @default(0)
+  lastRecoveryAt   DateTime?
+  recoveredAt      DateTime?
+  lastRecoveryError String?
+
+  @@index([stationId, recoveryStatus, createdAt])
 }
 
 model CacheEntry {

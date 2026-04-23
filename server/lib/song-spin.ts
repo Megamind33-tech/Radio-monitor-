@@ -21,6 +21,7 @@ export async function upsertSongSpinOnNewPlay(
     title: string | null | undefined;
     album: string | null | undefined;
     detectionLogId: string;
+    playedAt?: Date;
     mixRuleApplied?: string | null;
     mixSplitConfidence?: number | null;
     originalCombinedRaw?: string | null;
@@ -31,7 +32,7 @@ export async function upsertSongSpinOnNewPlay(
 
   const artistNorm = normalizeSongPart(params.artist);
   const albumNorm = normalizeSongPart(params.album);
-  const now = new Date();
+  const now = params.playedAt ?? new Date();
 
   const artistLast = (params.artist ?? "").trim();
   const titleLast = (params.title ?? "").trim();

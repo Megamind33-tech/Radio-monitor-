@@ -36,7 +36,8 @@ export interface MatchResult {
     | 'musicbrainz_search'
     | 'itunes_search'
     | 'deezer_search'
-    | 'stream_metadata';
+    | 'stream_metadata'
+    | 'recovery_reprocess';
   confidence: number;
   reasonCode?: string;
 }
