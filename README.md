@@ -14,6 +14,17 @@ Scrapes ICY metadata (now-playing data) from internet radio streams and logs eve
 
 This repository also contains a separate Node/React stack under `server/` and `src/` for broader fingerprinting experiments; the **ICY + Supabase** workflow uses only the Python files above.
 
+## Quick start (Node/React dashboard)
+
+One-shot environment setup for the dashboard (installs node + python deps, creates `.env`, applies the Prisma schema to SQLite, runs type-check & unit tests):
+
+```bash
+bash scripts/setup_env.sh
+npm run dev   # http://localhost:3000
+```
+
+The script is idempotent — safe to re-run. It both bootstraps a brand-new SQLite DB (via `prisma db push`) and baselines an existing DB so `prisma migrate` stays in sync.
+
 ## Install
 
 ```bash
