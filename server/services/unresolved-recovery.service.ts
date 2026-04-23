@@ -64,15 +64,19 @@ export class UnresolvedRecoveryService {
     try {
       const cooldownDays = Math.min(90, Math.max(1, parseEnvInt("UNRESOLVED_RECOVERY_NO_MATCH_COOLDOWN_DAYS", 7)));
       const cooldownBefore = new Date(Date.now() - cooldownDays * 86400000);
+      // Re-queue without resetting recoveryAttempts so the maxAttempts cap is
+      // respected over the sample's lifetime.  The old reset to 0 meant samples
+      // could be retried indefinitely (every 7-day cooldown) regardless of how many
+      // times they had already been tried and returned no match.
       const retried = await prisma.unresolvedSample.updateMany({
         where: {
           ...(opts?.stationId ? { stationId: opts.stationId } : {}),
           recoveryStatus: "no_match",
+          recoveryAttempts: { lt: maxAttempts },
           lastRecoveryAt: { lt: cooldownBefore },
         },
         data: {
           recoveryStatus: "pending",
-          recoveryAttempts: 0,
           lastRecoveryError: null,
         },
       });

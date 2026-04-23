@@ -116,9 +116,41 @@ function dedupeStations<T extends DedupableStation>(stations: T[]): T[] {
   return Array.from(winners.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function logStartupDependencyWarnings() {
+  const ffmpeg = isCommandAvailable("ffmpeg");
+  const ffprobe = isCommandAvailable("ffprobe");
+  const fpcalc = isCommandAvailable("fpcalc");
+  const acoustid = !!process.env.ACOUSTID_API_KEY;
+  const musicbrainz = !!process.env.MUSICBRAINZ_USER_AGENT;
+
+  if (!ffmpeg || !ffprobe || !fpcalc || !acoustid || !musicbrainz) {
+    logger.warn(
+      {
+        ffmpeg, ffprobe, fpcalc,
+        ACOUSTID_API_KEY: acoustid,
+        MUSICBRAINZ_USER_AGENT: musicbrainz,
+      },
+      [
+        "⚠️  MISSING DEPENDENCIES — song identification will be degraded:",
+        !ffmpeg   ? "  • ffmpeg not found — audio capture and tagging disabled" : null,
+        !ffprobe  ? "  • ffprobe not found — ICY metadata reads and stream health disabled" : null,
+        !fpcalc   ? "  • fpcalc (Chromaprint) not found — fingerprinting disabled; install chromaprint-tools" : null,
+        !acoustid ? "  • ACOUSTID_API_KEY not set — fingerprint lookup disabled; only ICY catalog used\n    → Get a free key at https://acoustid.org/new-application" : null,
+        !musicbrainz ? "  • MUSICBRAINZ_USER_AGENT not set — catalog lookups disabled" : null,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+  } else {
+    logger.info("All required dependencies present (ffmpeg, ffprobe, fpcalc, AcoustID, MusicBrainz)");
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  logStartupDependencyWarnings();
 
   app.use(cors());
   app.use(helmet({

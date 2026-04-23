@@ -273,8 +273,12 @@ model CurrentNowPlaying {
   genre     String?
   sourceProvider String?
   streamText String?
+  /// When the current streamText value first appeared — used as the staleness anchor.
+  /// NOT reset on every poll; only updated when streamText actually changes.
+  /// This prevents the stale timer from being reset by sameSpin guard touches.
+  streamTextChangedAt DateTime?
   updatedAt DateTime @updatedAt
-  
+
   station Station @relation(fields: [stationId], references: [id])
 }
 

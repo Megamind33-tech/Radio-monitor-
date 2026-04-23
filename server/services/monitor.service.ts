@@ -185,12 +185,16 @@ export class MonitorService {
       let legacyFingerprint = false;
       let reasonCode: string | null = null;
 
+      // Single fetch; reused for both ICY staleness and icyChanged detection.
+      // Two separate fetches introduced a race window where another poll could
+      // update the row between reads, causing inconsistent staleness decisions.
+      const latestNp = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
+
       if (station.metadataPriorityEnabled) {
         metadata = await MetadataService.readStreamMetadata(resolvedUrl);
         if (!metadata) {
           metadata = await MetadataService.readProviderNowPlayingMetadata(resolvedUrl);
         }
-        const latestNowPlaying = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
 
         if (!metadata) {
           const tuneStub = await MetadataService.readTuneInStubMetadata(station.sourceIdsJson, station.name);
@@ -208,17 +212,20 @@ export class MonitorService {
             legacyFingerprint = true;
             reasonCode = "metadata_junk";
           }
-          const check = MetadataService.isMetadataTrustworthy(metadata, latestNowPlaying?.streamText || undefined);
+          const check = MetadataService.isMetadataTrustworthy(metadata, latestNp?.streamText || undefined);
           if (!check.trusted) {
             legacyFingerprint = true;
             reasonCode = check.reason || "metadata_untrusted";
-          } else if (latestNowPlaying && latestNowPlaying.streamText === metadata.combinedRaw) {
-            const staleAt = new Date(
-              latestNowPlaying.updatedAt.getTime() + station.metadataStaleSeconds * 1000
-            );
+          } else if (latestNp && latestNp.streamText === metadata.combinedRaw) {
+            // Use streamTextChangedAt as the staleness anchor so the timer is NOT
+            // reset by sameSpin guard touches that only update updatedAt.
+            // Without this fix the stale timer restarted on every poll, meaning
+            // stations with permanently-stuck ICY never triggered re-fingerprinting.
+            const npWithAnchor = latestNp as typeof latestNp & { streamTextChangedAt?: Date | null };
+            const staleAnchor = npWithAnchor.streamTextChangedAt ?? latestNp.updatedAt;
+            const staleAt = new Date(staleAnchor.getTime() + station.metadataStaleSeconds * 1000);
             const repeatEarlyAt = new Date(
-              latestNowPlaying.updatedAt.getTime() +
-                Math.max(30_000, Math.floor(station.metadataStaleSeconds * 500))
+              staleAnchor.getTime() + Math.max(30_000, Math.floor(station.metadataStaleSeconds * 500))
             );
             if (Date.now() > staleAt.getTime()) {
               legacyFingerprint = true;
@@ -233,7 +240,6 @@ export class MonitorService {
         legacyFingerprint = true;
         reasonCode = "metadata_disabled";
       }
-      const latestNp = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
       const icyText = (metadata?.combinedRaw ?? "").trim();
       const prevIcy = (latestNp?.streamText ?? "").trim();
       const icyChanged =
@@ -423,7 +429,10 @@ export class MonitorService {
         }
       }
 
-      const minAcoust = parseEnvFloat("ACOUSTID_PREFER_MIN_SCORE", 0.55);
+      // 0.65 is the minimum score that reliably avoids false-positive matches.
+      // 0.55 (old default) allowed too many wrong song IDs when short audio clips
+      // or background noise partially matched unrelated tracks.
+      const minAcoust = parseEnvFloat("ACOUSTID_PREFER_MIN_SCORE", 0.65);
       const merged = mergeAcoustidAndCatalog(audioMatch, catalogMatch, minAcoust, catalogTrustFactor);
 
       let match = merged.match;
@@ -981,10 +990,20 @@ export class MonitorService {
       const effectiveGuardMs = Math.min(catalogGuard, maxGuardMs);
       const anchor = latestLog.observedAt.getTime();
       if (Date.now() < anchor + effectiveGuardMs) {
+        const npNow = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
+        const guardStreamText = metadata?.combinedRaw ?? null;
+        const guardStreamChanged = guardStreamText !== (npNow?.streamText ?? null);
         await prisma.currentNowPlaying.upsert({
           where: { stationId },
-          update: { updatedAt: new Date() },
-          create: { stationId, title: titleFinal, artist: artistFinal },
+          update: {
+            updatedAt: new Date(),
+            // Keep streamText current so icyChanged is accurate on the next poll.
+            streamText: guardStreamText,
+            // Only stamp streamTextChangedAt when ICY text changed — do NOT
+            // reset it on a same-song touch (that would restart the stale timer).
+            ...(guardStreamChanged ? { streamTextChangedAt: new Date() } : {}),
+          },
+          create: { stationId, title: titleFinal ?? null, artist: artistFinal ?? null, streamText: guardStreamText, streamTextChangedAt: new Date() },
         });
         return { status, reasonCode: detectionReason ?? null, detectionLogId: latestLog.id };
       }
@@ -1084,37 +1103,42 @@ export class MonitorService {
       }
     }
 
+    const nextStreamText = metadata?.combinedRaw ?? null;
+    const prevStreamText = npRow?.streamText ?? null;
+    // Only stamp streamTextChangedAt when the ICY text actually changed.
+    // This is the staleness anchor — see pollStation() staleness check.
+    const streamTextChangedAt = nextStreamText !== prevStreamText ? new Date() : undefined;
+    const sourceProviderOut =
+      match?.sourceProvider ||
+      (method === "stream_metadata"
+        ? metadataProgramLike
+          ? "stream_metadata_program"
+          : "stream_metadata"
+        : method);
+
     await prisma.currentNowPlaying.upsert({
       where: { stationId },
       update: {
-        title: titleFinal,
-        artist: artistFinal,
-        album: match?.releaseTitle,
-        genre: match?.genre,
-        sourceProvider:
-          match?.sourceProvider ||
-          (method === "stream_metadata"
-            ? metadataProgramLike
-              ? "stream_metadata_program"
-              : "stream_metadata"
-            : method),
-        streamText: metadata?.combinedRaw,
+        // Explicit null when unresolved so the dashboard clears the old song
+        // instead of showing stale data from the previous matched detection.
+        title: titleFinal ?? null,
+        artist: artistFinal ?? null,
+        album: match?.releaseTitle ?? null,
+        genre: match?.genre ?? null,
+        sourceProvider: sourceProviderOut,
+        streamText: nextStreamText,
+        ...(streamTextChangedAt ? { streamTextChangedAt } : {}),
         updatedAt: new Date(),
       },
       create: {
         stationId,
-        title: titleFinal,
-        artist: artistFinal,
-        album: match?.releaseTitle,
-        genre: match?.genre,
-        sourceProvider:
-          match?.sourceProvider ||
-          (method === "stream_metadata"
-            ? metadataProgramLike
-              ? "stream_metadata_program"
-              : "stream_metadata"
-            : method),
-        streamText: metadata?.combinedRaw,
+        title: titleFinal ?? null,
+        artist: artistFinal ?? null,
+        album: match?.releaseTitle ?? null,
+        genre: match?.genre ?? null,
+        sourceProvider: sourceProviderOut,
+        streamText: nextStreamText,
+        streamTextChangedAt: new Date(),
       },
     });
 

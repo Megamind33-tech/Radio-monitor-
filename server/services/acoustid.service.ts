@@ -48,10 +48,13 @@ export class AcoustidService {
         return null;
       }
 
-      // Find top match
+      // Find top match — sort by score descending in case results are unordered
+      data.results.sort((a: { score: number }, b: { score: number }) => b.score - a.score);
       const result = data.results[0];
-      const minScore = parseFloat(process.env.ACOUSTID_MIN_SCORE || '0.5');
-      
+      // 0.65 minimum avoids false positives from partial fingerprint matches on short
+      // or noisy audio segments.  The old 0.5 default caused wrong songs to be logged.
+      const minScore = parseFloat(process.env.ACOUSTID_MIN_SCORE || '0.65');
+
       if (result.score < minScore) {
         logger.debug({ score: result.score, minScore }, "AcoustID match score too low");
         return null;

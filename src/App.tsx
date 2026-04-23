@@ -61,13 +61,15 @@ interface Station {
   lastSongDetectedAt?: string | null;
   streamRefreshedAt?: string | null;
   currentNowPlaying?: {
-    title: string;
-    artist: string;
-    album?: string;
-    genre?: string;
-    sourceProvider?: string;
+    title: string | null;
+    artist: string | null;
+    album?: string | null;
+    genre?: string | null;
+    sourceProvider?: string | null;
+    streamText?: string | null;
     updatedAt: string;
   };
+  lastSongDetectedAt?: string | null;
 }
 
 interface DetectionLog {
@@ -1183,8 +1185,26 @@ function StationTableRow({
         {[station.province, station.district].filter(Boolean).join(' / ') || '—'}
       </td>
       <td className="py-3 px-3 min-w-0">
-        <div className="font-medium text-gray-200 truncate" title={station.currentNowPlaying?.title || '—'}>{station.currentNowPlaying?.title || '—'}</div>
-        <div className="text-xs text-gray-500 truncate" title={station.currentNowPlaying?.artist || 'No current track'}>{station.currentNowPlaying?.artist || 'No current track'}</div>
+        {(() => {
+          const np = station.currentNowPlaying;
+          const updatedMs = np?.updatedAt ? Date.now() - new Date(np.updatedAt).getTime() : null;
+          const staleMin = updatedMs ? Math.floor(updatedMs / 60000) : null;
+          const isStale = staleMin !== null && staleMin >= 15;
+          const hasTitle = !!np?.title;
+          return (
+            <>
+              <div className={`font-medium truncate flex items-center gap-1.5 ${isStale && hasTitle ? 'text-amber-300' : 'text-gray-200'}`} title={np?.title || '—'}>
+                {np?.title || '—'}
+                {isStale && hasTitle && (
+                  <span className="shrink-0 text-[9px] font-bold px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30" title={`Now-playing has not changed for ${staleMin} min — ICY may be stuck or station offline`}>
+                    {staleMin}m old
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-gray-500 truncate" title={np?.artist || 'No current track'}>{np?.artist || 'No current track'}</div>
+            </>
+          );
+        })()}
       </td>
       <td className="py-3 px-3">
         <span
