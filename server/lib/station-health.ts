@@ -4,28 +4,60 @@ export function classifyContent(metadataText: string | null | undefined): Statio
   const t = String(metadataText ?? "").trim().toLowerCase();
   if (!t) return "unknown";
 
+  const adHints = [
+    "advert",
+    "sponsor",
+    "commercial break",
+    "ad break",
+    "your ad here",
+    "paid promotion",
+  ];
+  if (adHints.some((h) => t.includes(h))) return "ads";
+
+  const speechHints = [
+    "call in",
+    "call-in",
+    "phone in",
+    "listener",
+    "sermon",
+    "prayer",
+    "preaching",
+    "mass ",
+    "church",
+    "live speech",
+    "political",
+    "debate",
+    "election",
+  ];
   const talkHints = [
     "talk",
     "news",
-    "sermon",
-    "preaching",
     "program",
     "discussion",
     "interview",
     "sports",
     "commentary",
+    "banter",
+    "morning show",
+    "drive time",
   ];
   const musicHints = [" - ", " feat ", " remix", "album", "track", "dj ", "artist"];
 
-  const talk = talkHints.some((h) => t.includes(h));
-  const music = musicHints.some((h) => t.includes(h));
+  const speechHit = speechHints.some((h) => t.includes(h));
+  const talkHit = talkHints.some((h) => t.includes(h)) || speechHit;
+  const musicHit = musicHints.some((h) => t.includes(h));
 
-  if (talk && music) return "mixed";
-  if (talk) return "talk";
-  if (music) return "music";
+  if (talkHit && musicHit) return "mixed";
+  if (speechHit && !musicHit) return "unknown_speech";
+  if (talkHit) return "talk";
+  if (musicHit) return "music";
   return "unknown";
 }
 
+/**
+ * Online/offline follows **transport + audio bytes only** — not decoder/ffprobe and not song ID.
+ * INACTIVE only when the stream is unreachable or not delivering audio bytes, sustained.
+ */
 export function deriveMonitorState(input: {
   health: StreamHealthSnapshot;
   contentClassification: StationContentClassification;
@@ -35,19 +67,29 @@ export function deriveMonitorState(input: {
 }): { state: StationMonitorState; reason: string } {
   const { health, contentClassification, hasReliableMatch, consecutiveFailures, failureThreshold } = input;
 
-  if (!health.reachable || !health.audioFlowing || !health.decoderOk) {
+  const transportOk = health.reachable && health.audioFlowing;
+  const transportFailed = !health.reachable || !health.audioFlowing;
+
+  if (transportFailed) {
     if (consecutiveFailures >= failureThreshold) {
-      return { state: "INACTIVE", reason: health.reason || "health_failure_threshold_exceeded" };
+      return { state: "INACTIVE", reason: health.reason || "transport_failure_threshold" };
     }
-    return { state: "DEGRADED", reason: health.reason || "health_partial_failure" };
+    return { state: "DEGRADED", reason: health.reason || "transport_degraded" };
   }
 
-  if (health.degraded) {
-    return { state: "DEGRADED", reason: health.reason || "health_degraded" };
+  // Bytes flowing: stay online even if ffprobe/decode is flaky (fingerprint may be weaker only).
+  if (!health.decoderOk || health.degraded) {
+    return { state: "DEGRADED", reason: health.reason || "decode_degraded_audio_flowing" };
   }
 
-  if (contentClassification === "talk") {
-    return { state: "ACTIVE_TALK", reason: "healthy_talk_content" };
+  const talkLike =
+    contentClassification === "talk" ||
+    contentClassification === "ads" ||
+    contentClassification === "unknown_speech" ||
+    contentClassification === "mixed";
+
+  if (talkLike) {
+    return { state: "ACTIVE_TALK", reason: "healthy_non_music_content_window" };
   }
 
   if (hasReliableMatch) {

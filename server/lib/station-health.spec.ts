@@ -75,6 +75,21 @@ function run() {
   });
   assert(state.state === "INACTIVE", "failure threshold should flip to INACTIVE");
 
+  // Transport OK + audio bytes but decoder/ffprobe flaky => DEGRADED, never INACTIVE from song ID
+  state = deriveMonitorState({
+    health: {
+      ...healthySnapshot(),
+      decoderOk: false,
+      degraded: true,
+      reason: "decoder_timeout",
+    },
+    contentClassification: "unknown",
+    hasReliableMatch: false,
+    consecutiveFailures: 99,
+    failureThreshold: 3,
+  });
+  assert(state.state === "DEGRADED", "decode-only issues must not mark INACTIVE");
+
   console.log("station-health.spec: ok");
 }
 

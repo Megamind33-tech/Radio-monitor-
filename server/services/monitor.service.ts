@@ -26,6 +26,7 @@ import { StreamRefreshService } from "./stream-refresh.service.js";
 import { StreamHealthService } from "./stream-health.service.js";
 import { classifyContent, deriveMonitorState } from "../lib/station-health.js";
 import { monitorEvents } from "../lib/monitor-events.js";
+import { classifyStreamUrl } from "../lib/stream-source.js";
 
 function parseEnvMs(key: string, fallback: number): number {
   const v = process.env[key];
@@ -100,10 +101,11 @@ function stationUpdateWithPreservedDates(
   }
 ): Prisma.StationUpdateInput {
   const { health, metadata, detectionStatus, lag } = input;
+  const transportOk = health.reachable && health.audioFlowing;
   return {
-    lastHealthyAt:
-      health.reachable && health.audioFlowing ? new Date() : station.lastHealthyAt,
-    lastGoodAudioAt: health.decoderOk ? new Date() : station.lastGoodAudioAt,
+    lastHealthyAt: transportOk ? new Date() : station.lastHealthyAt,
+    /** Bytes flowing (decode/ffprobe issues do not clear this). */
+    lastGoodAudioAt: transportOk ? new Date() : station.lastGoodAudioAt,
     lastMetadataAt: metadata?.combinedRaw ? new Date() : station.lastMetadataAt,
     lastSongDetectedAt: detectionStatus === "matched" ? new Date() : station.lastSongDetectedAt,
     detectionLagMsAvg: lag?.avg ?? station.detectionLagMsAvg,
@@ -124,6 +126,16 @@ function isProgramLikeTitle(text: string | null | undefined): boolean {
   const t = String(text ?? "").trim().toLowerCase();
   if (!t) return false;
   return /\b(on air|program|show|morning show|afternoon show|evening show|news|sports|talk)\b/.test(t);
+}
+
+function effectiveStreamUrl(station: Pick<Station, "streamUrl" | "preferredStreamUrl">): string {
+  const p = (station.preferredStreamUrl ?? "").trim();
+  return p || station.streamUrl;
+}
+
+function emaUpdate(prev: number, hit: boolean, alpha = 0.12): number {
+  const x = hit ? 1 : 0;
+  return prev * (1 - alpha) + x * alpha;
 }
 
 function parseSourceIdsMap(json: string | null | undefined): Record<string, string> {
@@ -166,7 +178,8 @@ export class MonitorService {
     };
 
     try {
-      const resolvedUrl = await ResolverService.resolveStreamUrl(station.streamUrl);
+      const mountUrl = effectiveStreamUrl(station);
+      const resolvedUrl = await ResolverService.resolveStreamUrl(mountUrl);
       const health = await StreamHealthService.validateStream(resolvedUrl);
 
       let metadata: NormalizedMetadata | null = null;
@@ -544,18 +557,48 @@ export class MonitorService {
           },
         });
       }
+      const programLike =
+        isProgramLikeTitle(metadata?.rawTitle) ||
+        (!metadata?.rawTitle && isProgramLikeTitle(metadata?.combinedRaw));
       const contentClassification: StationContentClassification =
         detection.status === "matched"
           ? "music"
-          : classifyContent(metadata?.combinedRaw ?? null);
+          : programLike
+            ? "talk"
+            : classifyContent(metadata?.combinedRaw ?? null);
 
       const nextFailureThreshold = Math.max(1, station.failureThreshold || 3);
-      const nextFailureCount = health.reachable && health.audioFlowing && health.decoderOk
+      const transportOk = health.reachable && health.audioFlowing;
+      const nextFailureCount = transportOk
         ? 0
         : Math.max(0, (station.consecutivePollFailures || 0) + 1);
-      const nextHealthyCount = health.reachable && health.audioFlowing && health.decoderOk
+      const nextHealthyCount = transportOk
         ? Math.max(0, (station.consecutiveHealthyPolls || 0) + 1)
         : 0;
+
+      const srcClass = classifyStreamUrl(mountUrl, station.name);
+      const decodeHit = health.decoderOk;
+      const fpAttempted = !!doAudioId && resolvedUrl.startsWith("http");
+      const fpHit = fpAttempted && !!audioMatch;
+      const metaAvail = !!(metadata?.combinedRaw && !isJunkIcyMetadata(metadata));
+      const metaFresh = metaAvail && (icyChanged || (!prevIcy && icyText.length > 0));
+
+      const decodeHealthEma = emaUpdate(
+        typeof station.decodeHealthEma === "number" ? station.decodeHealthEma : 1,
+        decodeHit
+      );
+      const fingerprintHitEma = fpAttempted
+        ? emaUpdate(
+            typeof station.fingerprintHitEma === "number" ? station.fingerprintHitEma : 0,
+            fpHit
+          )
+        : typeof station.fingerprintHitEma === "number"
+          ? station.fingerprintHitEma
+          : 0;
+      const metadataPresentEma = emaUpdate(
+        typeof station.metadataPresentEma === "number" ? station.metadataPresentEma : 0,
+        metaAvail
+      );
       const monitor = deriveMonitorState({
         health,
         contentClassification,
@@ -573,6 +616,30 @@ export class MonitorService {
         detectionStatus: detection.status,
         lag,
       });
+
+      let preferredOut = (station.preferredStreamUrl ?? "").trim() || null;
+      if (
+        parseEnvBool("AUTO_PROMOTE_DIRECT_STREAM_URL", true) &&
+        !preferredOut &&
+        (srcClass.tier === "aggregator" || srcClass.tier === "relay")
+      ) {
+        const better = await prisma.stationStreamEndpoint.findFirst({
+          where: {
+            stationId,
+            isSuppressed: false,
+            streamUrl: { not: station.streamUrl },
+            qualityScore: { gte: srcClass.qualityScore + 12 },
+          },
+          orderBy: [{ qualityScore: "desc" }, { fingerprintHits: "desc" }],
+        });
+        if (better?.streamUrl) {
+          preferredOut = better.streamUrl;
+          logger.info(
+            { stationId, from: mountUrl, to: preferredOut, tier: better.sourceTier },
+            "Auto-promoted preferredStreamUrl to higher-tier endpoint"
+          );
+        }
+      }
 
       await prisma.station.update({
         where: { id: stationId },
@@ -596,13 +663,35 @@ export class MonitorService {
           lastStreamContentType: health.contentTypeHeader || null,
           lastStreamCodec: health.codec || null,
           lastStreamBitrate: health.bitrate ?? null,
+          streamSourceType: srcClass.tier,
+          streamSourceQualityScore: srcClass.qualityScore,
+          streamSourceLastEvaluatedAt: new Date(),
+          decodeHealthEma,
+          fingerprintHitEma,
+          metadataPresentEma,
+          streamOnlineLast: transportOk ? 1 : 0,
+          audioDetectedLast: health.audioFlowing ? 1 : 0,
+          metadataAvailableLast: metaAvail ? 1 : 0,
+          songIdentifiedLast: detection.status === "matched" ? 1 : 0,
+          ...(preferredOut ? { preferredStreamUrl: preferredOut } : {}),
           ...preservedDates,
           deepValidationIntervalSeconds: station.deepValidationIntervalSeconds || 600,
           failureThreshold: nextFailureThreshold,
           recoveryThreshold: Math.max(1, station.recoveryThreshold || 2),
         },
       });
-      await this.upsertStreamEndpoint(station, health, monitor.state);
+      await this.upsertStreamEndpoint(
+        { id: station.id, streamUrl: mountUrl, sourceIdsJson: station.sourceIdsJson },
+        health,
+        monitor.state,
+        srcClass,
+        {
+          fpAttempted,
+          fpHit,
+          decodeHit,
+          metaFresh,
+        }
+      );
       await this.suppressFailingZenoEndpoints(station.id);
       await this.recordHealthEvent(stationId, monitor.state, monitor.reason, contentClassification, health, nextFailureCount);
     } catch (error) {
@@ -684,13 +773,16 @@ export class MonitorService {
   private static async upsertStreamEndpoint(
     station: Pick<Station, "id" | "streamUrl" | "sourceIdsJson">,
     health: StreamHealthSnapshot,
-    monitorState: StationMonitorState
+    monitorState: StationMonitorState,
+    srcClass: ReturnType<typeof classifyStreamUrl>,
+    metrics: { fpAttempted: boolean; fpHit: boolean; decodeHit: boolean; metaFresh: boolean }
   ) {
     try {
       const sourceMap = parseSourceIdsMap(station.sourceIdsJson);
       const sourceEntries = Object.entries(sourceMap);
       const source = sourceEntries[0]?.[0] || "manual";
       const sourceDetail = sourceEntries[0]?.[1] || null;
+      const transportOk = health.reachable && health.audioFlowing;
       const status =
         monitorState === "INACTIVE"
           ? "inactive"
@@ -702,54 +794,65 @@ export class MonitorService {
 
       const row = await prisma.stationStreamEndpoint.findFirst({
         where: { stationId: station.id, streamUrl: station.streamUrl },
-        select: { id: true, consecutiveFailures: true },
+        select: {
+          id: true,
+          consecutiveFailures: true,
+          fingerprintHits: true,
+          fingerprintAttempts: true,
+          decodeHits: true,
+          decodeAttempts: true,
+          metadataFreshHits: true,
+          metadataPolls: true,
+        },
       });
-      const nextFailures = health.reachable && health.audioFlowing && health.decoderOk
-        ? 0
-        : Math.max(0, (row?.consecutiveFailures || 0) + 1);
+      const nextFailures = transportOk ? 0 : Math.max(0, (row?.consecutiveFailures || 0) + 1);
+
+      const fpHits = (row?.fingerprintHits ?? 0) + (metrics.fpHit ? 1 : 0);
+      const fpAtt = (row?.fingerprintAttempts ?? 0) + (metrics.fpAttempted ? 1 : 0);
+      const decHits = (row?.decodeHits ?? 0) + (metrics.decodeHit ? 1 : 0);
+      const decAtt = (row?.decodeAttempts ?? 0) + 1;
+      const metaHits = (row?.metadataFreshHits ?? 0) + (metrics.metaFresh ? 1 : 0);
+      const metaPolls = (row?.metadataPolls ?? 0) + 1;
+
+      const endpointPayload = {
+        source,
+        sourceDetail,
+        resolvedUrl: health.resolvedUrl || null,
+        isCurrent: true,
+        isSuppressed: monitorState === "INACTIVE",
+        lastValidatedAt: new Date(),
+        lastValidationStatus: status,
+        lastFailureReason: health.reason || null,
+        lastHealthyAt: transportOk ? new Date() : undefined,
+        consecutiveFailures: nextFailures,
+        codec: health.codec || null,
+        bitrate: health.bitrate ?? null,
+        sourceTier: srcClass.tier,
+        qualityScore: srcClass.qualityScore,
+        fingerprintHits: fpHits,
+        fingerprintAttempts: fpAtt,
+        decodeHits: decHits,
+        decodeAttempts: decAtt,
+        metadataFreshHits: metaHits,
+        metadataPolls: metaPolls,
+      };
 
       if (row) {
         await prisma.stationStreamEndpoint.update({
           where: { id: row.id },
-          data: {
-            source,
-            sourceDetail,
-            resolvedUrl: health.resolvedUrl || null,
-            isCurrent: true,
-            isSuppressed: monitorState === "INACTIVE",
-            lastValidatedAt: new Date(),
-            lastValidationStatus: status,
-            lastFailureReason: health.reason || null,
-            lastHealthyAt:
-              health.reachable && health.audioFlowing && health.decoderOk ? new Date() : undefined,
-            consecutiveFailures: nextFailures,
-            codec: health.codec || null,
-            bitrate: health.bitrate ?? null,
-          },
+          data: endpointPayload,
         });
       } else {
         await prisma.stationStreamEndpoint.create({
           data: {
             stationId: station.id,
-            source,
-            sourceDetail,
             streamUrl: station.streamUrl,
-            resolvedUrl: health.resolvedUrl || null,
-            isCurrent: true,
-            isSuppressed: monitorState === "INACTIVE",
-            lastValidatedAt: new Date(),
-            lastValidationStatus: status,
-            lastFailureReason: health.reason || null,
-            lastHealthyAt:
-              health.reachable && health.audioFlowing && health.decoderOk ? new Date() : null,
-            consecutiveFailures: nextFailures,
-            codec: health.codec || null,
-            bitrate: health.bitrate ?? null,
+            ...endpointPayload,
+            lastHealthyAt: transportOk ? new Date() : null,
           },
         });
       }
 
-      // Only one current endpoint row per station.
       await prisma.stationStreamEndpoint.updateMany({
         where: {
           stationId: station.id,
@@ -758,7 +861,6 @@ export class MonitorService {
         },
         data: { isCurrent: false },
       });
-
     } catch (error) {
       logger.warn({ error, stationId: station.id }, "Failed to upsert stream endpoint");
     }
