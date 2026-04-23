@@ -23,6 +23,66 @@ function mytunerScriptPath(): string {
  * OnlineRadioBox slug, Streema profile path). Returns null if nothing changed or fetch failed.
  */
 export class StreamRefreshService {
+  /**
+   * Collect every direct stream URL we can derive from harvest `sourceIdsJson`
+   * (MyTuner page, OnlineRadioBox, Streema) — no comparison to current URL.
+   * Used by multi-server stream discovery when the station has no official website.
+   */
+  static async collectDirectUrlsFromHints(
+    sourceIdsJson: string | null | undefined
+  ): Promise<Array<{ source: string; streamUrl: string; detail?: string }>> {
+    const out: Array<{ source: string; streamUrl: string; detail?: string }> = [];
+    if (!sourceIdsJson) return out;
+    let ids: Record<string, string>;
+    try {
+      ids = JSON.parse(sourceIdsJson) as Record<string, string>;
+    } catch {
+      return out;
+    }
+
+    const mytuner = ids.mytuner?.trim();
+    if (mytuner?.startsWith("http")) {
+      const u = this.refreshMytunerPage(mytuner);
+      if (u) out.push({ source: "mytuner_page", streamUrl: u, detail: mytuner });
+    }
+
+    const orb = ids.onlineradiobox?.trim();
+    if (orb) {
+      for (const p of this.orbCandidatePaths(orb)) {
+        const pageUrl = p.startsWith("http") ? p : `${ORB_ORIGIN}${p}`;
+        try {
+          const res = await axios.get<string>(pageUrl, {
+            timeout: 25_000,
+            headers: { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9" },
+            validateStatus: (s) => s === 200,
+          });
+          const html = typeof res.data === "string" ? res.data : "";
+          const stream = this.extractOrbStreamFromHtml(html);
+          if (stream) {
+            out.push({ source: "onlineradiobox", streamUrl: stream, detail: pageUrl });
+            break;
+          }
+        } catch {
+          // next path variant
+        }
+      }
+    }
+
+    const streema = ids.streema?.trim();
+    if (streema) {
+      const u = await this.refreshStreemaPath(streema);
+      if (u) {
+        const page =
+          streema.startsWith("http")
+            ? streema
+            : `https://streema.com${streema.startsWith("/") ? streema : `/${streema}`}`;
+        out.push({ source: "streema", streamUrl: u, detail: page });
+      }
+    }
+
+    return out;
+  }
+
   static async refreshFromSourceHints(
     sourceIdsJson: string | null | undefined,
     currentStreamUrl: string

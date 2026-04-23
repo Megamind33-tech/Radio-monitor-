@@ -14,6 +14,7 @@ import { StreamRefreshService } from "./services/stream-refresh.service.js";
 import { validateCandidateStreamUrl } from "./lib/stream-url-guard.js";
 import { StreamHealthService } from "./services/stream-health.service.js";
 import { effectiveMountUrl } from "./lib/stream-source.js";
+import { StreamDiscoveryService } from "./services/stream-discovery.service.js";
 import { monitorEvents } from "./lib/monitor-events.js";
 import { UnresolvedRecoveryService } from "./services/unresolved-recovery.service.js";
 import { LocalFingerprintService } from "./services/local-fingerprint.service.js";
@@ -340,6 +341,100 @@ async function startServer() {
       orderBy: [{ qualityScore: "desc" }, { isCurrent: "desc" }],
     });
     res.json(rows);
+  });
+
+  /**
+   * Multi-server stream discovery (no station website required): Radio-Browser mirrors,
+   * TuneIn OPML search + resolve, harvest hints (MyTuner / ORB / Streema). Read-only.
+   */
+  app.get("/api/stations/:id/discover-streams", async (req, res) => {
+    const st = await prisma.station.findUnique({ where: { id: req.params.id } });
+    if (!st) {
+      res.status(404).json({ error: "Station not found" });
+      return;
+    }
+    try {
+      const result = await StreamDiscoveryService.discoverForStation({
+        id: st.id,
+        name: st.name,
+        country: st.country,
+        streamUrl: st.streamUrl,
+        sourceIdsJson: st.sourceIdsJson,
+      });
+      res.json(result);
+    } catch (error) {
+      logger.error({ error, stationId: req.params.id }, "discover-streams failed");
+      res.status(500).json({ error: "discover_streams_failed", detail: String(error) });
+    }
+  });
+
+  const discoverApplySchema = z
+    .object({
+      streamUrl: z.string().url().max(4000).optional(),
+      preferredOnly: z.boolean().optional(),
+    })
+    .strict();
+
+  /**
+   * Run discovery and optionally set `preferredStreamUrl` (default) or replace `streamUrl`.
+   * Validates URL before write.
+   */
+  app.post("/api/stations/:id/discover-streams/apply", async (req, res) => {
+    const parsed = discoverApplySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+      return;
+    }
+    const st = await prisma.station.findUnique({ where: { id: req.params.id } });
+    if (!st) {
+      res.status(404).json({ error: "Station not found" });
+      return;
+    }
+    try {
+      const discovery = await StreamDiscoveryService.discoverForStation({
+        id: st.id,
+        name: st.name,
+        country: st.country,
+        streamUrl: st.streamUrl,
+        sourceIdsJson: st.sourceIdsJson,
+      });
+      let chosen = discovery.candidates[0]?.streamUrl ?? null;
+      if (parsed.data.streamUrl) {
+        const v = validateCandidateStreamUrl(parsed.data.streamUrl);
+        if (!v.accepted) {
+          res.status(400).json({ error: "invalid_stream_url", reason: v.reason });
+          return;
+        }
+        chosen = v.canonicalUrl;
+      }
+      if (!chosen) {
+        res.json({ updated: false, discovery, message: "No candidate stream URL found" });
+        return;
+      }
+      const check = validateCandidateStreamUrl(chosen);
+      if (!check.accepted) {
+        res.status(400).json({ error: "Rejected stream URL", reason: check.reason });
+        return;
+      }
+      const preferredOnly = parsed.data.preferredOnly !== false;
+      const updated = await prisma.station.update({
+        where: { id: st.id },
+        data: preferredOnly
+          ? { preferredStreamUrl: check.canonicalUrl, streamRefreshedAt: new Date() }
+          : { streamUrl: check.canonicalUrl, preferredStreamUrl: null, streamRefreshedAt: new Date() },
+      });
+      res.json({
+        updated: true,
+        preferredOnly,
+        streamUrl: updated.streamUrl,
+        preferredStreamUrl: updated.preferredStreamUrl,
+        chosen: check.canonicalUrl,
+        discovery,
+      });
+    } catch (error) {
+      logger.error({ error, stationId: req.params.id }, "discover-streams apply failed");
+      res.status(500).json({ error: "discover_streams_apply_failed", detail: String(error) });
+    }
   });
 
   app.get("/api/stations/:id/health-events", async (req, res) => {
