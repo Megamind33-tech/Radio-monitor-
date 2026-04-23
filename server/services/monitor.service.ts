@@ -27,6 +27,7 @@ import { StreamHealthService } from "./stream-health.service.js";
 import { classifyContent, deriveMonitorState } from "../lib/station-health.js";
 import { monitorEvents } from "../lib/monitor-events.js";
 import { classifyStreamUrl } from "../lib/stream-source.js";
+import { classifyMusicContent } from "../lib/music-content-filter.js";
 
 function parseEnvMs(key: string, fallback: number): number {
   const v = process.env[key];
@@ -123,9 +124,7 @@ function isJunkIcyMetadata(metadata: NormalizedMetadata | null): boolean {
 }
 
 function isProgramLikeTitle(text: string | null | undefined): boolean {
-  const t = String(text ?? "").trim().toLowerCase();
-  if (!t) return false;
-  return /\b(on air|program|show|morning show|afternoon show|evening show|news|sports|talk)\b/.test(t);
+  return !classifyMusicContent(text).isMusic;
 }
 
 function effectiveStreamUrl(station: Pick<Station, "streamUrl" | "preferredStreamUrl">): string {
@@ -430,6 +429,33 @@ export class MonitorService {
       let match = merged.match;
       let method: DetectionMethod = merged.method;
       const mergeReason = merged.reasonCode;
+
+      // ICY accuracy verification: when ICY has been stuck (metadata_stale) and the audio
+      // fingerprint resolves a DIFFERENT song, log the contradiction so operators can investigate
+      // the stream.  The fingerprint result is already preferred by mergeAcoustidAndCatalog;
+      // this log line makes the discrepancy visible in the detection trail.
+      if (
+        audioMatch?.title &&
+        metadata?.combinedRaw &&
+        (reasonCode === "metadata_stale" || reasonCode === "metadata_repeated_same_text")
+      ) {
+        const icyLower = metadata.combinedRaw.toLowerCase();
+        const fpTitle = (audioMatch.title ?? "").toLowerCase();
+        const icyContainsFp = icyLower.includes(fpTitle) || fpTitle.includes(icyLower.slice(0, 20));
+        if (!icyContainsFp && fpTitle.length > 3) {
+          logger.warn(
+            {
+              stationId,
+              icyText: metadata.combinedRaw,
+              fingerprintTitle: audioMatch.title,
+              fingerprintArtist: audioMatch.artist,
+              fingerprintSource: audioMatch.sourceProvider,
+              staleness: reasonCode,
+            },
+            "ICY title contradicts audio fingerprint — stream may have stuck ICY; fingerprint result used"
+          );
+        }
+      }
 
       const noMetadata = !metadata?.combinedRaw;
       const noCatalog = !catalogMatch;
@@ -1041,6 +1067,17 @@ export class MonitorService {
               chromaprint,
             },
           });
+
+          // Persist to the self-learned fingerprint library so future plays of this
+          // song are resolved locally — no AcoustID or catalog call needed.
+          if (fp) {
+            await LocalFingerprintService.learn({
+              fp,
+              match: match ?? null,
+              metadata: metadata ?? null,
+              source: match?.sourceProvider?.includes("acoustid") ? "acoustid" : "stream_metadata",
+            });
+          }
         }
       } catch (e) {
         logger.warn({ e, stationId }, "Song sample archive failed (non-fatal)");

@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { MonitorService } from "./monitor.service.js";
 import { UnresolvedRecoveryService } from "./unresolved-recovery.service.js";
+import { SpinRefreshService } from "./spin-refresh.service.js";
 
 type PollHandle = { stop: () => void };
 
@@ -13,6 +14,7 @@ export class SchedulerService {
   private static pollRunning: Set<string> = new Set();
   private static masterJob: cron.ScheduledTask | null = null;
   private static unresolvedRecoveryJob: cron.ScheduledTask | null = null;
+  private static spinRefreshJob: cron.ScheduledTask | null = null;
 
   static async init() {
     logger.info("Initializing station scheduler");
@@ -25,8 +27,25 @@ export class SchedulerService {
     this.unresolvedRecoveryJob = cron.schedule("*/2 * * * *", () => {
       void this.runUnresolvedRecoveryTick();
     });
+    // Metadata repair: scan for poorly-structured song entries and refresh them
+    // via iTunes / Deezer every 30 minutes.  Runs at :05 past each half-hour
+    // to avoid colliding with the :00 recovery batch.
+    this.spinRefreshJob = cron.schedule("5 */30 * * * *", () => {
+      void this.runSpinRefreshTick();
+    });
 
     await this.resyncStations();
+  }
+
+  private static async runSpinRefreshTick() {
+    try {
+      const out = await SpinRefreshService.runBatch({ limit: 30 });
+      if (out.refreshed > 0 || out.scanned > 0) {
+        logger.info({ out }, "Spin metadata refresh scheduler tick");
+      }
+    } catch (error) {
+      logger.warn({ error }, "Spin metadata refresh scheduler tick failed");
+    }
   }
 
   private static async runUnresolvedRecoveryTick() {
@@ -115,6 +134,7 @@ export class SchedulerService {
   static stopAll() {
     this.masterJob?.stop();
     this.unresolvedRecoveryJob?.stop();
+    this.spinRefreshJob?.stop();
     for (const h of this.tasks.values()) {
       h.stop();
     }

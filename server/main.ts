@@ -20,6 +20,7 @@ import { monitorEvents } from "./lib/monitor-events.js";
 import { UnresolvedRecoveryService } from "./services/unresolved-recovery.service.js";
 import { LocalFingerprintService } from "./services/local-fingerprint.service.js";
 import { fingerprintPipelineGate } from "./lib/fingerprint-pipeline-gate.js";
+import { SpinRefreshService } from "./services/spin-refresh.service.js";
 import * as XLSX from "xlsx";
 
 function isCommandAvailable(command: string, args: string[] = ["-version"]) {
@@ -1121,6 +1122,50 @@ async function startServer() {
         originalCombinedRaw: r.originalCombinedRaw,
       }))
     );
+  });
+
+  /**
+   * Songs whose metadata was saved in a poorly-structured way — e.g. artist and
+   * title concatenated into one field, or featured artists embedded in the title.
+   * These entries need a catalog re-query to split them correctly.
+   *
+   * Use ?stationId=<id> to narrow to one station, ?take=N to page (max 500).
+   */
+  app.get("/api/songs/needs-refresh", async (req, res) => {
+    try {
+      const stationId = typeof req.query.stationId === "string" && req.query.stationId.trim()
+        ? req.query.stationId.trim()
+        : undefined;
+      const takeRaw = typeof req.query.take === "string" ? Number(req.query.take) : 100;
+      const take = Number.isFinite(takeRaw) ? Math.min(Math.max(Math.trunc(takeRaw), 1), 500) : 100;
+      const result = await SpinRefreshService.listNeedsRefresh({ stationId, take });
+      res.json({ ...result, spinRefreshStatus: SpinRefreshService.status() });
+    } catch (error) {
+      logger.error({ error }, "Failed needs-refresh list request");
+      res.status(500).json({ error: "failed_to_list_needs_refresh" });
+    }
+  });
+
+  /**
+   * Trigger an immediate batch of metadata repairs.
+   * Body (optional): { stationId?: string, limit?: number (max 200) }
+   * The service is self-throttled (1 catalog request / second) and is a no-op
+   * when a batch is already running.
+   */
+  app.post("/api/songs/refresh", async (req, res) => {
+    try {
+      const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
+      const stationId = typeof body.stationId === "string" && body.stationId.trim()
+        ? body.stationId.trim()
+        : undefined;
+      const limitRaw = typeof body.limit === "number" ? body.limit : Number(body.limit);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 200) : 50;
+      const out = await SpinRefreshService.runBatch({ stationId, limit });
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "Failed songs refresh request");
+      res.status(500).json({ error: "failed_to_run_songs_refresh" });
+    }
   });
 
   app.get("/api/export/songs.csv", async (req, res) => {
