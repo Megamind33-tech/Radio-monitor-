@@ -79,6 +79,13 @@ interface Metrics {
   match_rate: number;
   match_rate_24h?: number;
   detections_24h?: number;
+  /** Matched ÷ detections excluding talk/program ICY noise (closer to “song ID” success). */
+  music_match_rate?: number;
+  music_match_rate_24h?: number;
+  music_detections?: number;
+  music_matched?: number;
+  music_detections_24h?: number;
+  music_matched_24h?: number;
   errors_count: number;
 }
 
@@ -207,11 +214,16 @@ export default function App() {
   const [stationPageSongSpins, setStationPageSongSpins] = useState<SongSpinRow[]>([]);
   const [stationPageLoading, setStationPageLoading] = useState(false);
   const [stationPageError, setStationPageError] = useState<string | null>(null);
+  const [includeHiddenStations, setIncludeHiddenStations] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('rm_include_hidden_stations') === '1';
+  });
 
-  const fetchData = async () => {
+  const fetchData = React.useCallback(async () => {
     try {
+      const stationsUrl = includeHiddenStations ? '/api/stations?visibility=all' : '/api/stations';
       const [stRes, metRes, spinRes] = await Promise.all([
-        fetch('/api/stations'),
+        fetch(stationsUrl),
         fetch('/api/metrics/summary'),
         fetch('/api/analytics/station-summaries'),
       ]);
@@ -226,7 +238,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [includeHiddenStations]);
 
   const fetchSongAnalytics = async () => {
     setAnalyticsLoading(true);
@@ -310,7 +322,7 @@ export default function App() {
     fetchLogs('all');
     const interval = setInterval(fetchData, STATION_REFRESH_MS);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchData]);
 
   useEffect(() => {
     if (activeTab === 'analytics') {
@@ -399,7 +411,7 @@ export default function App() {
       if (fallbackTimer) clearInterval(fallbackTimer);
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [activeTab, selectedStationId, stationPageId, fetchStationPageData]);
+  }, [activeTab, selectedStationId, stationPageId, fetchStationPageData, fetchData]);
 
   useEffect(() => {
     if (activeTab !== 'history') return;
@@ -409,6 +421,11 @@ export default function App() {
     }, HISTORY_REFRESH_MS);
     return () => clearInterval(interval);
   }, [activeTab, selectedStationId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('rm_include_hidden_stations', includeHiddenStations ? '1' : '0');
+  }, [includeHiddenStations]);
 
   const stationNameById = new Map(stations.map((station) => [station.id, station.name]));
   const spinByStation = new Map(spinSummaries.map((s) => [s.stationId, s]));
@@ -511,9 +528,21 @@ export default function App() {
           
           <div className="flex gap-4">
             <MetricCard 
-              label="Match Rate" 
-              value={metrics ? `${((metrics.match_rate_24h ?? metrics.match_rate) * 100).toFixed(1)}%` : '--'} 
-              sub={metrics?.detections_24h ? `Last 24h (${metrics.detections_24h} detections)` : 'Last 24h'}
+              label="Song match rate" 
+              value={
+                metrics
+                  ? `${(
+                      (metrics.music_match_rate_24h ?? metrics.music_match_rate ?? metrics.match_rate_24h ?? metrics.match_rate) * 100
+                    ).toFixed(1)}%`
+                  : '--'
+              } 
+              sub={
+                metrics?.music_detections_24h != null && metrics.music_matched_24h != null
+                  ? `Last 24h: ${metrics.music_matched_24h} matched / ${metrics.music_detections_24h} song attempts (talk/program ICY excluded)`
+                  : metrics?.detections_24h
+                    ? `Last 24h all logs: ${((metrics.match_rate_24h ?? metrics.match_rate) * 100).toFixed(1)}% (${metrics.detections_24h} rows)`
+                    : 'Last 24h'
+              }
             />
             <MetricCard 
               label="Monitoring" 
@@ -744,6 +773,22 @@ export default function App() {
                   </p>
                 )}
               </div>
+
+              <label className="flex items-start gap-3 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="mt-1 rounded border-white/20 bg-black/40"
+                  checked={includeHiddenStations}
+                  onChange={(e) => setIncludeHiddenStations(e.target.checked)}
+                />
+                <span className="text-sm text-gray-300">
+                  <span className="font-semibold text-white">Show all stations in the database</span>
+                  <span className="block text-xs text-gray-500 mt-1">
+                    When enabled, the dashboard loads every station row (including those with visibility turned off). Use this to
+                    audit the full catalog on production, then re-enable visibility per station if needed.
+                  </span>
+                </span>
+              </label>
 
               <div className="pt-4 border-t border-white/5 flex gap-4">
                 <button
