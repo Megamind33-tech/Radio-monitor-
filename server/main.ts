@@ -3,9 +3,11 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
+import os from "os";
+import crypto from "crypto";
 import cors from "cors";
 import helmet from "helmet";
-import { spawnSync } from "child_process";
+import { spawnSync, spawn } from "child_process";
 import { logger } from "./lib/logger.js";
 import { prisma } from "./lib/prisma.js";
 import { z } from "zod";
@@ -1467,6 +1469,348 @@ async function startServer() {
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.send(buffer);
   });
+
+  // ─── Audio Metadata Editor ────────────────────────────────────────────────
+
+  function normTagStr(val: string): string {
+    return String(val || "")
+      .normalize("NFKD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  }
+
+  async function writeAudioFileTags(
+    filePath: string,
+    meta: { title?: string; artist?: string; album?: string; genre?: string }
+  ): Promise<void> {
+    if (!fs.existsSync(filePath)) return;
+    const ext = path.extname(filePath).toLowerCase() || ".wav";
+    const tmpPath = path.join(os.tmpdir(), `rm_tag_${Date.now()}${ext}`);
+    await new Promise<void>((resolve, reject) => {
+      const args = ["-y", "-i", filePath];
+      if (meta.title) args.push("-metadata", `title=${meta.title}`);
+      if (meta.artist) args.push("-metadata", `artist=${meta.artist}`);
+      if (meta.album) args.push("-metadata", `album=${meta.album}`);
+      if (meta.genre) args.push("-metadata", `genre=${meta.genre}`);
+      args.push("-c", "copy", tmpPath);
+      const proc = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+      proc.on("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg tag-write exited ${code}`));
+      });
+      proc.on("error", reject);
+    });
+    fs.renameSync(tmpPath, filePath);
+  }
+
+  /**
+   * LIST unresolved audio samples available for manual metadata editing.
+   * Query params:
+   *   status: "untagged" (default) | "tagged" | "all"
+   *   stationId: filter to one station
+   *   take: max rows (1-500, default 100)
+   */
+  app.get("/api/audio-editor/samples", async (req, res) => {
+    try {
+      const takeRaw = typeof req.query.take === "string" ? Number(req.query.take) : 100;
+      const take = Number.isFinite(takeRaw) ? Math.min(Math.max(Math.trunc(takeRaw), 1), 500) : 100;
+      const stationId = typeof req.query.stationId === "string" && req.query.stationId.trim()
+        ? req.query.stationId.trim() : undefined;
+      const statusFilter = typeof req.query.status === "string" ? req.query.status.trim() : "untagged";
+
+      // Recovery statuses to include
+      const recoveryStatuses =
+        statusFilter === "tagged"
+          ? ["recovered"]
+          : statusFilter === "all"
+          ? ["pending", "no_match", "error", "recovered"]
+          : ["pending", "no_match", "error"];
+
+      const rows = await prisma.unresolvedSample.findMany({
+        where: {
+          ...(stationId ? { stationId } : {}),
+          recoveryStatus: { in: recoveryStatuses },
+        },
+        orderBy: { createdAt: "desc" },
+        take,
+        select: {
+          id: true,
+          stationId: true,
+          detectionLogId: true,
+          filePath: true,
+          createdAt: true,
+          recoveryStatus: true,
+          recoveryAttempts: true,
+          lastRecoveryAt: true,
+          recoveredAt: true,
+          lastRecoveryError: true,
+        },
+      });
+
+      const stationIds = [...new Set(rows.map((r) => r.stationId))];
+      const stations = stationIds.length
+        ? await prisma.station.findMany({
+            where: { id: { in: stationIds } },
+            select: { id: true, name: true, country: true, province: true },
+          })
+        : [];
+      const stationById = new Map(stations.map((s) => [s.id, s]));
+
+      const logIds = rows.map((r) => r.detectionLogId).filter((id): id is string => !!id);
+      const logs = logIds.length
+        ? await prisma.detectionLog.findMany({
+            where: { id: { in: logIds } },
+            select: {
+              id: true,
+              observedAt: true,
+              rawStreamText: true,
+              parsedArtist: true,
+              parsedTitle: true,
+              titleFinal: true,
+              artistFinal: true,
+              releaseFinal: true,
+              genreFinal: true,
+              detectionMethod: true,
+              reasonCode: true,
+              manuallyTagged: true,
+              manualTaggedAt: true,
+            },
+          })
+        : [];
+      const logById = new Map(logs.map((l) => [l.id, l]));
+
+      const items = rows.map((row) => {
+        const station = stationById.get(row.stationId);
+        const log = row.detectionLogId ? logById.get(row.detectionLogId) : undefined;
+        const hasAudioFile = !!row.filePath && fs.existsSync(row.filePath);
+        return {
+          id: row.id,
+          stationId: row.stationId,
+          stationName: station?.name ?? null,
+          stationCountry: station?.country ?? null,
+          stationProvince: station?.province ?? null,
+          detectionLogId: row.detectionLogId ?? null,
+          createdAt: row.createdAt,
+          recoveryStatus: row.recoveryStatus,
+          recoveryAttempts: row.recoveryAttempts,
+          lastRecoveryAt: row.lastRecoveryAt ?? null,
+          recoveredAt: row.recoveredAt ?? null,
+          lastRecoveryError: row.lastRecoveryError ?? null,
+          hasAudioFile,
+          detectedAt: log?.observedAt ?? null,
+          rawStreamText: log?.rawStreamText ?? null,
+          parsedArtist: log?.parsedArtist ?? null,
+          parsedTitle: log?.parsedTitle ?? null,
+          reasonCode: log?.reasonCode ?? null,
+          titleFinal: log?.titleFinal ?? null,
+          artistFinal: log?.artistFinal ?? null,
+          releaseFinal: log?.releaseFinal ?? null,
+          genreFinal: log?.genreFinal ?? null,
+          manuallyTagged: log?.manuallyTagged ?? false,
+          manualTaggedAt: log?.manualTaggedAt ?? null,
+        };
+      });
+
+      res.json({ total: items.length, statusFilter, items });
+    } catch (error) {
+      logger.error({ error }, "audio-editor list failed");
+      res.status(500).json({ error: "audio_editor_list_failed" });
+    }
+  });
+
+  /** Stream the raw audio file for in-browser playback (supports Range requests). */
+  app.get("/api/audio-editor/samples/:id/audio", async (req, res) => {
+    try {
+      const sample = await prisma.unresolvedSample.findUnique({
+        where: { id: req.params.id },
+        select: { filePath: true },
+      });
+      if (!sample) {
+        res.status(404).json({ error: "sample_not_found" });
+        return;
+      }
+      if (!sample.filePath || !fs.existsSync(sample.filePath)) {
+        res.status(404).json({ error: "audio_file_not_on_disk" });
+        return;
+      }
+      const ext = path.extname(sample.filePath).toLowerCase();
+      const contentType =
+        ext === ".mp3" ? "audio/mpeg" :
+        ext === ".ogg" ? "audio/ogg" :
+        ext === ".aac" ? "audio/aac" :
+        "audio/wav";
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Accept-Ranges", "bytes");
+      res.sendFile(path.resolve(sample.filePath));
+    } catch (error) {
+      logger.error({ error, id: req.params.id }, "audio-editor stream failed");
+      res.status(500).json({ error: "audio_stream_failed" });
+    }
+  });
+
+  const audioEditorPatchSchema = z.object({
+    title: z.string().max(500).optional(),
+    artist: z.string().max(500).optional(),
+    album: z.string().max(500).optional(),
+    genre: z.string().max(200).optional(),
+  }).strict();
+
+  /**
+   * Save manually entered metadata for an unresolved audio sample.
+   * Updates DetectionLog, StationSongSpin, UnresolvedSample, and embeds
+   * ID3/WAV tags into the audio file so the recording is self-describing.
+   */
+  app.patch("/api/audio-editor/samples/:id", async (req, res) => {
+    try {
+      const parsed = audioEditorPatchSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
+        return;
+      }
+      const { title = "", artist = "", album = "", genre = "" } = parsed.data;
+
+      const sample = await prisma.unresolvedSample.findUnique({
+        where: { id: req.params.id },
+        select: { id: true, stationId: true, detectionLogId: true, filePath: true, recoveryStatus: true },
+      });
+      if (!sample) {
+        res.status(404).json({ error: "sample_not_found" });
+        return;
+      }
+
+      const now = new Date();
+
+      // 1. Update DetectionLog (if linked)
+      if (sample.detectionLogId) {
+        await prisma.detectionLog.update({
+          where: { id: sample.detectionLogId },
+          data: {
+            titleFinal: title || null,
+            artistFinal: artist || null,
+            releaseFinal: album || null,
+            genreFinal: genre || null,
+            status: "matched",
+            sourceProvider: "manual",
+            manuallyTagged: true,
+            manualTaggedAt: now,
+          },
+        });
+      }
+
+      // 2. Mark UnresolvedSample as recovered
+      await prisma.unresolvedSample.update({
+        where: { id: sample.id },
+        data: {
+          recoveryStatus: "recovered",
+          recoveredAt: now,
+        },
+      });
+
+      // 3. Upsert StationSongSpin so song appears in analytics
+      const titleNorm = normTagStr(title);
+      if (titleNorm) {
+        const artistNorm = normTagStr(artist);
+        const albumNorm = normTagStr(album);
+        await prisma.stationSongSpin.upsert({
+          where: {
+            stationId_artistNorm_titleNorm_albumNorm: {
+              stationId: sample.stationId,
+              artistNorm,
+              titleNorm,
+              albumNorm,
+            },
+          },
+          create: {
+            stationId: sample.stationId,
+            artistNorm,
+            titleNorm,
+            albumNorm,
+            artistLast: artist,
+            titleLast: title,
+            albumLast: album,
+            playCount: 1,
+            firstPlayedAt: now,
+            lastPlayedAt: now,
+            lastDetectionLogId: sample.detectionLogId ?? null,
+            manuallyTagged: true,
+          },
+          update: {
+            artistLast: artist,
+            titleLast: title,
+            albumLast: album,
+            lastPlayedAt: now,
+            lastDetectionLogId: sample.detectionLogId ?? null,
+            manuallyTagged: true,
+          },
+        });
+      }
+
+      // 4. Create LocalFingerprint entry if a chromaprint is stored in SongSampleArchive
+      if (sample.detectionLogId) {
+        const archive = await prisma.songSampleArchive.findUnique({
+          where: { detectionLogId: sample.detectionLogId },
+          select: { chromaprint: true, durationSec: true },
+        });
+        if (archive?.chromaprint && archive.durationSec) {
+          const sha1 = crypto.createHash("sha1").update(archive.chromaprint).digest("hex");
+          const prefix = archive.chromaprint.substring(0, 48);
+          await prisma.localFingerprint.upsert({
+            where: { fingerprintSha1: sha1 },
+            create: {
+              fingerprint: archive.chromaprint,
+              fingerprintSha1: sha1,
+              fingerprintPrefix: prefix,
+              durationSec: archive.durationSec,
+              title: title || null,
+              artist: artist || null,
+              releaseTitle: album || null,
+              genre: genre || null,
+              source: "manual",
+              confidence: 1.0,
+              timesMatched: 1,
+            },
+            update: {
+              title: title || null,
+              artist: artist || null,
+              releaseTitle: album || null,
+              genre: genre || null,
+              source: "manual",
+              confidence: 1.0,
+              timesMatched: { increment: 1 },
+              lastMatchedAt: now,
+              updatedAt: now,
+            },
+          });
+        }
+      }
+
+      // 5. Embed metadata tags into the audio file via ffmpeg (best-effort)
+      if (sample.filePath && fs.existsSync(sample.filePath)) {
+        writeAudioFileTags(sample.filePath, { title, artist, album, genre }).catch((err) => {
+          logger.warn({ err, filePath: sample.filePath }, "audio tag write failed (non-fatal)");
+        });
+      }
+
+      res.json({
+        ok: true,
+        sampleId: sample.id,
+        detectionLogId: sample.detectionLogId,
+        manuallyTagged: true,
+        manualTaggedAt: now,
+        title,
+        artist,
+        album,
+        genre,
+      });
+    } catch (error) {
+      logger.error({ error, id: req.params.id }, "audio-editor patch failed");
+      res.status(500).json({ error: "audio_editor_patch_failed" });
+    }
+  });
+
+  // ── end Audio Metadata Editor ─────────────────────────────────────────────
 
   // Initialize Scheduler
   await SchedulerService.init();

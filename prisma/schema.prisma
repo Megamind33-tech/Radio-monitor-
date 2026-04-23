@@ -214,6 +214,9 @@ model DetectionLog {
   reasonCode      String?
   /// JSON: fingerprint attempts, metadata quality flags, merge hints (pipeline audit)
   matchDiagnosticsJson String?
+  /// True when a human manually set titleFinal/artistFinal via the audio editor
+  manuallyTagged  Boolean  @default(false)
+  manualTaggedAt  DateTime?
 
   station Station @relation(fields: [stationId], references: [id])
   songSample SongSampleArchive?
@@ -240,6 +243,8 @@ model StationSongSpin {
   firstPlayedAt DateTime
   lastPlayedAt  DateTime
   lastDetectionLogId String?
+  /// True when this spin entry was created/confirmed via the manual audio editor
+  manuallyTagged Boolean @default(false)
 
   station Station @relation(fields: [stationId], references: [id], onDelete: Cascade)
 
