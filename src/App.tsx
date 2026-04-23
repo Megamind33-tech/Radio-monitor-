@@ -32,6 +32,7 @@ interface Station {
   frequencyMhz?: string | null;
   icyQualification?: string | null;
   streamUrl: string;
+  preferredStreamUrl?: string | null;
   pollIntervalSeconds?: number;
   isActive: boolean;
   lastPollAt?: string | null;
@@ -39,7 +40,16 @@ interface Station {
   lastPollError?: string | null;
   monitorState?: 'ACTIVE_MUSIC' | 'ACTIVE_NO_MATCH' | 'ACTIVE_TALK' | 'DEGRADED' | 'INACTIVE' | 'UNKNOWN';
   monitorStateReason?: string | null;
-  contentClassification?: 'music' | 'talk' | 'mixed' | 'unknown';
+  contentClassification?: 'music' | 'talk' | 'ads' | 'unknown_speech' | 'mixed' | 'unknown';
+  streamSourceType?: string | null;
+  streamSourceQualityScore?: number | null;
+  streamOnlineLast?: number | null;
+  audioDetectedLast?: number | null;
+  metadataAvailableLast?: number | null;
+  songIdentifiedLast?: number | null;
+  decodeHealthEma?: number | null;
+  fingerprintHitEma?: number | null;
+  metadataPresentEma?: number | null;
   visibilityEnabled?: boolean;
   lastHealthyAt?: string | null;
   lastGoodAudioAt?: string | null;
@@ -1096,7 +1106,10 @@ function StationTableRow({
         <div className="text-xs text-gray-500 truncate" title={station.currentNowPlaying?.artist || 'No current track'}>{station.currentNowPlaying?.artist || 'No current track'}</div>
       </td>
       <td className="py-3 px-3">
-        <span className={`text-[11px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg border ${badge.className}`}>
+        <span
+          title={badge.title}
+          className={`text-[11px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg border ${badge.className}`}
+        >
           {badge.text}
         </span>
       </td>
@@ -1197,7 +1210,9 @@ function StationDetailPage({
   const [probing, setProbing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [streamEdit, setStreamEdit] = useState(station.streamUrl);
+  const [preferredEdit, setPreferredEdit] = useState(station.preferredStreamUrl || '');
   const [savingUrl, setSavingUrl] = useState(false);
+  const [savingPreferred, setSavingPreferred] = useState(false);
   const [refreshingUrl, setRefreshingUrl] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -1206,7 +1221,8 @@ function StationDetailPage({
 
   useEffect(() => {
     setStreamEdit(station.streamUrl);
-  }, [station.id, station.streamUrl]);
+    setPreferredEdit(station.preferredStreamUrl || '');
+  }, [station.id, station.streamUrl, station.preferredStreamUrl]);
 
   const lastPoll = station.lastPollAt ? new Date(station.lastPollAt) : null;
   const pollOk = station.lastPollStatus === 'ok';
@@ -1303,7 +1319,11 @@ function StationDetailPage({
           </div>
 
           <div className="text-right space-y-1 text-xs text-gray-500">
-            <div><span className={`px-2 py-1 rounded-lg border font-semibold uppercase tracking-wide ${badge.className}`}>{badge.text}</span></div>
+            <div>
+              <span title={badge.title} className={`px-2 py-1 rounded-lg border font-semibold uppercase tracking-wide ${badge.className}`}>
+                {badge.text}
+              </span>
+            </div>
             <div>Last check: {station.lastPollAt ? new Date(station.lastPollAt).toLocaleString() : '—'}</div>
             <div>Last song: {station.lastSongDetectedAt ? new Date(station.lastSongDetectedAt).toLocaleString() : '—'}</div>
             <div title="Total matched plays = sum of play counts; repeats of the same song add here, not as new rows in the song list.">
@@ -1352,13 +1372,37 @@ function StationDetailPage({
             {station.isActive ? 'Pause monitoring' : 'Resume monitoring'}
           </button>
           <a
-            href={station.streamUrl}
+            href={(station.preferredStreamUrl || '').trim() || station.streamUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="px-3 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50 inline-flex items-center gap-2"
           >
-            Open stream <ExternalLink className="w-3.5 h-3.5" />
+            Open active mount <ExternalLink className="w-3.5 h-3.5" />
           </a>
+        </div>
+
+        <div
+          className="rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-xs text-gray-400 space-y-1"
+          title={badge.title}
+        >
+          <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Stream vs song ID</div>
+          <p className="text-gray-300">{badge.title}</p>
+          <p>
+            Source tier:{' '}
+            <span className="text-gray-200">{station.streamSourceType || 'unknown'}</span>
+            {station.streamSourceQualityScore != null ? (
+              <span className="text-gray-500"> · quality {station.streamSourceQualityScore}</span>
+            ) : null}
+          </p>
+          {(station.decodeHealthEma != null ||
+            station.fingerprintHitEma != null ||
+            station.metadataPresentEma != null) && (
+            <p className="text-gray-500">
+              EMA decode {((station.decodeHealthEma ?? 0) * 100).toFixed(0)}% · fp hit{' '}
+              {((station.fingerprintHitEma ?? 0) * 100).toFixed(0)}% · metadata present{' '}
+              {((station.metadataPresentEma ?? 0) * 100).toFixed(0)}%
+            </p>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -1400,7 +1444,11 @@ function StationDetailPage({
               </button>
               <button
                 type="button"
-                disabled={savingUrl || streamEdit.trim() === station.streamUrl}
+                disabled={
+                  savingUrl ||
+                  (streamEdit.trim() === station.streamUrl &&
+                    (preferredEdit || '').trim() === (station.preferredStreamUrl || '').trim())
+                }
                 onClick={async () => {
                   setSavingUrl(true);
                   setPageError(null);
@@ -1408,7 +1456,10 @@ function StationDetailPage({
                     const res = await fetch(`/api/stations/${station.id}`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ streamUrl: streamEdit.trim() }),
+                      body: JSON.stringify({
+                        streamUrl: streamEdit.trim(),
+                        preferredStreamUrl: (preferredEdit || '').trim() || null,
+                      }),
                     });
                     const body = await res.json().catch(() => ({}));
                     if (!res.ok) {
@@ -1424,7 +1475,7 @@ function StationDetailPage({
                 }}
                 className="px-3 py-2 rounded-lg text-xs font-semibold bg-brand-purple/30 border border-brand-purple/40 hover:bg-brand-purple/50 disabled:opacity-40"
               >
-                {savingUrl ? 'Saving…' : 'Save URL'}
+                {savingUrl ? 'Saving…' : 'Save URLs'}
               </button>
               <button
                 type="button"
@@ -1455,6 +1506,53 @@ function StationDetailPage({
                 {refreshingUrl ? 'Refreshing…' : 'Auto-refresh from source'}
               </button>
             </div>
+            <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold pt-2">
+              Preferred mount (optional direct stream)
+            </div>
+            <p className="text-[11px] text-gray-500">
+              When set, monitoring uses this URL instead of the catalog URL above. Leave empty to use the station URL only.
+            </p>
+            <textarea
+              rows={2}
+              value={preferredEdit}
+              onChange={(event) => setPreferredEdit(event.target.value)}
+              className="w-full text-xs font-mono bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-gray-300 outline-none focus:border-brand-cyan/50 resize-y"
+              spellCheck={false}
+              placeholder="https://… direct mp3/aac/hls mount"
+            />
+            <button
+              type="button"
+              disabled={
+                savingPreferred ||
+                (preferredEdit || '').trim() === (station.preferredStreamUrl || '').trim()
+              }
+              onClick={async () => {
+                setSavingPreferred(true);
+                setPageError(null);
+                try {
+                  const res = await fetch(`/api/stations/${station.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      preferredStreamUrl: (preferredEdit || '').trim() || null,
+                    }),
+                  });
+                  const body = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    setPageError(typeof body.error === 'string' ? body.error : 'Invalid preferred URL');
+                    return;
+                  }
+                  onRefreshAll();
+                } catch (e) {
+                  setPageError(e instanceof Error ? e.message : 'Save failed');
+                } finally {
+                  setSavingPreferred(false);
+                }
+              }}
+              className="px-3 py-2 rounded-lg text-xs font-semibold border border-white/10 bg-black/30 hover:bg-black/50 disabled:opacity-40"
+            >
+              {savingPreferred ? 'Saving…' : 'Save preferred only'}
+            </button>
           </div>
         </div>
 
@@ -1630,28 +1728,47 @@ function MetricCard({ label, value, sub }: any) {
   );
 }
 
+function streamSignalsTitle(station: Station): string {
+  const on = (v: number | null | undefined) => (v === 1 ? 'yes' : v === 0 ? 'no' : '—');
+  return [
+    `Stream online: ${on(station.streamOnlineLast)}`,
+    `Audio bytes: ${on(station.audioDetectedLast)}`,
+    `Metadata: ${on(station.metadataAvailableLast)}`,
+    `Song identified: ${on(station.songIdentifiedLast)}`,
+    station.contentClassification ? `Content: ${station.contentClassification}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 function monitorBadge(station: Station, pollErr: boolean, stalePoll: boolean, pollOk: boolean, lastPoll: Date | null) {
   const state = station.monitorState || 'UNKNOWN';
+  const signals = streamSignalsTitle(station);
   if (!station.isActive) {
-    return { text: 'Offline', className: 'border-white/10 text-gray-500' };
+    return { text: 'Disabled', className: 'border-white/10 text-gray-500', title: signals };
   }
   if (state === 'INACTIVE') {
-    return { text: 'Offline', className: 'border-red-500/40 text-red-300' };
+    return { text: 'Stream offline', className: 'border-red-500/40 text-red-300', title: signals };
   }
   if (state === 'DEGRADED') {
-    return { text: 'Degraded', className: 'border-amber-500/40 text-amber-200' };
+    const transportOk = station.streamOnlineLast === 1 && station.audioDetectedLast === 1;
+    return {
+      text: transportOk ? 'Online · weak decode' : 'Degraded',
+      className: 'border-amber-500/40 text-amber-200',
+      title: signals,
+    };
   }
   if (state === 'ACTIVE_TALK') {
-    return { text: 'Talk show', className: 'border-purple-500/40 text-purple-200' };
+    return { text: 'Online · non-music', className: 'border-purple-500/40 text-purple-200', title: signals };
   }
   if (state === 'ACTIVE_MUSIC') {
-    return { text: 'Music detected', className: 'border-green-500/30 text-green-300' };
+    return { text: 'Online · song ID', className: 'border-green-500/30 text-green-300', title: signals };
   }
   if (state === 'ACTIVE_NO_MATCH') {
-    return { text: 'No current song match', className: 'border-cyan-500/40 text-cyan-200' };
+    return { text: 'Online · no song ID', className: 'border-cyan-500/40 text-cyan-200', title: signals };
   }
-  if (pollErr) return { text: 'Stream error', className: 'border-red-500/40 text-red-300' };
-  if (stalePoll) return { text: 'No recent poll', className: 'border-amber-500/40 text-amber-200' };
-  if (pollOk || lastPoll) return { text: 'Active', className: 'border-green-500/30 text-green-300' };
-  return { text: 'Starting…', className: 'border-white/10 text-gray-500' };
+  if (pollErr) return { text: 'Poll error', className: 'border-red-500/40 text-red-300', title: signals };
+  if (stalePoll) return { text: 'No recent poll', className: 'border-amber-500/40 text-amber-200', title: signals };
+  if (pollOk || lastPoll) return { text: 'Online', className: 'border-green-500/30 text-green-300', title: signals };
+  return { text: 'Starting…', className: 'border-white/10 text-gray-500', title: signals };
 }

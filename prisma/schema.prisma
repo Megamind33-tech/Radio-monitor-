@@ -21,6 +21,8 @@ model Station {
   /// FM frequency if parsed from station name (e.g. "94.5"); not always available from stream metadata
   frequencyMhz               String?
   streamUrl                  String
+  /// When set, monitoring uses this URL instead of streamUrl (manual override / promoted direct source)
+  preferredStreamUrl         String?
   streamFormatHint           String?
   /// radio_garden channel id, tunein station id, etc. (JSON string)
   sourceIdsJson              String?
@@ -50,7 +52,7 @@ model Station {
   monitorState               String   @default("UNKNOWN")
   /// Human readable reason code for current monitorState
   monitorStateReason         String?
-  /// music | talk | mixed | unknown - derived from metadata/audio heuristics
+  /// music | talk | ads | unknown_speech | mixed | unknown - content window (not stream online)
   contentClassification      String   @default("unknown")
   /// Last time stream health was validated (light or deep check)
   lastValidationAt           DateTime?
@@ -90,6 +92,22 @@ model Station {
   detectionLagSamples        Int      @default(0)
   /// When streamUrl was auto-updated from sourceIdsJson (MyTuner / ORB / Streema)
   streamRefreshedAt          DateTime?
+  /// direct | official_cdn | relay | aggregator | unknown (heuristic from URL)
+  streamSourceType           String   @default("unknown")
+  /// 0-100; higher = more trusted for fingerprint/metadata
+  streamSourceQualityScore   Int      @default(50)
+  streamSourceLastEvaluatedAt DateTime?
+  /// EMA 0-1 decode success (ffprobe); does not affect stream online
+  decodeHealthEma            Float    @default(1)
+  /// EMA 0-1 fingerprint hit when attempted
+  fingerprintHitEma        Float    @default(0)
+  /// EMA 0-1 non-blank ICY when polled
+  metadataPresentEma       Float    @default(0)
+  /// Last poll: transport layer (SQLite 0/1)
+  streamOnlineLast         Int      @default(0)
+  audioDetectedLast        Int      @default(0)
+  metadataAvailableLast    Int      @default(0)
+  songIdentifiedLast       Int      @default(0)
   /// 0=default ICY trust; 1=stricter branding filter; 2=stricter callsign-like filter
   metadataTrustTightness     Int      @default(0)
   /// Chromaprint capture attempts when first sample yields no match (1-4)
@@ -119,6 +137,16 @@ model StationStreamEndpoint {
   resolvedUrl         String?
   isCurrent           Boolean  @default(false)
   isSuppressed        Boolean  @default(false)
+  /// direct | official_cdn | relay | aggregator | unknown
+  sourceTier          String   @default("unknown")
+  /// 0-100 heuristic rank for source preference
+  qualityScore        Int      @default(50)
+  fingerprintHits     Int      @default(0)
+  fingerprintAttempts Int      @default(0)
+  decodeHits          Int      @default(0)
+  decodeAttempts      Int      @default(0)
+  metadataFreshHits   Int      @default(0)
+  metadataPolls       Int      @default(0)
   lastValidatedAt     DateTime?
   /// healthy | degraded | inactive | unknown
   lastValidationStatus String?

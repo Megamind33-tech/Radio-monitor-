@@ -13,6 +13,7 @@ import { MonitorService } from "./services/monitor.service.js";
 import { StreamRefreshService } from "./services/stream-refresh.service.js";
 import { validateCandidateStreamUrl } from "./lib/stream-url-guard.js";
 import { StreamHealthService } from "./services/stream-health.service.js";
+import { effectiveMountUrl } from "./lib/stream-source.js";
 import { monitorEvents } from "./lib/monitor-events.js";
 import { UnresolvedRecoveryService } from "./services/unresolved-recovery.service.js";
 import { LocalFingerprintService } from "./services/local-fingerprint.service.js";
@@ -231,6 +232,7 @@ async function startServer() {
       province: z.string().max(200).optional(),
       frequencyMhz: z.string().max(32).nullable().optional(),
       streamUrl: z.string().url().max(4000).optional(),
+      preferredStreamUrl: z.string().url().max(4000).nullable().optional(),
       streamFormatHint: z.string().max(64).nullable().optional(),
       sourceIdsJson: z.string().max(8000).nullable().optional(),
       icyQualification: z.string().max(32).nullable().optional(),
@@ -272,6 +274,14 @@ async function startServer() {
       }
       parsed.data.streamUrl = check.canonicalUrl;
     }
+    if (parsed.data.preferredStreamUrl) {
+      const check = validateCandidateStreamUrl(parsed.data.preferredStreamUrl);
+      if (!check.accepted) {
+        res.status(400).json({ error: `Rejected preferred stream URL: ${check.reason}` });
+        return;
+      }
+      parsed.data.preferredStreamUrl = check.canonicalUrl;
+    }
     const station = await prisma.station.update({
       where: { id: req.params.id },
       data: parsed.data,
@@ -304,7 +314,8 @@ async function startServer() {
       res.status(404).json({ error: "Station not found" });
       return;
     }
-    const health = await StreamHealthService.validateStream(st.streamUrl);
+    const mount = effectiveMountUrl(st.streamUrl, st.preferredStreamUrl);
+    const health = await StreamHealthService.validateStream(mount);
     const now = new Date();
     await prisma.station.update({
       where: { id: st.id },
@@ -316,10 +327,19 @@ async function startServer() {
         lastStreamCodec: health.codec || null,
         lastStreamBitrate: health.bitrate ?? null,
         lastHealthyAt: health.reachable && health.audioFlowing ? now : st.lastHealthyAt,
-        lastGoodAudioAt: health.decoderOk ? now : st.lastGoodAudioAt,
+        lastGoodAudioAt: health.reachable && health.audioFlowing ? now : st.lastGoodAudioAt,
       },
     });
-    res.json({ stationId: st.id, health });
+    res.json({ stationId: st.id, health, validatedUrl: mount });
+  });
+
+  /** Alternate / historical mount URLs with per-source quality and hit counters. */
+  app.get("/api/stations/:id/stream-endpoints", async (req, res) => {
+    const rows = await prisma.stationStreamEndpoint.findMany({
+      where: { stationId: req.params.id },
+      orderBy: [{ qualityScore: "desc" }, { isCurrent: "desc" }],
+    });
+    res.json(rows);
   });
 
   app.get("/api/stations/:id/health-events", async (req, res) => {

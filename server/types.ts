@@ -13,7 +13,13 @@ export type StationMonitorState =
   | 'INACTIVE'
   | 'UNKNOWN';
 
-export type StationContentClassification = 'music' | 'talk' | 'mixed' | 'unknown';
+export type StationContentClassification =
+  | 'music'
+  | 'talk'
+  | 'ads'
+  | 'unknown_speech'
+  | 'mixed'
+  | 'unknown';
 
 export interface NormalizedMetadata {
   rawTitle?: string;
