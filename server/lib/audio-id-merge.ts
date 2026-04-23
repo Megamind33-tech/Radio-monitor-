@@ -8,8 +8,8 @@ function norm(s: string | null | undefined): string {
 }
 
 function fingerprintMethodForProvider(provider: MatchResult["sourceProvider"]): DetectionMethod {
-  if (provider === "acoustid" || provider === "acoustid_open") {
-    return "fingerprint_acoustid";
+  if (provider === "local_fingerprint") {
+    return "fingerprint_local";
   }
   return "fingerprint_acoustid";
 }

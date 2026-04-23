@@ -15,6 +15,7 @@ import { validateCandidateStreamUrl } from "./lib/stream-url-guard.js";
 import { StreamHealthService } from "./services/stream-health.service.js";
 import { monitorEvents } from "./lib/monitor-events.js";
 import { UnresolvedRecoveryService } from "./services/unresolved-recovery.service.js";
+import { LocalFingerprintService } from "./services/local-fingerprint.service.js";
 import * as XLSX from "xlsx";
 
 function isCommandAvailable(command: string, args: string[] = ["-version"]) {
@@ -365,6 +366,45 @@ async function startServer() {
       take
     });
     res.json(logs);
+  });
+
+  app.get("/api/fingerprints/local/stats", async (_req, res) => {
+    try {
+      const stats = await LocalFingerprintService.stats();
+      res.json(stats);
+    } catch (error) {
+      logger.error({ error }, "Failed to read local fingerprint stats");
+      res.status(500).json({ error: "failed_to_read_local_fingerprint_stats" });
+    }
+  });
+
+  app.get("/api/fingerprints/local", async (req, res) => {
+    try {
+      const takeRaw = typeof req.query.take === "string" ? Number(req.query.take) : 100;
+      const take = Number.isFinite(takeRaw) ? Math.min(Math.max(Math.trunc(takeRaw), 1), 2000) : 100;
+      const rows = await prisma.localFingerprint.findMany({
+        orderBy: { lastMatchedAt: "desc" },
+        take,
+        select: {
+          id: true,
+          title: true,
+          artist: true,
+          releaseTitle: true,
+          durationSec: true,
+          acoustidTrackId: true,
+          recordingMbid: true,
+          source: true,
+          confidence: true,
+          timesMatched: true,
+          firstLearnedAt: true,
+          lastMatchedAt: true,
+        },
+      });
+      res.json(rows);
+    } catch (error) {
+      logger.error({ error }, "Failed to list local fingerprints");
+      res.status(500).json({ error: "failed_to_list_local_fingerprints" });
+    }
   });
 
   app.get("/api/recovery/unresolved/status", async (_req, res) => {
@@ -814,6 +854,7 @@ async function startServer() {
         confidence: true,
         sourceProvider: true,
         releaseDate: true,
+        acoustidId: true,
         recordingMbid: true,
         isrcList: true,
         status: true,
@@ -850,7 +891,8 @@ async function startServer() {
       Score: toNum(r.confidence ?? null) ?? "",
       Label: "",
       "Release Date": r.releaseDate || "",
-      ACRID: r.recordingMbid || "",
+      AcoustID: r.acoustidId || r.recordingMbid || "",
+      MBID: r.recordingMbid || "",
       ISRC: parseIsrc(r.isrcList) || "",
       ISWC: "",
       UPC: "",
@@ -872,7 +914,8 @@ async function startServer() {
         isrc: string;
         plays: number;
         playTimeSeconds: number;
-        acrid: string;
+        acoustid: string;
+        mbid: string;
       }
     >();
     for (const r of rows) {
@@ -883,8 +926,9 @@ async function startServer() {
       const from = stationNameById.get(r.stationId) || r.stationId;
       const label = r.sourceProvider || "";
       const isrc = parseIsrc(r.isrcList) || "";
-      const acrid = r.recordingMbid || "";
-      const key = [title, artist, album, from, isrc, acrid].join("||");
+      const acoustid = r.acoustidId || r.recordingMbid || "";
+      const mbid = r.recordingMbid || "";
+      const key = [title, artist, album, from, isrc, acoustid].join("||");
       const current = statMap.get(key) || {
         title,
         artist,
@@ -894,7 +938,8 @@ async function startServer() {
         isrc,
         plays: 0,
         playTimeSeconds: 0,
-        acrid,
+        acoustid,
+        mbid,
       };
       current.plays += 1;
       current.playTimeSeconds += toSec(r.trackDurationMs ?? null) || 0;
@@ -913,7 +958,8 @@ async function startServer() {
         ISRC: x.isrc,
         Plays: x.plays,
         "Play Time(seconds)": x.playTimeSeconds,
-        ACRID: x.acrid,
+        AcoustID: x.acoustid,
+        MBID: x.mbid,
       }));
 
     const wb = XLSX.utils.book_new();
@@ -934,7 +980,8 @@ async function startServer() {
         "Score",
         "Label",
         "Release Date",
-        "ACRID",
+        "AcoustID",
+        "MBID",
         "ISRC",
         "ISWC",
         "UPC",
@@ -946,7 +993,19 @@ async function startServer() {
       ],
     });
     const wsStat = XLSX.utils.json_to_sheet(statistic, {
-      header: ["No", "Title", "Artist", "Album", "From", "Label", "ISRC", "Plays", "Play Time(seconds)", "ACRID"],
+      header: [
+        "No",
+        "Title",
+        "Artist",
+        "Album",
+        "From",
+        "Label",
+        "ISRC",
+        "Plays",
+        "Play Time(seconds)",
+        "AcoustID",
+        "MBID",
+      ],
     });
     XLSX.utils.book_append_sheet(wb, wsAll, "All Results");
     XLSX.utils.book_append_sheet(wb, wsStat, "Statistic");

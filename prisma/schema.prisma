@@ -160,6 +160,8 @@ model DetectionLog {
   parsedTitle     String?
   confidence      Float?
   acoustidScore   Float?
+  /// AcoustID track UUID (top-level result id from AcoustID API). Distinct from MBID.
+  acoustidId      String?
   recordingMbid   String?
   titleFinal      String?
   artistFinal     String?
@@ -255,6 +257,44 @@ model CacheEntry {
   value     String   // JSON string
   expiresAt DateTime
   type      String   // fingerprint, metadata, enrichment
+}
+
+/// Self-learned Chromaprint fingerprint library.
+/// Populated from successful AcoustID matches and from trusted ICY stream metadata
+/// paired with a captured audio fingerprint, so repeat plays can be resolved locally
+/// without hitting AcoustID or MusicBrainz.
+model LocalFingerprint {
+  id                 String   @id @default(cuid())
+  /// Full Chromaprint fingerprint (base64 as emitted by fpcalc / ffmpeg chromaprint muxer).
+  fingerprint        String
+  /// SHA-1 of `fingerprint` for exact-duplicate dedupe / fast equality hit.
+  fingerprintSha1    String   @unique
+  /// First 48 chars of `fingerprint` - indexed coarse prefix used as a candidate filter
+  /// before byte-level hamming comparison in memory.
+  fingerprintPrefix  String
+  durationSec        Int
+  title              String?
+  artist             String?
+  releaseTitle       String?
+  releaseDate        String?
+  genre              String?
+  /// AcoustID track UUID (top-level `results[*].id` from AcoustID lookup, when known).
+  acoustidTrackId    String?
+  /// MusicBrainz recording MBID from the original resolving lookup.
+  recordingMbid      String?
+  /// JSON array of ISRC codes (stringified for SQLite).
+  isrcsJson          String?
+  /// "acoustid" | "stream_metadata" | "manual" - what originally taught us this fingerprint.
+  source             String
+  confidence         Float    @default(0)
+  timesMatched       Int      @default(0)
+  firstLearnedAt     DateTime @default(now())
+  lastMatchedAt      DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([fingerprintPrefix, durationSec])
+  @@index([acoustidTrackId])
+  @@index([artist, title])
 }
 
 model JobRun {

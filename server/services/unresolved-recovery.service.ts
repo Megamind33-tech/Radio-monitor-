@@ -5,6 +5,7 @@ import { logger } from "../lib/logger.js";
 import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
 import { FingerprintService } from "./fingerprint.service.js";
 import { AcoustidService } from "./acoustid.service.js";
+import { LocalFingerprintService } from "./local-fingerprint.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
 import { MatchResult } from "../types.js";
@@ -105,10 +106,15 @@ export class UnresolvedRecoveryService {
             continue;
           }
 
-          const acoustid = await AcoustidService.lookup(fingerprint);
-          let audioMatch: MatchResult | null = null;
-          if (acoustid) {
-            audioMatch = await MusicbrainzService.enrich(acoustid);
+          // Try the self-learned library first — avoids hitting AcoustID/MB for repeat songs.
+          let audioMatch: MatchResult | null = await LocalFingerprintService.lookup(fingerprint);
+          let recoveredViaAcoustid = false;
+          if (!audioMatch) {
+            const acoustid = await AcoustidService.lookup(fingerprint);
+            if (acoustid) {
+              audioMatch = await MusicbrainzService.enrich(acoustid);
+              recoveredViaAcoustid = !!audioMatch;
+            }
           }
           if (!audioMatch) {
             noMatch += 1;
@@ -163,6 +169,7 @@ export class UnresolvedRecoveryService {
               parsedTitle: linkedDetection?.parsedTitle ?? titleFinal,
               confidence: match.confidence,
               acoustidScore: match.score,
+              acoustidId: match.acoustidTrackId ?? null,
               recordingMbid: match.recordingId,
               titleFinal,
               artistFinal,
@@ -191,6 +198,14 @@ export class UnresolvedRecoveryService {
             mixSplitConfidence: null,
             originalCombinedRaw: linkedDetection?.rawStreamText ?? null,
           });
+
+          if (recoveredViaAcoustid) {
+            await LocalFingerprintService.learn({
+              fp: fingerprint,
+              match,
+              source: "acoustid",
+            });
+          }
 
           await prisma.currentNowPlaying.upsert({
             where: { stationId: row.stationId },

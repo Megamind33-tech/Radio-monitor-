@@ -60,11 +60,11 @@ export class AcoustidService {
       const recording = result.recordings?.[0];
       if (!recording) return null;
 
-      // Best effort extraction
       const durSec = typeof recording.duration === "number" ? recording.duration : undefined;
       const match: MatchResult = {
         score: result.score,
         recordingId: recording.id,
+        acoustidTrackId: typeof result.id === "string" ? result.id : undefined,
         title: recording.title,
         artist: recording.artists?.[0]?.name,
         durationMs: durSec && durSec > 0 ? Math.round(durSec * 1000) : undefined,

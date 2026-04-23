@@ -1,4 +1,9 @@
-export type DetectionMethod = 'stream_metadata' | 'fingerprint_acoustid' | 'catalog_lookup' | 'unresolved';
+export type DetectionMethod =
+  | 'stream_metadata'
+  | 'fingerprint_acoustid'
+  | 'fingerprint_local'
+  | 'catalog_lookup'
+  | 'unresolved';
 export type DetectionStatus = 'matched' | 'unresolved' | 'ignored';
 export type StationMonitorState =
   | 'ACTIVE_MUSIC'
@@ -22,6 +27,8 @@ export interface NormalizedMetadata {
 export interface MatchResult {
   score: number;
   recordingId?: string;
+  /** AcoustID top-level track UUID (not the MusicBrainz MBID). */
+  acoustidTrackId?: string;
   title?: string;
   artist?: string;
   releaseTitle?: string;
@@ -33,6 +40,7 @@ export interface MatchResult {
   sourceProvider?:
     | 'acoustid'
     | 'acoustid_open'
+    | 'local_fingerprint'
     | 'musicbrainz'
     | 'musicbrainz_search'
     | 'itunes_search'

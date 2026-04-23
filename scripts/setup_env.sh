@@ -88,6 +88,7 @@ npm run lint
 echo "==> Running unit test scripts"
 npm run test:station-health
 npm run test:stream-url-guard
+npm run test:local-fingerprint
 
 echo
 echo "Environment is ready. Start the dev server with: npm run dev"

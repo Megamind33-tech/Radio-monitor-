@@ -156,7 +156,8 @@ function normalizeStationName(value: string): string {
 
 function formatMethod(method: string) {
   if (method === 'stream_metadata') return 'Metadata';
-  if (method === 'fingerprint_acoustid') return 'Fingerprint';
+  if (method === 'fingerprint_acoustid') return 'AcoustID';
+  if (method === 'fingerprint_local') return 'Local library';
   if (method === 'catalog_lookup') return 'Catalog';
   return method;
 }
