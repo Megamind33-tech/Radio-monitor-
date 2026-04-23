@@ -1218,6 +1218,22 @@ function StationDetailPage({
   const [pageError, setPageError] = useState<string | null>(null);
   const [songSearch, setSongSearch] = useState('');
   const [songFilter, setSongFilter] = useState<'all' | 'withArtist' | 'titleOnly' | 'mixedSplit'>('all');
+  const [discovering, setDiscovering] = useState(false);
+  const [applyingStream, setApplyingStream] = useState(false);
+  const [discoveryResult, setDiscoveryResult] = useState<{
+    candidates: Array<{
+      streamUrl: string;
+      name?: string;
+      source: string;
+      tier: string;
+      qualityScore: number;
+      nameMatch: number;
+      detail?: string;
+    }>;
+    queryUsed: string[];
+    serversTried: string[];
+    errors: string[];
+  } | null>(null);
 
   useEffect(() => {
     setStreamEdit(station.streamUrl);
@@ -1379,6 +1395,138 @@ function StationDetailPage({
           >
             Open active mount <ExternalLink className="w-3.5 h-3.5" />
           </a>
+        </div>
+
+        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 space-y-2">
+          <div className="text-[11px] uppercase tracking-wide text-amber-200/80 font-semibold">
+            Multi-server stream discovery
+          </div>
+          <p className="text-[11px] text-gray-500 leading-relaxed">
+            Searches Radio-Browser mirrors (by country + by name), TuneIn OPML, and harvest hints — no station website required.
+            Use the best-ranked direct URL as the preferred mount.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={discovering}
+              onClick={async () => {
+                setDiscovering(true);
+                setPageError(null);
+                try {
+                  const res = await fetch(`/api/stations/${station.id}/discover-streams`);
+                  const body = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    setPageError(typeof body.error === 'string' ? body.error : `Discovery failed (${res.status})`);
+                    setDiscoveryResult(null);
+                    return;
+                  }
+                  setDiscoveryResult(body);
+                } catch (e) {
+                  setPageError(e instanceof Error ? e.message : 'Discovery failed');
+                  setDiscoveryResult(null);
+                } finally {
+                  setDiscovering(false);
+                }
+              }}
+              className="px-3 py-2 rounded-lg text-xs font-semibold border border-amber-500/40 bg-amber-500/10 text-amber-100 hover:bg-amber-500/20 disabled:opacity-40"
+            >
+              {discovering ? 'Searching servers…' : 'Search all sources'}
+            </button>
+            <button
+              type="button"
+              disabled={applyingStream || !discoveryResult?.candidates?.length}
+              onClick={async () => {
+                setApplyingStream(true);
+                setPageError(null);
+                try {
+                  const res = await fetch(`/api/stations/${station.id}/discover-streams/apply`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ preferredOnly: true }),
+                  });
+                  const body = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    setPageError(typeof body.error === 'string' ? body.error : `Apply failed (${res.status})`);
+                    return;
+                  }
+                  if (body.preferredStreamUrl) setPreferredEdit(String(body.preferredStreamUrl));
+                  onRefreshAll();
+                  onRefreshStation();
+                } catch (e) {
+                  setPageError(e instanceof Error ? e.message : 'Apply failed');
+                } finally {
+                  setApplyingStream(false);
+                }
+              }}
+              className="px-3 py-2 rounded-lg text-xs font-semibold border border-white/10 bg-black/30 hover:bg-black/50 disabled:opacity-40"
+            >
+              {applyingStream ? 'Applying…' : 'Apply best as preferred URL'}
+            </button>
+          </div>
+          {discoveryResult && (
+            <div className="mt-2 space-y-2 max-h-64 overflow-y-auto">
+              <p className="text-[10px] text-gray-600">
+                Queries: {discoveryResult.queryUsed.join(' · ')} · {discoveryResult.candidates.length} URL(s)
+              </p>
+              {discoveryResult.errors?.length ? (
+                <p className="text-[10px] text-amber-300/90">
+                  Partial errors (mirrors may be down): {discoveryResult.errors.slice(0, 3).join(' | ')}
+                </p>
+              ) : null}
+              <table className="w-full text-[10px] text-left border-collapse">
+                <thead>
+                  <tr className="text-gray-500 border-b border-white/10">
+                    <th className="py-1 pr-2">Score</th>
+                    <th className="py-1 pr-2">Tier</th>
+                    <th className="py-1 pr-2">Source</th>
+                    <th className="py-1">URL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {discoveryResult.candidates.slice(0, 25).map((c) => (
+                    <tr key={c.streamUrl} className="border-b border-white/5 align-top">
+                      <td className="py-1 pr-2 text-gray-300 whitespace-nowrap">{c.qualityScore}</td>
+                      <td className="py-1 pr-2 text-gray-400 whitespace-nowrap">{c.tier}</td>
+                      <td className="py-1 pr-2 text-gray-400 whitespace-nowrap">{c.source}</td>
+                      <td className="py-1 font-mono text-[9px] break-all text-cyan-200/90">
+                        <button
+                          type="button"
+                          className="text-left hover:underline"
+                          title="Set as preferred stream"
+                          onClick={async () => {
+                            setApplyingStream(true);
+                            setPageError(null);
+                            try {
+                              const res = await fetch(`/api/stations/${station.id}/discover-streams/apply`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ streamUrl: c.streamUrl, preferredOnly: true }),
+                              });
+                              const body = await res.json().catch(() => ({}));
+                              if (!res.ok) {
+                                setPageError(typeof body.error === 'string' ? body.error : `Apply failed (${res.status})`);
+                                return;
+                              }
+                              setPreferredEdit(c.streamUrl);
+                              onRefreshAll();
+                              onRefreshStation();
+                            } catch (e) {
+                              setPageError(e instanceof Error ? e.message : 'Apply failed');
+                            } finally {
+                              setApplyingStream(false);
+                            }
+                          }}
+                        >
+                          {c.name ? `${c.name} — ` : ''}
+                          {c.streamUrl}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div
