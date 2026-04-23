@@ -4,6 +4,10 @@ Harvest Zambian radio stations from MyTuner, OnlineRadioBox, Radio Garden,
 radio-browser, and TuneIn; resolve stream URLs, probe ICY metadata (up to 3 blocks),
 classify, write JSON for Prisma import.
 
+Extra TuneIn search strings: repeat --tunein-query "Your phrase" or set env
+ZAMBIA_TUNEIN_QUERIES="q1;q2" (comma/newline/semicolon separated) to pull in
+listings that omit "Zambia" in the station title (e.g. app directories / "MusicBox").
+
 Target: up to --max-stations (default 150) unique entries.
 """
 from __future__ import annotations
@@ -150,6 +154,8 @@ ZAMBIA_NAME_HINTS = frozenset(
     mufulira chingola kapiri petauke monze mazabuka kalomo sesheke senanga mansa samfya
     copperbelt luapala luapula zambezi nakonde isoka mbala mwinilunga ikelenge ndola
     luanshya kitwe chililabombwe kalulushi
+    chikuni chikumpaushi icengelo oblate phoenix znbc komboni chimwemwe chongwe
+    hone yar faith rooster kwithu unza zamcom znbc znbc1 znbc2 znbc3 znbc4
     """.split()
 )
 
@@ -573,7 +579,7 @@ def build_radio_zambia_candidates() -> list[Candidate]:
     return out
 
 
-async def build_candidates(_max_total: int) -> list[Candidate]:
+async def build_candidates(_max_total: int, extra_tunein_queries: list[str] | None = None) -> list[Candidate]:
     """Collect Radio Garden (full Zambia API) + radio-browser ZM + filtered TuneIn."""
     rg_zm = fetch_json(RG_ZAMBIA_PAGE)
     place_maps = discover_rg_place_maps(rg_zm)
@@ -693,7 +699,25 @@ async def build_candidates(_max_total: int) -> list[Candidate]:
             "sesheke zambia",
             "monze zambia",
             "choma zambia",
+            # Named gaps (community / church / campus stations often missing "Zambia" in TuneIn title)
+            "Chikuni radio",
+            "Icengelo radio",
+            "Oblate radio Zambia",
+            "Radio Phoenix Zambia",
+            "Hot FM Zambia",
+            "ZNBC radio",
+            "MusicBox Zambia",
         ]
+        extra = os.environ.get("ZAMBIA_TUNEIN_QUERIES", "").strip()
+        if extra:
+            for part in re.split(r"[,\n;]+", extra):
+                q = part.strip()
+                if q and q not in queries:
+                    queries.append(q)
+        for q in extra_tunein_queries or []:
+            qq = (q or "").strip()
+            if qq and qq not in queries:
+                queries.append(qq)
         seen_tn: set[str] = set()
         for q in queries:
             try:
@@ -896,6 +920,13 @@ async def async_main():
         help="How many MyTuner Zambia listing pages to crawl (default 8).",
     )
     ap.add_argument("--out", type=str, default="scripts/data/zambia_harvest.json")
+    ap.add_argument(
+        "--tunein-query",
+        action="append",
+        default=[],
+        metavar="Q",
+        help="Extra TuneIn Search.ashx query string (repeatable). Merged with built-in Zambia queries.",
+    )
     args = ap.parse_args()
 
     print(
@@ -908,7 +939,7 @@ async def async_main():
     st = build_streema_candidates()
     zn = build_zeno_candidates(limit=max(args.max_probe, 220))
     rz = build_radio_zambia_candidates()
-    base = await build_candidates(0)
+    base = await build_candidates(0, extra_tunein_queries=list(args.tunein_query or []))
     cands = merge_candidates_priority(mt, orb, st, zn, rz, base)
     print(f"MyTuner decrypted URLs: {len(mt)}")
     print(f"OnlineRadioBox stream buttons: {len(orb)}")
