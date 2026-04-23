@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import fs from "fs";
 import cors from "cors";
 import helmet from "helmet";
 import { spawnSync } from "child_process";
@@ -18,6 +19,7 @@ import { StreamDiscoveryService } from "./services/stream-discovery.service.js";
 import { monitorEvents } from "./lib/monitor-events.js";
 import { UnresolvedRecoveryService } from "./services/unresolved-recovery.service.js";
 import { LocalFingerprintService } from "./services/local-fingerprint.service.js";
+import { fingerprintPipelineGate } from "./lib/fingerprint-pipeline-gate.js";
 import * as XLSX from "xlsx";
 
 function isCommandAvailable(command: string, args: string[] = ["-version"]) {
@@ -570,6 +572,129 @@ async function startServer() {
       logger.error({ error }, "Failed unresolved recovery cleanup request");
       res.status(500).json({ error: "failed_to_cleanup_recovered_samples" });
     }
+  });
+
+  /**
+   * LIST songs with no usable metadata — the queue of detections that AcoustID (or any
+   * alternative identification service) still needs to resolve.
+   *
+   * Returns UnresolvedSample rows with station name, linked DetectionLog ICY text,
+   * recovery status, and whether the saved audio file is still on disk.
+   * Use ?status=no_match to see only songs that came back empty from AcoustID.
+   * Use ?status=pending  to see songs waiting for their first recovery attempt.
+   * Omit ?status to get all non-recovered entries (pending + no_match + error).
+   *
+   * Pipeline rule: at most 2 recovery operations run concurrently (fingerprintPipelineGate).
+   * Callers sending these clips to alternative services should also respect that limit.
+   */
+  app.get("/api/recovery/unresolved/list", async (req, res) => {
+    try {
+      const takeRaw = typeof req.query.take === "string" ? Number(req.query.take) : 100;
+      const take = Number.isFinite(takeRaw) ? Math.min(Math.max(Math.trunc(takeRaw), 1), 500) : 100;
+      const stationId = typeof req.query.stationId === "string" && req.query.stationId.trim()
+        ? req.query.stationId.trim()
+        : undefined;
+      const statusFilter = typeof req.query.status === "string" && req.query.status.trim()
+        ? req.query.status.trim()
+        : undefined;
+
+      const allowedStatuses = ["pending", "no_match", "error", "skipped", "recovered"];
+      const statusWhere = statusFilter && allowedStatuses.includes(statusFilter)
+        ? [statusFilter]
+        : ["pending", "no_match", "error"];
+
+      const rows = await prisma.unresolvedSample.findMany({
+        where: {
+          ...(stationId ? { stationId } : {}),
+          recoveryStatus: { in: statusWhere },
+        },
+        orderBy: { createdAt: "desc" },
+        take,
+        select: {
+          id: true,
+          stationId: true,
+          detectionLogId: true,
+          filePath: true,
+          createdAt: true,
+          recoveryStatus: true,
+          recoveryAttempts: true,
+          lastRecoveryAt: true,
+          lastRecoveryError: true,
+          recoveredAt: true,
+        },
+      });
+
+      const stationIds = [...new Set(rows.map((r) => r.stationId))];
+      const stations = stationIds.length
+        ? await prisma.station.findMany({
+            where: { id: { in: stationIds } },
+            select: { id: true, name: true, country: true, province: true },
+          })
+        : [];
+      const stationById = new Map(stations.map((s) => [s.id, s]));
+
+      const detectionLogIds = rows.map((r) => r.detectionLogId).filter((id): id is string => !!id);
+      const detectionLogs = detectionLogIds.length
+        ? await prisma.detectionLog.findMany({
+            where: { id: { in: detectionLogIds } },
+            select: {
+              id: true,
+              observedAt: true,
+              rawStreamText: true,
+              parsedArtist: true,
+              parsedTitle: true,
+              detectionMethod: true,
+              reasonCode: true,
+            },
+          })
+        : [];
+      const logById = new Map(detectionLogs.map((l) => [l.id, l]));
+
+      const result = rows.map((row) => {
+        const station = stationById.get(row.stationId);
+        const log = row.detectionLogId ? logById.get(row.detectionLogId) : undefined;
+        const hasAudioFile = !!row.filePath && fs.existsSync(row.filePath);
+        return {
+          id: row.id,
+          stationId: row.stationId,
+          stationName: station?.name ?? null,
+          stationCountry: station?.country ?? null,
+          stationProvince: station?.province ?? null,
+          detectionLogId: row.detectionLogId ?? null,
+          createdAt: row.createdAt,
+          recoveryStatus: row.recoveryStatus,
+          recoveryAttempts: row.recoveryAttempts,
+          lastRecoveryAt: row.lastRecoveryAt ?? null,
+          lastRecoveryError: row.lastRecoveryError ?? null,
+          recoveredAt: row.recoveredAt ?? null,
+          hasAudioFile,
+          detectedAt: log?.observedAt ?? null,
+          rawStreamText: log?.rawStreamText ?? null,
+          parsedArtist: log?.parsedArtist ?? null,
+          parsedTitle: log?.parsedTitle ?? null,
+          detectionMethod: log?.detectionMethod ?? null,
+          reasonCode: log?.reasonCode ?? null,
+        };
+      });
+
+      res.json({
+        total: result.length,
+        statusFilter: statusWhere,
+        pipelineGate: fingerprintPipelineGate.getStatus(),
+        items: result,
+      });
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved list request");
+      res.status(500).json({ error: "failed_to_list_unresolved_samples" });
+    }
+  });
+
+  /**
+   * Fingerprint pipeline gate status — shows how many capture operations are
+   * currently in-flight and the global throughput limit (max 2/second).
+   */
+  app.get("/api/fingerprints/pipeline-gate", (_req, res) => {
+    res.json(fingerprintPipelineGate.getStatus());
   });
 
   app.get("/api/stations/:id/airplays", async (req, res) => {

@@ -308,11 +308,15 @@ export class MonitorService {
       }> = [];
 
       if (doAudioId && resolvedUrl.startsWith("http")) {
+        // AcoustID uses up to the first 120 s of audio for fingerprint generation.
+        // Default to 120 s so every capture gives the algorithm its full working window.
+        // Set FINGERPRINT_SAMPLE_SECONDS=30 (or lower station.sampleSeconds) to reduce
+        // capture time on constrained hosts — accuracy may decrease for short clips.
         const baseSec = Math.min(
           120,
           Math.max(
             station.sampleSeconds,
-            parseInt(process.env.FINGERPRINT_SAMPLE_SECONDS || "25", 10) || 25
+            parseInt(process.env.FINGERPRINT_SAMPLE_SECONDS || "120", 10) || 120
           )
         );
         const bonusSec = parseEnvInt("FINGERPRINT_EXTRA_SAMPLE_SECONDS", 0);
@@ -472,11 +476,13 @@ export class MonitorService {
 
       let unresolvedSamplePath: string | null = null;
       if (!match && sampledForFingerprint && resolvedUrl.startsWith("http")) {
+        // Archive unresolved samples at the same full-length window used for AcoustID
+        // so the recovery service can later identify them without re-capturing.
         const archSec = Math.min(
           120,
           Math.max(
             station.sampleSeconds,
-            parseInt(process.env.FINGERPRINT_SAMPLE_SECONDS || "25", 10) || 25
+            parseInt(process.env.FINGERPRINT_SAMPLE_SECONDS || "120", 10) || 120
           )
         );
         const archTmp = await SamplerService.captureSample(resolvedUrl, archSec);

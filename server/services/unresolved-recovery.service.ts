@@ -9,6 +9,7 @@ import { LocalFingerprintService } from "./local-fingerprint.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
 import { MatchResult } from "../types.js";
+import { fingerprintPipelineGate } from "../lib/fingerprint-pipeline-gate.js";
 
 function parseEnvInt(key: string, fallback: number): number {
   const raw = process.env[key];
@@ -110,7 +111,14 @@ export class UnresolvedRecoveryService {
             continue;
           }
 
-          const fingerprint = await FingerprintService.generateFingerprint(row.filePath);
+          // Gate: respect the global 2/sec pipeline limit shared with real-time station polling.
+          const releaseGate = await fingerprintPipelineGate.acquire();
+          let fingerprint: Awaited<ReturnType<typeof FingerprintService.generateFingerprint>>;
+          try {
+            fingerprint = await FingerprintService.generateFingerprint(row.filePath);
+          } finally {
+            releaseGate();
+          }
           if (!fingerprint) {
             noMatch += 1;
             await prisma.unresolvedSample.update({
