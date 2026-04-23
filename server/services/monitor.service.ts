@@ -4,6 +4,7 @@ import type { Prisma, Station } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
+import { assessMetadataQuality } from "../lib/metadata-quality.js";
 import { ResolverService } from "./resolver.service.js";
 import { MetadataService } from "./metadata.service.js";
 import { SamplerService } from "./sampler.service.js";
@@ -203,9 +204,16 @@ export class MonitorService {
             const staleAt = new Date(
               latestNowPlaying.updatedAt.getTime() + station.metadataStaleSeconds * 1000
             );
+            const repeatEarlyAt = new Date(
+              latestNowPlaying.updatedAt.getTime() +
+                Math.max(30_000, Math.floor(station.metadataStaleSeconds * 500))
+            );
             if (Date.now() > staleAt.getTime()) {
               legacyFingerprint = true;
               reasonCode = "metadata_stale";
+            } else if (Date.now() > repeatEarlyAt.getTime()) {
+              legacyFingerprint = true;
+              reasonCode = "metadata_repeated_same_text";
             }
           }
         }
@@ -231,63 +239,176 @@ export class MonitorService {
       const forceAudioFallback = parseEnvBool("FORCE_AUDIO_FALLBACK_WHEN_UNRESOLVED", true);
       /** When true, capture+fingerprint on every poll (not only ICY gap/stale/change). Heavy on CPU/network; use for stations with bad or missing ICY. */
       const fingerprintEveryPoll = parseEnvBool("FINGERPRINT_EVERY_POLL", false);
+
+      const tightness = Math.max(0, Math.min(2, station.metadataTrustTightness ?? 0));
+      const metaQuality =
+        metadata && !isJunkIcyMetadata(metadata)
+          ? assessMetadataQuality(
+              metadata.combinedRaw,
+              metadata.rawTitle,
+              metadata.rawArtist,
+              station.name,
+              tightness
+            )
+          : {
+              okForCatalog: false,
+              forceFingerprint: !!metadata && isJunkIcyMetadata(metadata),
+              catalogConfidenceScale: 0,
+              reasons: metadata ? ["junk_icy"] : ["no_metadata"],
+            };
+
+      const trustCheck =
+        metadata && !isJunkIcyMetadata(metadata)
+          ? MetadataService.isMetadataTrustworthy(metadata, latestNp?.streamText || undefined)
+          : { trusted: false as const, reason: "no_metadata" };
+
+      let metaTrust = trustCheck.trusted ? 1 : 0;
+      if (metaQuality.forceFingerprint) metaTrust = 0;
+      if (reasonCode === "metadata_stale" || reasonCode === "metadata_repeated_same_text") metaTrust = 0;
+
+      const catalogTrustFactor = metaTrust * metaQuality.catalogConfidenceScale;
+
+      /** When true, also fingerprint when ICY exists but quality heuristics flag it (see metadata-quality). */
+      const forceFingerprintAggressive =
+        metaQuality.forceFingerprint || parseEnvBool("FINGERPRINT_AGGRESSIVE_ON_SUSPICIOUS_METADATA", false);
+
       const doAudioId =
         !!station.fingerprintFallbackEnabled &&
         (forceAudioFallback || !!acoustidKey) &&
-        (legacyFingerprint || icyChanged || intervalElapsed || fingerprintEveryPoll);
+        (legacyFingerprint ||
+          icyChanged ||
+          intervalElapsed ||
+          fingerprintEveryPoll ||
+          forceFingerprintAggressive);
+
       let audioMatch: MatchResult | null = null;
       let sampledForFingerprint = false;
       let sampledAudioPath: string | null = null;
 
       let capturedFingerprint: Awaited<ReturnType<typeof FingerprintService.generateFingerprint>> = null;
       let audioMatchSource: "local" | "acoustid" | null = null;
+      const fingerprintAttempts: Array<{
+        attempt: number;
+        delaySec: number;
+        sampleSec: number;
+        outcome: "match_local" | "match_acoustid" | "no_match" | "no_sample" | "no_fingerprint";
+      }> = [];
+
       if (doAudioId && resolvedUrl.startsWith("http")) {
-        const fpSec = Math.min(
+        const baseSec = Math.min(
           120,
           Math.max(
             station.sampleSeconds,
             parseInt(process.env.FINGERPRINT_SAMPLE_SECONDS || "25", 10) || 25
           )
         );
-        logger.info(
-          { station: station.name, reason: reasonCode, icyChanged, intervalElapsed, fpSec },
-          "Audio fingerprint sample (ICY change, interval, or metadata fallback)"
+        const bonusSec = parseEnvInt("FINGERPRINT_EXTRA_SAMPLE_SECONDS", 0);
+        const maxRetries = Math.min(
+          4,
+          Math.max(1, station.fingerprintRetries ?? parseEnvInt("FINGERPRINT_MAX_RETRIES", 2))
         );
-        const samplePath = await SamplerService.captureSample(resolvedUrl, fpSec);
-        sampledForFingerprint = true;
-        if (samplePath) {
+        const delayMs = Math.max(
+          0,
+          station.fingerprintRetryDelayMs ?? parseEnvInt("FINGERPRINT_RETRY_DELAY_MS", 3500)
+        );
+
+        for (let attempt = 0; attempt < maxRetries && !audioMatch; attempt++) {
+          const fpSec = Math.min(120, baseSec + (attempt > 0 ? Math.min(25, bonusSec) : 0));
+          const delaySec = attempt === 0 ? 0 : delayMs / 1000;
+          logger.info(
+            {
+              station: station.name,
+              attempt: attempt + 1,
+              maxRetries,
+              reason: reasonCode,
+              icyChanged,
+              intervalElapsed,
+              fpSec,
+              delaySec,
+            },
+            "Audio fingerprint sample (ICY change, interval, suspicious metadata, or retry)"
+          );
+          const samplePath = await SamplerService.captureSample(resolvedUrl, fpSec, delaySec);
+          sampledForFingerprint = true;
+          if (!samplePath) {
+            fingerprintAttempts.push({
+              attempt: attempt + 1,
+              delaySec,
+              sampleSec: fpSec,
+              outcome: "no_sample",
+            });
+            continue;
+          }
           sampledAudioPath = samplePath;
-          capturedFingerprint = await FingerprintService.generateFingerprint(samplePath);
-          if (capturedFingerprint) {
-            // 1. Local self-learned fingerprint library (no external API — free, unlimited).
-            const localMatch = await LocalFingerprintService.lookup(capturedFingerprint);
-            if (localMatch) {
-              audioMatch = localMatch;
-              audioMatchSource = "local";
-            } else if (acoustidKey) {
-              // 2. Fall back to AcoustID only when the local library doesn't know this song yet.
-              const acoustidMatch = await AcoustidService.lookup(capturedFingerprint);
-              if (acoustidMatch) {
-                audioMatch = await MusicbrainzService.enrich(acoustidMatch);
-                audioMatchSource = "acoustid";
-              }
-            } else {
-              logger.debug(
-                { station: station.name },
-                "Local fingerprint miss and no ACOUSTID_API_KEY configured — skipping AcoustID"
-              );
+          const fp = await FingerprintService.generateFingerprint(samplePath);
+          SamplerService.cleanup(samplePath);
+          sampledAudioPath = null;
+          if (!fp) {
+            fingerprintAttempts.push({
+              attempt: attempt + 1,
+              delaySec,
+              sampleSec: fpSec,
+              outcome: "no_fingerprint",
+            });
+            continue;
+          }
+          capturedFingerprint = fp;
+          const localMatch = await LocalFingerprintService.lookup(fp);
+          if (localMatch) {
+            audioMatch = localMatch;
+            audioMatchSource = "local";
+            fingerprintAttempts.push({
+              attempt: attempt + 1,
+              delaySec,
+              sampleSec: fpSec,
+              outcome: "match_local",
+            });
+            break;
+          }
+          if (acoustidKey) {
+            const acoustidMatch = await AcoustidService.lookup(fp);
+            if (acoustidMatch) {
+              audioMatch = await MusicbrainzService.enrich(acoustidMatch);
+              audioMatchSource = "acoustid";
+              fingerprintAttempts.push({
+                attempt: attempt + 1,
+                delaySec,
+                sampleSec: fpSec,
+                outcome: "match_acoustid",
+              });
+              break;
             }
           }
+          fingerprintAttempts.push({
+            attempt: attempt + 1,
+            delaySec,
+            sampleSec: fpSec,
+            outcome: "no_match",
+          });
+        }
+        if (!acoustidKey && doAudioId) {
+          logger.debug({ station: station.name }, "Fingerprint path ran without ACOUSTID_API_KEY after local miss");
         }
       }
 
       let catalogMatch: MatchResult | null = null;
-      if (metadata && !isJunkIcyMetadata(metadata)) {
-        catalogMatch = await CatalogLookupService.lookupFromMetadata(metadata);
+      let catalogRejectedLowConfidence = false;
+      if (metadata && !isJunkIcyMetadata(metadata) && metaQuality.okForCatalog) {
+        const rawCat = await CatalogLookupService.lookupFromMetadata(metadata);
+        const floor =
+          typeof station.catalogConfidenceFloor === "number" && station.catalogConfidenceFloor > 0
+            ? station.catalogConfidenceFloor
+            : null;
+        if (rawCat && floor != null && (rawCat.confidence ?? 0) < floor) {
+          catalogMatch = null;
+          catalogRejectedLowConfidence = true;
+        } else {
+          catalogMatch = rawCat;
+        }
       }
 
       const minAcoust = parseEnvFloat("ACOUSTID_PREFER_MIN_SCORE", 0.55);
-      const merged = mergeAcoustidAndCatalog(audioMatch, catalogMatch, minAcoust);
+      const merged = mergeAcoustidAndCatalog(audioMatch, catalogMatch, minAcoust, catalogTrustFactor);
 
       let match = merged.match;
       let method: DetectionMethod = merged.method;
@@ -324,7 +445,7 @@ export class MonitorService {
 
       // Second-pass fallback: when metadata is present but unresolved/program-like,
       // attempt catalog lookup from combined stream text to reduce "Unknown".
-      if (!match && metadata && station.fingerprintFallbackEnabled) {
+      if (!match && metadata && station.fingerprintFallbackEnabled && !metaQuality.forceFingerprint) {
         const viaCombined = await CatalogLookupService.lookupFromMetadata({
           ...metadata,
           rawArtist: metadata.rawArtist || "",
@@ -335,12 +456,21 @@ export class MonitorService {
           method = "catalog_lookup";
         }
       }
+
       let unresolvedSamplePath: string | null = null;
-      if (sampledAudioPath && !match) {
-        unresolvedSamplePath = await this.archiveUnresolvedSample(stationId, sampledAudioPath);
-      }
-      if (sampledAudioPath) {
-        SamplerService.cleanup(sampledAudioPath);
+      if (!match && sampledForFingerprint && resolvedUrl.startsWith("http")) {
+        const archSec = Math.min(
+          120,
+          Math.max(
+            station.sampleSeconds,
+            parseInt(process.env.FINGERPRINT_SAMPLE_SECONDS || "25", 10) || 25
+          )
+        );
+        const archTmp = await SamplerService.captureSample(resolvedUrl, archSec);
+        if (archTmp) {
+          unresolvedSamplePath = await this.archiveUnresolvedSample(stationId, archTmp);
+          SamplerService.cleanup(archTmp);
+        }
       }
 
       if (sampledForFingerprint) {
@@ -369,6 +499,23 @@ export class MonitorService {
         (icyChanged ? "icy_changed_audio" : null) ||
         (intervalElapsed && !legacyFingerprint ? "audio_interval" : null);
 
+      const matchDiagnostics = {
+        pollReason: reasonCode,
+        icyChanged,
+        intervalElapsed,
+        legacyFingerprint,
+        fingerprintEveryPoll,
+        doAudioId,
+        metaTrust,
+        metaQualityReasons: metaQuality.reasons,
+        catalogTrustFactor,
+        catalogConfidenceFloor: station.catalogConfidenceFloor ?? null,
+        catalogRejectedLowConfidence,
+        fingerprintAttempts,
+        streamHealthOk: health.reachable && health.audioFlowing && health.decoderOk,
+        healthReason: health.reason,
+      };
+
       const processingMs = Date.now() - start;
       let detectionReason = finalReason;
       const detection = await this.saveDetection(
@@ -378,7 +525,8 @@ export class MonitorService {
         metadata,
         match,
         processingMs,
-        finalReason
+        finalReason,
+        JSON.stringify(matchDiagnostics)
       );
       if (
         unresolvedSamplePath &&
@@ -638,7 +786,8 @@ export class MonitorService {
     metadata: NormalizedMetadata | null,
     match: MatchResult | null,
     processingMs: number,
-    reasonCode: string | null
+    reasonCode: string | null,
+    matchDiagnosticsJson: string | null = null
   ): Promise<{ status: "matched" | "unresolved"; reasonCode: string | null; detectionLogId?: string }> {
     const stationId = station.id;
     const npRow = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
@@ -736,6 +885,7 @@ export class MonitorService {
         processingMs,
         status,
         reasonCode: detectionReason,
+        matchDiagnosticsJson,
       },
       select: { id: true, observedAt: true },
     });

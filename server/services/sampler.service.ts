@@ -7,16 +7,28 @@ export class SamplerService {
   /**
    * Captures a short audio clip from a stream and saves it to a temp file.
    */
-  static async captureSample(url: string, durationSeconds: number = 20): Promise<string | null> {
+  /**
+   * @param delaySeconds Optional wait before opening the stream (lets encoder advance for retry windows).
+   */
+  static async captureSample(
+    url: string,
+    durationSeconds: number = 20,
+    delaySeconds: number = 0
+  ): Promise<string | null> {
     const tempDir = process.env.TEMP_AUDIO_DIR || '/tmp/radio_monitor';
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
     }
 
+    const delayMs = Math.min(30_000, Math.max(0, Math.round((delaySeconds || 0) * 1000)));
+    if (delayMs > 0) {
+      await new Promise<void>((r) => setTimeout(r, delayMs));
+    }
+
     const filename = `sample_${Date.now()}_${Math.random().toString(36).substring(7)}.wav`;
     const outputPath = path.join(tempDir, filename);
 
-    logger.info({ url, durationSeconds, outputPath }, "Capturing audio sample");
+    logger.info({ url, durationSeconds, delaySeconds: delayMs / 1000, outputPath }, "Capturing audio sample");
 
     return new Promise((resolve) => {
       let settled = false;
