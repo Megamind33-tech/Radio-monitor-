@@ -1517,7 +1517,7 @@ function StationDetailPage({
                             }
                           }}
                         >
-                          {c.name ? `${c.name} — ` : ''}
+                          {c.name ? `${c.name} - ` : ''}
                           {c.streamUrl}
                         </button>
                       </td>
