@@ -271,7 +271,7 @@ export class LocalFingerprintService {
     fp: FingerprintResult;
     match: MatchResult | null;
     metadata?: NormalizedMetadata | null;
-    source: "acoustid" | "stream_metadata" | "manual";
+    source: "acoustid" | "audd" | "stream_metadata" | "manual";
   }): Promise<void> {
     if (!isLearningEnabled()) return;
     const { fp, match, metadata, source } = input;

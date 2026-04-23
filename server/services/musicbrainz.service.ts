@@ -66,6 +66,11 @@ export class MusicbrainzService {
       const durationMs =
         typeof len === "number" && len > 0 ? len : match.durationMs;
 
+      const keepAudioProvider =
+        match.sourceProvider === "audd" ||
+        match.sourceProvider === "acoustid" ||
+        match.sourceProvider === "acoustid_open";
+
       const enriched: MatchResult = {
         ...match,
         title: data.title || match.title,
@@ -75,7 +80,7 @@ export class MusicbrainzService {
         isrcs: data.isrcs,
         genre: data.genres?.[0]?.name,
         durationMs,
-        sourceProvider: "musicbrainz"
+        sourceProvider: keepAudioProvider ? match.sourceProvider : "musicbrainz",
       };
 
       return enriched;

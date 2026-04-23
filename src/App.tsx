@@ -127,6 +127,7 @@ interface DependencyStatus {
   catalogLookupReady: boolean;
   freeApisEnabled: {
     acoustid: boolean;
+    audd?: boolean;
     musicbrainz: boolean;
     itunesSearch: boolean;
     deezerSearch?: boolean;
@@ -174,6 +175,7 @@ function normalizeStationName(value: string): string {
 function formatMethod(method: string) {
   if (method === 'stream_metadata') return 'Metadata';
   if (method === 'fingerprint_acoustid') return 'AcoustID';
+  if (method === 'fingerprint_audd') return 'AudD';
   if (method === 'fingerprint_local') return 'Local library';
   if (method === 'catalog_lookup') return 'Catalog';
   return method;

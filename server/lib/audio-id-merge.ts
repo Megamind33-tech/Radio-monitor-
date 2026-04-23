@@ -11,6 +11,9 @@ function fingerprintMethodForProvider(provider: MatchResult["sourceProvider"]): 
   if (provider === "local_fingerprint") {
     return "fingerprint_local";
   }
+  if (provider === "audd") {
+    return "fingerprint_audd";
+  }
   return "fingerprint_acoustid";
 }
 
