@@ -287,25 +287,6 @@ export class MonitorService {
       const forceFingerprintAggressive =
         metaQuality.forceFingerprint || parseEnvBool("FINGERPRINT_AGGRESSIVE_ON_SUSPICIOUS_METADATA", false);
 
-      const combinedLine = (metadata?.combinedRaw ?? "").trim();
-      const titleLine = (metadata?.rawTitle ?? combinedLine).trim();
-      const contentClass = classifyMusicContent(combinedLine || titleLine);
-      const programLikeIcy =
-        isProgramLikeTitle(metadata?.rawTitle) ||
-        (!metadata?.rawTitle && isProgramLikeTitle(metadata?.combinedRaw)) ||
-        !contentClass.isMusic;
-      /** Non-song / slogan ICY or missing/untrusted: allow paid APIs only in this lane (after AcoustID). */
-      const suspiciousIcyForPaidLane =
-        programLikeIcy ||
-        legacyFingerprint ||
-        !metaQuality.okForCatalog ||
-        metaQuality.forceFingerprint;
-      const paidFallbacksEnabled = parseEnvBool("PAID_AUDIO_FALLBACKS_ENABLED", true);
-      const paidLaneEligible =
-        paidFallbacksEnabled &&
-        suspiciousIcyForPaidLane &&
-        (AuddService.isEnabled() || AcrcloudService.isEnabled());
-
       /** Trusted ICY but unchanged: still re-fingerprint on this cadence to catch wrong/stuck ICY. */
       const icyVerificationIntervalSec = Math.max(
         60,
@@ -621,6 +602,23 @@ export class MonitorService {
         });
       }
 
+      // Self-learning: persist the fingerprint whenever we have a confirmed match
+      // so future plays of the same track are resolved locally (no AcoustID / MB call).
+      if (capturedFingerprint && match && audioMatchSource !== "local") {
+        const learnSource: "acoustid" | "stream_metadata" | "manual" =
+          audioMatchSource === "acoustid"
+            ? "acoustid"
+            : audioMatchSource === "audd"
+              ? "manual"
+              : "stream_metadata";
+        await LocalFingerprintService.learn({
+          fp: capturedFingerprint,
+          match,
+          metadata,
+          source: learnSource,
+        });
+      }
+
       const finalReason =
         mergeReason ||
         reasonCode ||
@@ -633,8 +631,6 @@ export class MonitorService {
         intervalElapsed,
         icyCrossCheckAudio,
         icyVerificationDue,
-        suspiciousIcyForPaidLane,
-        paidLaneEligible,
         legacyFingerprint,
         fingerprintEveryPoll,
         doAudioId,
