@@ -33,6 +33,13 @@ import { AcrcloudService } from "./services/acrcloud.service.js";
 import { SpinRefreshService } from "./services/spin-refresh.service.js";
 import * as XLSX from "xlsx";
 
+function envBoolTrue(key: string, defaultTrue = true): boolean {
+  const v = process.env[key];
+  if (v === undefined || v === null || String(v).trim() === "") return defaultTrue;
+  const t = String(v).trim().toLowerCase();
+  return !(t === "0" || t === "false" || t === "no" || t === "off");
+}
+
 function isCommandAvailable(command: string, args: string[] = ["-version"]) {
   try {
     const result = spawnSync(command, args, { stdio: "ignore" });
@@ -200,6 +207,26 @@ async function startServer() {
     if (!acoustidApiKeyConfigured) missing.push("ACOUSTID_API_KEY");
     if (!musicbrainzUserAgentConfigured) missing.push("MUSICBRAINZ_USER_AGENT");
 
+    const auddApiConfigured = AuddService.isEnabled();
+    const acrcloudApiConfigured = AcrcloudService.isEnabled();
+    const paidFallbacksEnabled = envBoolTrue("PAID_AUDIO_FALLBACKS_ENABLED", true);
+    const paidLaneReady = !paidFallbacksEnabled || auddApiConfigured || acrcloudApiConfigured;
+    const integrationNotes: string[] = [];
+    if (paidFallbacksEnabled && !auddApiConfigured && !acrcloudApiConfigured) {
+      integrationNotes.push(
+        "Paid audio lane is on but neither AUDD_API_TOKEN nor ACRCLOUD_* is set — suspicious ICY will not reach AudD/ACRCloud."
+      );
+    }
+    if (paidFallbacksEnabled && auddApiConfigured) {
+      integrationNotes.push("AudD: token present — used after AcoustID miss when ICY is flagged non-song / untrusted.");
+    }
+    if (paidFallbacksEnabled && acrcloudApiConfigured) {
+      integrationNotes.push("ACRCloud: host + keys present — optional fallback after AudD on the same capture.");
+    }
+    if (!paidFallbacksEnabled) {
+      integrationNotes.push("PAID_AUDIO_FALLBACKS_ENABLED is off — AudD and ACRCloud are never called.");
+    }
+
     res.json({
       ffmpeg,
       ffprobe,
@@ -209,7 +236,14 @@ async function startServer() {
       catalogLookupReady,
       freeApisEnabled,
       fingerprintReady: ffmpeg && ffprobe && fpcalc && acoustidApiKeyConfigured,
-      missing
+      missing,
+      paidApis: {
+        auddConfigured: auddApiConfigured,
+        acrcloudConfigured: acrcloudApiConfigured,
+        paidFallbacksEnabled,
+        paidLaneReady,
+      },
+      integrationNotes,
     });
   });
 
@@ -770,18 +804,8 @@ async function startServer() {
           musicbrainz: !!process.env.MUSICBRAINZ_USER_AGENT,
           audd: AuddService.isEnabled(),
           acrcloud: AcrcloudService.isEnabled(),
-          paidFallbacksEnabled: (() => {
-            const v = process.env.PAID_AUDIO_FALLBACKS_ENABLED;
-            if (!v) return true;
-            const t = v.trim().toLowerCase();
-            return !(t === "0" || t === "false" || t === "no" || t === "off");
-          })(),
-          localLearningEnabled: (() => {
-            const v = process.env.LOCAL_FP_LEARNING_ENABLED;
-            if (!v) return true;
-            const t = v.trim().toLowerCase();
-            return !(t === "0" || t === "false" || t === "no" || t === "off");
-          })(),
+          paidFallbacksEnabled: envBoolTrue("PAID_AUDIO_FALLBACKS_ENABLED", true),
+          localLearningEnabled: envBoolTrue("LOCAL_FP_LEARNING_ENABLED", true),
         }),
       ]);
       res.json({
