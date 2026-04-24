@@ -9,6 +9,21 @@ export interface SongDetectedEvent {
   playCount: number;
 }
 
+/** Emitted after every successful poll so UIs can refresh without waiting for a new DetectionLog row. */
+export interface StationPollEvent {
+  stationId: string;
+  ts: string;
+  detectionStatus: "matched" | "unresolved";
+  /** Latest log id when known (same-spin repeats reuse previous id). */
+  detectionLogId: string | null;
+  /** What to show as “now playing”: identified title or raw ICY title. */
+  displayTitle: string | null;
+  displayArtist: string | null;
+  streamText: string | null;
+  /** True when a new DetectionLog row was written this tick. */
+  newDetectionLog: boolean;
+}
+
 class MonitorEvents extends EventEmitter {
   constructor() {
     super();
@@ -18,6 +33,10 @@ class MonitorEvents extends EventEmitter {
 
   emitSongDetected(payload: SongDetectedEvent): void {
     this.emit("song-detected", payload);
+  }
+
+  emitStationPoll(payload: StationPollEvent): void {
+    this.emit("station-poll", payload);
   }
 }
 

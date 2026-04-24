@@ -115,7 +115,7 @@ export class SchedulerService {
         logger.debug({ stationId: station.id }, "Skipping overlapping poll tick");
         return;
       }
-      const maxConcurrency = Math.max(1, Math.min(50, parseInt(process.env.MAX_STATION_CONCURRENCY || "5", 10) || 5));
+      const maxConcurrency = Math.max(1, Math.min(50, parseInt(process.env.MAX_STATION_CONCURRENCY || "8", 10) || 8));
       if (this.pollRunning.size >= maxConcurrency) {
         logger.debug(
           { stationId: station.id, activePolls: this.pollRunning.size, maxConcurrency },

@@ -1108,10 +1108,51 @@ export class MonitorService {
       const effectiveGuardMs = Math.min(cappedBySource, maxGuardMs);
       const anchor = latestLog.observedAt.getTime();
       if (Date.now() < anchor + effectiveGuardMs) {
+        const icyTitle = rawTitle || (metadata?.combinedRaw ?? "").trim() || null;
+        const icyArtist = rawArtist || null;
+        const npTitle = (titleFinal && String(titleFinal).trim()) || icyTitle || null;
+        const npArtist = (artistFinal && String(artistFinal).trim()) || icyArtist || null;
         await prisma.currentNowPlaying.upsert({
           where: { stationId },
-          update: { updatedAt: new Date() },
-          create: { stationId, title: titleFinal, artist: artistFinal },
+          update: {
+            title: npTitle,
+            artist: npArtist,
+            album: match?.releaseTitle,
+            genre: match?.genre,
+            sourceProvider:
+              match?.sourceProvider ||
+              (method === "stream_metadata"
+                ? metadataProgramLike
+                  ? "stream_metadata_program"
+                  : "stream_metadata"
+                : method),
+            streamText: metadata?.combinedRaw,
+            updatedAt: new Date(),
+          },
+          create: {
+            stationId,
+            title: npTitle ?? undefined,
+            artist: npArtist ?? undefined,
+            album: match?.releaseTitle,
+            genre: match?.genre,
+            sourceProvider:
+              match?.sourceProvider ||
+              (method === "stream_metadata"
+                ? metadataProgramLike
+                  ? "stream_metadata_program"
+                  : "stream_metadata"
+                : method),
+            streamText: metadata?.combinedRaw,
+          },
+        });
+        MonitorService.emitStationPollRealtime(stationId, {
+          detectionStatus: status,
+          detectionLogId: latestLog.id,
+          newDetectionLog: false,
+          titleFinal,
+          artistFinal,
+          metadata,
+          match,
         });
         return {
           status,
@@ -1304,12 +1345,54 @@ export class MonitorService {
         playCount: spinPlayCount,
       });
     }
+    MonitorService.emitStationPollRealtime(stationId, {
+      detectionStatus: status,
+      detectionLogId: log.id,
+      newDetectionLog: true,
+      titleFinal,
+      artistFinal,
+      metadata,
+      match,
+    });
     return {
       status,
       reasonCode: detectionReason ?? null,
       detectionLogId: log.id,
       learnedLibraryThisPoll,
     };
+  }
+
+  private static emitStationPollRealtime(
+    stationId: string,
+    opts: {
+      detectionStatus: "matched" | "unresolved";
+      detectionLogId: string | null;
+      newDetectionLog: boolean;
+      titleFinal?: string | null | undefined;
+      artistFinal?: string | null | undefined;
+      metadata: NormalizedMetadata | null;
+      match: MatchResult | null;
+    }
+  ): void {
+    const rawT = (opts.metadata?.rawTitle ?? "").trim();
+    const rawA = (opts.metadata?.rawArtist ?? "").trim();
+    const displayTitle =
+      (opts.titleFinal && String(opts.titleFinal).trim()) ||
+      rawT ||
+      (opts.metadata?.combinedRaw ?? "").trim() ||
+      null;
+    const displayArtist =
+      (opts.artistFinal && String(opts.artistFinal).trim()) || rawA || null;
+    monitorEvents.emitStationPoll({
+      stationId,
+      ts: new Date().toISOString(),
+      detectionStatus: opts.detectionStatus,
+      detectionLogId: opts.detectionLogId,
+      displayTitle,
+      displayArtist,
+      streamText: opts.metadata?.combinedRaw ?? null,
+      newDetectionLog: opts.newDetectionLog,
+    });
   }
 
   private static async archiveUnresolvedSample(stationId: string, samplePath: string): Promise<string | null> {

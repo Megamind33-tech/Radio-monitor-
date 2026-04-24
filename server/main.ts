@@ -161,11 +161,16 @@ async function startServer() {
     const onSongDetected = (payload: unknown) => {
       sendEvent("song_detected", payload);
     };
+    const onStationPoll = (payload: unknown) => {
+      sendEvent("station_poll", payload);
+    };
     monitorEvents.on("song-detected", onSongDetected);
+    monitorEvents.on("station-poll", onStationPoll);
 
     req.on("close", () => {
       clearInterval(heartbeat);
       monitorEvents.off("song-detected", onSongDetected);
+      monitorEvents.off("station-poll", onStationPoll);
       res.end();
     });
   });

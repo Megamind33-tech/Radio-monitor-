@@ -241,9 +241,9 @@ function stationGroup(station: Station): Exclude<StationListFilter, 'all'> {
 // --- Components ---
 
 export default function App() {
-  const STATION_REFRESH_MS = 30_000;
-  const HISTORY_REFRESH_MS = 120_000;
-  const REALTIME_FALLBACK_REFRESH_MS = 15_000;
+  const STATION_REFRESH_MS = 12_000;
+  const HISTORY_REFRESH_MS = 15_000;
+  const REALTIME_FALLBACK_REFRESH_MS = 12_000;
   const [stations, setStations] = useState<Station[]>([]);
   const [logs, setLogs] = useState<DetectionLog[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
@@ -451,6 +451,14 @@ export default function App() {
       if (cancelled) return;
       es = new EventSource('/api/events/monitoring');
       es.addEventListener('song_detected', (event) => {
+        try {
+          const payload = JSON.parse((event as MessageEvent).data) as { stationId?: string };
+          refreshFromRealtime(payload.stationId);
+        } catch {
+          refreshFromRealtime();
+        }
+      });
+      es.addEventListener('station_poll', (event) => {
         try {
           const payload = JSON.parse((event as MessageEvent).data) as { stationId?: string };
           refreshFromRealtime(payload.stationId);
