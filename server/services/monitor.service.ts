@@ -283,9 +283,28 @@ export class MonitorService {
 
       const catalogTrustFactor = metaTrust * metaQuality.catalogConfidenceScale;
 
-      /** When true, also fingerprint when ICY exists but quality heuristics flag it (see metadata-quality). */
+      /** When true, also fingerprint when ICY exists but quality heuristics flag it (see metadata-quality). Default on for fewer fake ICY "matches". */
       const forceFingerprintAggressive =
-        metaQuality.forceFingerprint || parseEnvBool("FINGERPRINT_AGGRESSIVE_ON_SUSPICIOUS_METADATA", false);
+        metaQuality.forceFingerprint ||
+        parseEnvBool("FINGERPRINT_AGGRESSIVE_ON_SUSPICIOUS_METADATA", true);
+
+      const combinedLine = (metadata?.combinedRaw ?? "").trim();
+      const titleLine = (metadata?.rawTitle ?? combinedLine).trim();
+      const contentClass = classifyMusicContent(combinedLine || titleLine);
+      const programLikeIcy =
+        isProgramLikeTitle(metadata?.rawTitle) ||
+        (!metadata?.rawTitle && isProgramLikeTitle(metadata?.combinedRaw)) ||
+        !contentClass.isMusic;
+      const suspiciousIcyForPaidLane =
+        programLikeIcy ||
+        legacyFingerprint ||
+        !metaQuality.okForCatalog ||
+        metaQuality.forceFingerprint;
+      const paidFallbacksEnabled = parseEnvBool("PAID_AUDIO_FALLBACKS_ENABLED", true);
+      const paidLaneEligible =
+        paidFallbacksEnabled &&
+        suspiciousIcyForPaidLane &&
+        (AuddService.isEnabled() || AcrcloudService.isEnabled());
 
       /** Trusted ICY but unchanged: still re-fingerprint on this cadence to catch wrong/stuck ICY. */
       const icyVerificationIntervalSec = Math.max(
@@ -631,8 +650,11 @@ export class MonitorService {
         intervalElapsed,
         icyCrossCheckAudio,
         icyVerificationDue,
+        suspiciousIcyForPaidLane,
+        paidLaneEligible,
         legacyFingerprint,
         fingerprintEveryPoll,
+        forceFingerprintAggressive,
         doAudioId,
         metaTrust,
         metaQualityReasons: metaQuality.reasons,
@@ -1026,9 +1048,12 @@ export class MonitorService {
       isProgramLikeTitle(metadata?.rawTitle) ||
       (!metadata?.rawTitle && isProgramLikeTitle(metadata?.combinedRaw));
 
+    /** Require catalog/fingerprint/local match — do not count raw ICY alone as "matched" (avoids fake slogans in analytics). Set ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID=true for legacy. */
+    const allowStreamMetadataOnlyMatch = parseEnvBool("ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID", false);
     const isMatched =
       !!match ||
-      (method === "stream_metadata" &&
+      (allowStreamMetadataOnlyMatch &&
+        method === "stream_metadata" &&
         !!metadata &&
         trustedMeta &&
         !isJunkIcyMetadata(metadata) &&
@@ -1040,9 +1065,12 @@ export class MonitorService {
 
     const rawTitle = (metadata?.rawTitle ?? "").trim();
     const rawArtist = (metadata?.rawArtist ?? "").trim();
+    /** Without ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID, do not persist raw ICY as final title/artist when there is no real match (reduces fake rows in exports). */
     const titleFinal =
-      match?.title || (!metadataProgramLike && rawTitle ? rawTitle : undefined);
-    const artistFinal = match?.artist || (rawArtist ? rawArtist : undefined);
+      match?.title ||
+      (allowStreamMetadataOnlyMatch && !metadataProgramLike && rawTitle ? rawTitle : undefined);
+    const artistFinal =
+      match?.artist || (allowStreamMetadataOnlyMatch && rawArtist ? rawArtist : undefined);
 
     let trackDurationMs: number | undefined = match?.durationMs;
     if (!trackDurationMs && match?.recordingId) {
