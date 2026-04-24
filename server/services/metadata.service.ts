@@ -360,7 +360,9 @@ export class MetadataService {
       'streaming', 'advertising', 'news', 'weather'
     ];
 
-    if (brandingPatterns.some(p => text.includes(p) && text.length < 30)) {
+    // Short station slogans only; long lines are usually "Artist - Title" with station words (e.g. "Radio" in artist name).
+    const looksLikeSongLine = /[-–—/]/.test(metadata.combinedRaw || '') || /\bfeat\.?\b|\bft\.?\b/i.test(text);
+    if (brandingPatterns.some(p => text.includes(p) && text.length < 72 && !looksLikeSongLine)) {
       return { trusted: false, reason: 'branding' };
     }
 

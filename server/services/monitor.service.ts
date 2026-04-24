@@ -283,10 +283,10 @@ export class MonitorService {
 
       const catalogTrustFactor = metaTrust * metaQuality.catalogConfidenceScale;
 
-      /** When true, also fingerprint when ICY exists but quality heuristics flag it (see metadata-quality). Default on for fewer fake ICY "matches". */
+      /** When true, also fingerprint when ICY exists but quality heuristics flag it. Default off for ICY stability (set true for bad streams). */
       const forceFingerprintAggressive =
         metaQuality.forceFingerprint ||
-        parseEnvBool("FINGERPRINT_AGGRESSIVE_ON_SUSPICIOUS_METADATA", true);
+        parseEnvBool("FINGERPRINT_AGGRESSIVE_ON_SUSPICIOUS_METADATA", false);
 
       const combinedLine = (metadata?.combinedRaw ?? "").trim();
       const titleLine = (metadata?.rawTitle ?? combinedLine).trim();
@@ -1059,8 +1059,8 @@ export class MonitorService {
       isProgramLikeTitle(metadata?.rawTitle) ||
       (!metadata?.rawTitle && isProgramLikeTitle(metadata?.combinedRaw));
 
-    /** Require catalog/fingerprint/local match — do not count raw ICY alone as "matched" (avoids fake slogans in analytics). Set ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID=true for legacy. */
-    const allowStreamMetadataOnlyMatch = parseEnvBool("ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID", false);
+    /** When true (default), trusted ICY can count as matched without catalog row (pre-improvement behavior). Set false to require catalog/fingerprint ID only. */
+    const allowStreamMetadataOnlyMatch = parseEnvBool("ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID", true);
     const isMatched =
       !!match ||
       (allowStreamMetadataOnlyMatch &&
@@ -1076,12 +1076,9 @@ export class MonitorService {
 
     const rawTitle = (metadata?.rawTitle ?? "").trim();
     const rawArtist = (metadata?.rawArtist ?? "").trim();
-    /** Without ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID, do not persist raw ICY as final title/artist when there is no real match (reduces fake rows in exports). */
     const titleFinal =
-      match?.title ||
-      (allowStreamMetadataOnlyMatch && !metadataProgramLike && rawTitle ? rawTitle : undefined);
-    const artistFinal =
-      match?.artist || (allowStreamMetadataOnlyMatch && rawArtist ? rawArtist : undefined);
+      match?.title || (!metadataProgramLike && rawTitle ? rawTitle : undefined);
+    const artistFinal = match?.artist || (rawArtist ? rawArtist : undefined);
 
     let trackDurationMs: number | undefined = match?.durationMs;
     if (!trackDurationMs && match?.recordingId) {

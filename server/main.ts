@@ -1028,7 +1028,7 @@ async function startServer() {
       matched_by_detection_method_24h: toMethodMap(matchedByMethod24h as never),
       all_detections_by_detection_method_24h: toMethodMap(allByMethod24h as never),
       match_rate_note:
-        "Raw ICY alone no longer counts as matched (stricter truth). Use music_match_rate and matched_by_detection_method_24h. Lower headline match_rate after deploy is often expected.",
+        "Default: trusted ICY can match again (ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID). Use music_match_rate and matched_by_detection_method_24h for AcoustID vs catalog.",
     });
   });
 

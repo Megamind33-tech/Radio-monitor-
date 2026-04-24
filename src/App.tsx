@@ -661,7 +661,7 @@ export default function App() {
                 {(metrics.matched_by_detection_method_24h.fingerprint_audd ?? 0) +
                   (metrics.matched_by_detection_method_24h.fingerprint_acrcloud ?? 0)}
               </span>
-              . Headline match_rate drops when ICY-only rows are unresolved — use Song match rate above.
+              . Use Song match rate above for song-oriented view.
             </p>
           )}
         </header>
