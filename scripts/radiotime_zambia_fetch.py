@@ -191,7 +191,7 @@ def harvest_row(
         "fingerprintFallbackEnabled": True,
         "metadataStaleSeconds": 300,
         "pollIntervalSeconds": 120,
-        "audioFingerprintIntervalSeconds": 300,
+        "audioFingerprintIntervalSeconds": 120,
         "sampleSeconds": 25,
         "archiveSongSamples": True,
     }

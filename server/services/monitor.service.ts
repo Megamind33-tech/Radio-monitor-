@@ -169,7 +169,8 @@ function isPriorityStationForAudd(name: string | null | undefined): boolean {
 export class MonitorService {
   /**
    * Main logic for a single station poll.
-   * Audio fingerprint: on ICY change, on interval (audioFingerprintIntervalSeconds), or when metadata is missing/untrusted/stale.
+   * Audio fingerprint: on ICY change, on interval (audioFingerprintIntervalSeconds), periodic ICY verification
+   * when AcoustID is configured (icyVerificationIntervalSeconds), or when metadata is missing/untrusted/stale.
    */
   static async pollStation(stationId: string): Promise<void> {
     const start = Date.now();
@@ -256,7 +257,7 @@ export class MonitorService {
         prevIcy.length > 0 &&
         icyText !== prevIcy;
 
-      const intervalSec = Math.max(30, station.audioFingerprintIntervalSeconds || 300);
+      const intervalSec = Math.max(30, station.audioFingerprintIntervalSeconds || 120);
       const lastFp = station.lastAudioFingerprintAt;
       const intervalElapsed =
         !lastFp || Date.now() - lastFp.getTime() >= intervalSec * 1000;
@@ -298,6 +299,25 @@ export class MonitorService {
       const forceFingerprintAggressive =
         metaQuality.forceFingerprint || parseEnvBool("FINGERPRINT_AGGRESSIVE_ON_SUSPICIOUS_METADATA", false);
 
+      /** Trusted ICY but unchanged: still re-fingerprint on this cadence to catch wrong/stuck ICY. */
+      const icyVerificationIntervalSec = Math.max(
+        60,
+        typeof station.icyVerificationIntervalSeconds === "number" && station.icyVerificationIntervalSeconds > 0
+          ? station.icyVerificationIntervalSeconds
+          : 120
+      );
+      const lastIcyVerify = station.lastIcyVerificationFingerprintAt;
+      const icyVerificationDue =
+        !lastIcyVerify || Date.now() - lastIcyVerify.getTime() >= icyVerificationIntervalSec * 1000;
+      const icyCrossCheckAudio =
+        !!acoustidKey &&
+        !!metadata &&
+        !isJunkIcyMetadata(metadata) &&
+        metaTrust > 0 &&
+        !legacyFingerprint &&
+        reasonCode !== "metadata_disabled" &&
+        icyVerificationDue;
+
       const doAudioId =
         !!station.fingerprintFallbackEnabled &&
         (forceAudioFallback || !!acoustidKey) &&
@@ -305,11 +325,13 @@ export class MonitorService {
           icyChanged ||
           intervalElapsed ||
           fingerprintEveryPoll ||
-          forceFingerprintAggressive);
+          forceFingerprintAggressive ||
+          icyCrossCheckAudio);
 
       let audioMatch: MatchResult | null = null;
       let sampledForFingerprint = false;
-      let sampledAudioPath: string | null = null;
+      /** Last captured temp file in the fingerprint loop (cleaned up after archive or at end). */
+      let fingerprintSamplePathPendingCleanup: string | null = null;
 
       let capturedFingerprint: Awaited<ReturnType<typeof FingerprintService.generateFingerprint>> = null;
       let audioMatchSource: "local" | "acoustid" | "audd" | null = null;
@@ -343,6 +365,10 @@ export class MonitorService {
         );
 
         for (let attempt = 0; attempt < maxRetries && !audioMatch; attempt++) {
+          if (fingerprintSamplePathPendingCleanup) {
+            SamplerService.cleanup(fingerprintSamplePathPendingCleanup);
+            fingerprintSamplePathPendingCleanup = null;
+          }
           const fpSec = Math.min(120, baseSec + (attempt > 0 ? Math.min(25, bonusSec) : 0));
           const delaySec = attempt === 0 ? 0 : delayMs / 1000;
           logger.info(
@@ -353,10 +379,11 @@ export class MonitorService {
               reason: reasonCode,
               icyChanged,
               intervalElapsed,
+              icyCrossCheckAudio,
               fpSec,
               delaySec,
             },
-            "Audio fingerprint sample (ICY change, interval, suspicious metadata, or retry)"
+            "Audio fingerprint sample (ICY change, interval, verification, suspicious metadata, or retry)"
           );
           const samplePath = await SamplerService.captureSample(resolvedUrl, fpSec, delaySec);
           sampledForFingerprint = true;
@@ -369,12 +396,8 @@ export class MonitorService {
             });
             continue;
           }
-          sampledAudioPath = samplePath;
+          fingerprintSamplePathPendingCleanup = samplePath;
           const fp = await FingerprintService.generateFingerprint(samplePath);
-          if (sampledAudioPath === samplePath) {
-            sampledAudioPath = null;
-          }
-          SamplerService.cleanup(samplePath);
           if (!fp) {
             fingerprintAttempts.push({
               attempt: attempt + 1,
@@ -382,6 +405,7 @@ export class MonitorService {
               sampleSec: fpSec,
               outcome: "no_fingerprint",
             });
+            fingerprintSamplePathPendingCleanup = null;
             continue;
           }
           capturedFingerprint = fp;
@@ -431,6 +455,10 @@ export class MonitorService {
             sampleSec: fpSec,
             outcome: "no_match",
           });
+        }
+        if (fingerprintSamplePathPendingCleanup && audioMatch) {
+          SamplerService.cleanup(fingerprintSamplePathPendingCleanup);
+          fingerprintSamplePathPendingCleanup = null;
         }
         if (!acoustidKey && doAudioId) {
           logger.debug({ station: station.name }, "Fingerprint path ran without ACOUSTID_API_KEY after local miss");
@@ -532,8 +560,6 @@ export class MonitorService {
 
       let unresolvedSamplePath: string | null = null;
       if (!match && sampledForFingerprint && resolvedUrl.startsWith("http")) {
-        // Archive unresolved samples at the same full-length window used for AcoustID
-        // so the recovery service can later identify them without re-capturing.
         const archSec = Math.min(
           120,
           Math.max(
@@ -541,17 +567,27 @@ export class MonitorService {
             parseInt(process.env.FINGERPRINT_SAMPLE_SECONDS || "120", 10) || 120
           )
         );
-        const archTmp = await SamplerService.captureSample(resolvedUrl, archSec);
+        const reusePath = fingerprintSamplePathPendingCleanup;
+        const archTmp =
+          reusePath ||
+          (await SamplerService.captureSample(resolvedUrl, archSec));
         if (archTmp) {
           unresolvedSamplePath = await this.archiveUnresolvedSample(stationId, archTmp);
           SamplerService.cleanup(archTmp);
         }
+        fingerprintSamplePathPendingCleanup = null;
+      } else if (fingerprintSamplePathPendingCleanup) {
+        SamplerService.cleanup(fingerprintSamplePathPendingCleanup);
+        fingerprintSamplePathPendingCleanup = null;
       }
 
       if (sampledForFingerprint) {
         await prisma.station.update({
           where: { id: stationId },
-          data: { lastAudioFingerprintAt: new Date() },
+          data: {
+            lastAudioFingerprintAt: new Date(),
+            ...(icyCrossCheckAudio ? { lastIcyVerificationFingerprintAt: new Date() } : {}),
+          },
         });
       }
 
@@ -582,6 +618,8 @@ export class MonitorService {
         pollReason: reasonCode,
         icyChanged,
         intervalElapsed,
+        icyCrossCheckAudio,
+        icyVerificationDue,
         legacyFingerprint,
         fingerprintEveryPoll,
         doAudioId,
@@ -1006,13 +1044,19 @@ export class MonitorService {
       const pollMs = Math.max(station.pollIntervalSeconds, 1) * 1000;
       const maxGuardMs = parseEnvMs("TRACK_GUARD_MAX_MS", 15 * 60 * 1000);
       const fallbackMs = parseEnvMs("TRACK_GUARD_FALLBACK_MS", 4 * 60 * 1000);
+      /** ICY-only "match" can hide wrong stuck text; allow new logs sooner than full MB duration. */
+      const streamMetaOnlyCap = parseEnvMs("TRACK_GUARD_STREAM_METADATA_MAX_MS", 6 * 60 * 1000);
 
       const catalogGuard =
         trackDurationMs && trackDurationMs > 0
           ? trackDurationMs + Math.min(pollMs * 2, 120_000)
           : Math.min(Math.max(fallbackMs, pollMs * 3), maxGuardMs);
 
-      const effectiveGuardMs = Math.min(catalogGuard, maxGuardMs);
+      const cappedBySource =
+        method === "stream_metadata" && !match
+          ? Math.min(catalogGuard, streamMetaOnlyCap)
+          : catalogGuard;
+      const effectiveGuardMs = Math.min(cappedBySource, maxGuardMs);
       const anchor = latestLog.observedAt.getTime();
       if (Date.now() < anchor + effectiveGuardMs) {
         await prisma.currentNowPlaying.upsert({

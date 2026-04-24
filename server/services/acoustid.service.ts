@@ -50,7 +50,7 @@ export class AcoustidService {
 
       // Find top match
       const result = data.results[0];
-      const minScore = parseFloat(process.env.ACOUSTID_MIN_SCORE || '0.5');
+      const minScore = parseFloat(process.env.ACOUSTID_MIN_SCORE || '0.58');
       
       if (result.score < minScore) {
         logger.debug({ score: result.score, minScore }, "AcoustID match score too low");

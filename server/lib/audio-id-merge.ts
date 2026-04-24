@@ -1,5 +1,12 @@
 import type { DetectionMethod, MatchResult } from "../types.js";
 
+function parseEnvFloat(key: string, fallback: number): number {
+  const v = process.env[key];
+  if (!v) return fallback;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function norm(s: string | null | undefined): string {
   return (s ?? "")
     .trim()
@@ -38,6 +45,9 @@ export function mergeAcoustidAndCatalog(
       ? { ...catalog, confidence: (catalog.confidence ?? 0) * trust }
       : catalog;
 
+  /** When audio disagrees with catalog, require at least this AcoustID score to prefer audio (accuracy). */
+  const minAcoustidOverCatalog = parseEnvFloat("ACOUSTID_MIN_SCORE_OVER_CATALOG", 0.62);
+
   if (audio && scaledCatalog) {
     const audioMethod = fingerprintMethodForProvider(audio.sourceProvider);
     const sameTitle = norm(audio.title) === norm(scaledCatalog.title);
@@ -45,11 +55,15 @@ export function mergeAcoustidAndCatalog(
     if (sameTitle && sameArtist) {
       return { match: audio, method: audioMethod, reasonCode: null };
     }
-    if (audio.score >= minAcoustidPrefer) {
+    /** Disagreement: do not let marginal AcoustID beat catalog (see ACOUSTID_MIN_SCORE_OVER_CATALOG). */
+    if (audio.score >= minAcoustidOverCatalog) {
       return {
         match: audio,
         method: audioMethod,
-        reasonCode: "acoustid_preferred_over_catalog",
+        reasonCode:
+          audio.score >= minAcoustidPrefer
+            ? "acoustid_preferred_over_catalog"
+            : "acoustid_preferred_marginal_over_catalog",
       };
     }
     if (scaledCatalog.confidence >= 0.88) {
@@ -60,10 +74,20 @@ export function mergeAcoustidAndCatalog(
           trust < 1 ? "catalog_higher_confidence_than_acoustid_scaled" : "catalog_higher_confidence_than_acoustid",
       };
     }
+    const catConf = scaledCatalog.confidence ?? 0;
+    /** Catalog this weak cannot veto a fingerprint that cleared minAcoustidPrefer. */
+    const catalogWeakCeiling = parseEnvFloat("CATALOG_WEAK_CONFIDENCE_FOR_FP", 0.65);
+    if (audio.score >= minAcoustidPrefer && catConf < catalogWeakCeiling) {
+      return {
+        match: audio,
+        method: audioMethod,
+        reasonCode: "acoustid_preferred_weak_catalog",
+      };
+    }
     return {
-      match: audio,
-      method: audioMethod,
-      reasonCode: "acoustid_preferred_over_catalog",
+      match: scaledCatalog,
+      method: "catalog_lookup",
+      reasonCode: "catalog_preferred_low_acoustid_score",
     };
   }
   if (audio) {

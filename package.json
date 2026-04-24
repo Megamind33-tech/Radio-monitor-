@@ -22,7 +22,8 @@
     "fetch:radiotime:zambia": "python3 scripts/radiotime_zambia_fetch.py --out scripts/data/radiotime_zambia.json",
     "test:station-health": "tsx server/lib/station-health.spec.ts",
     "test:stream-url-guard": "tsx server/lib/stream-url-guard.spec.ts",
-    "test:local-fingerprint": "tsx server/services/local-fingerprint.service.spec.ts"
+    "test:local-fingerprint": "tsx server/services/local-fingerprint.service.spec.ts",
+    "test:audio-id-merge": "tsx server/lib/audio-id-merge.spec.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
