@@ -429,7 +429,12 @@ export class MonitorService {
           }
           capturedFingerprint = fp;
           const localMatch = await LocalFingerprintService.lookup(fp);
-          if (localMatch) {
+          const localMinConf = parseEnvFloat("LOCAL_FP_MIN_CONFIDENCE_FOR_SKIP_ACOUSTID", 0.88);
+          const localStrong =
+            localMatch &&
+            (localMatch.confidence ?? 0) >= localMinConf &&
+            (localMatch.score ?? 0) >= localMinConf;
+          if (localStrong) {
             audioMatch = localMatch;
             audioMatchSource = "local";
             fingerprintAttempts.push({
@@ -502,7 +507,8 @@ export class MonitorService {
 
       let catalogMatch: MatchResult | null = null;
       let catalogRejectedLowConfidence = false;
-      if (metadata && !isJunkIcyMetadata(metadata) && metaQuality.okForCatalog) {
+      /** Always try catalog when ICY is non-empty — okForCatalog only scales merge trust, it must not block lookup (was starving real songs). */
+      if (metadata && !isJunkIcyMetadata(metadata)) {
         const rawCat = await CatalogLookupService.lookupFromMetadata(metadata);
         const floor =
           typeof station.catalogConfidenceFloor === "number" && station.catalogConfidenceFloor > 0
@@ -579,9 +585,8 @@ export class MonitorService {
         }
       }
 
-      // Second-pass fallback: when metadata is present but unresolved/program-like,
-      // attempt catalog lookup from combined stream text to reduce "Unknown".
-      if (!match && metadata && station.fingerprintFallbackEnabled && !metaQuality.forceFingerprint) {
+      // Second-pass: combined-line catalog whenever still unmatched (even if quality heuristics flagged forceFingerprint).
+      if (!match && metadata && station.fingerprintFallbackEnabled && !isJunkIcyMetadata(metadata)) {
         const viaCombined = await CatalogLookupService.lookupFromMetadata({
           ...metadata,
           rawArtist: metadata.rawArtist || "",
