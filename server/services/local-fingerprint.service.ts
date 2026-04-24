@@ -508,6 +508,45 @@ export class LocalFingerprintService {
     };
   }
 
+  static async dashboardStats(): Promise<{
+    totalRecordings: number;
+    totalMatches: number;
+    sumPlayCountTotal: number;
+    latestLearnedAt: Date | null;
+    latestMatchedAt: Date | null;
+    bySource: Record<string, number>;
+    learningEnabled: boolean;
+  }> {
+    const base = await this.stats();
+    try {
+      const grouped = await prisma.localFingerprint.groupBy({
+        by: ["source"],
+        _count: { _all: true },
+      });
+      const bySource: Record<string, number> = {};
+      for (const g of grouped) {
+        bySource[g.source || "unknown"] = Number(g._count._all ?? 0);
+      }
+      const sumPlay = await prisma.localFingerprint.aggregate({
+        _sum: { playCountTotal: true },
+      });
+      return {
+        ...base,
+        sumPlayCountTotal: Number(sumPlay._sum.playCountTotal ?? 0),
+        bySource,
+        learningEnabled: isLearningEnabled(),
+      };
+    } catch (error) {
+      logger.warn({ error }, "Failed to read local fingerprint dashboard stats");
+      return {
+        ...base,
+        sumPlayCountTotal: 0,
+        bySource: {},
+        learningEnabled: isLearningEnabled(),
+      };
+    }
+  }
+
   static async stats(): Promise<{
     totalRecordings: number;
     totalMatches: number;

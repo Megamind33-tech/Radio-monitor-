@@ -23,9 +23,11 @@ import {
   Play,
   Tag,
   Save,
-  Pencil
+  Pencil,
+  Brain
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { LearningLibraryTab } from './LearningLibraryTab';
 
 // --- Types ---
 interface Station {
@@ -242,7 +244,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedStationId, setSelectedStationId] = useState<string>('all');
-  const [activeTab, setActiveTab] = useState<'stations' | 'history' | 'analytics' | 'audioeditor' | 'settings'>('stations');
+  const [activeTab, setActiveTab] = useState<
+    'stations' | 'history' | 'analytics' | 'learning' | 'audioeditor' | 'settings'
+  >('stations');
   const [isAddingStation, setIsAddingStation] = useState(false);
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
@@ -564,6 +568,7 @@ export default function App() {
           <NavIcon icon={<Activity className="w-6 h-6" />} active={activeTab === 'stations'} onClick={() => setActiveTab('stations')} label="Monitor" />
           <NavIcon icon={<History className="w-6 h-6" />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="History" />
           <NavIcon icon={<LineChart className="w-6 h-6" />} active={activeTab === 'analytics'} onClick={() => setActiveTab('analytics')} label="Song spins" />
+          <NavIcon icon={<Brain className="w-6 h-6" />} active={activeTab === 'learning'} onClick={() => setActiveTab('learning')} label="Learning library" />
           <NavIcon icon={<Headphones className="w-6 h-6" />} active={activeTab === 'audioeditor'} onClick={() => setActiveTab('audioeditor')} label="Audio Editor" />
           <NavIcon icon={<Settings className="w-6 h-6" />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Settings" />
         </div>
@@ -589,7 +594,9 @@ export default function App() {
             <p className="text-gray-400">
               {activeTab === 'stations' && stationPageId
                 ? 'Station profile, logs, and per-station export.'
-                : 'Table-driven station operations and reliable song detection.'}
+                : activeTab === 'learning'
+                  ? 'Self-learned Chromaprint library, pipeline load, and recognition stack status.'
+                  : 'Table-driven station operations and reliable song detection.'}
             </p>
           </div>
           
@@ -660,6 +667,12 @@ export default function App() {
             onOpenStation={(id) => setStationHash(id)}
             onRefreshAll={fetchData}
           />
+        )}
+
+        {activeTab === 'learning' && (
+          <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-sm">
+            <LearningLibraryTab />
+          </div>
         )}
 
         {activeTab === 'analytics' && (

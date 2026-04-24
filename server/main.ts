@@ -28,6 +28,8 @@ import {
 } from "./lib/local-fingerprint-export.js";
 import { parseFeaturedFromArtist, titleWithoutFeaturing } from "./lib/track-credits.js";
 import { fingerprintPipelineGate } from "./lib/fingerprint-pipeline-gate.js";
+import { AuddService } from "./services/audd.service.js";
+import { AcrcloudService } from "./services/acrcloud.service.js";
 import { SpinRefreshService } from "./services/spin-refresh.service.js";
 import * as XLSX from "xlsx";
 
@@ -754,6 +756,53 @@ async function startServer() {
    */
   app.get("/api/fingerprints/pipeline-gate", (_req, res) => {
     res.json(fingerprintPipelineGate.getStatus());
+  });
+
+  /** Self-learned library + pipeline snapshot for the Learning dashboard UI. */
+  app.get("/api/learning/dashboard", async (_req, res) => {
+    try {
+      const [lib, gate, deps] = await Promise.all([
+        LocalFingerprintService.dashboardStats(),
+        Promise.resolve(fingerprintPipelineGate.getStatus()),
+        Promise.resolve({
+          acoustid: !!process.env.ACOUSTID_API_KEY,
+          acoustidOpen: !!process.env.ACOUSTID_OPEN_CLIENT,
+          musicbrainz: !!process.env.MUSICBRAINZ_USER_AGENT,
+          audd: AuddService.isEnabled(),
+          acrcloud: AcrcloudService.isEnabled(),
+          paidFallbacksEnabled: (() => {
+            const v = process.env.PAID_AUDIO_FALLBACKS_ENABLED;
+            if (!v) return true;
+            const t = v.trim().toLowerCase();
+            return !(t === "0" || t === "false" || t === "no" || t === "off");
+          })(),
+          localLearningEnabled: (() => {
+            const v = process.env.LOCAL_FP_LEARNING_ENABLED;
+            if (!v) return true;
+            const t = v.trim().toLowerCase();
+            return !(t === "0" || t === "false" || t === "no" || t === "off");
+          })(),
+        }),
+      ]);
+      res.json({
+        library: lib,
+        pipelineGate: gate,
+        services: deps,
+        pipelineEnv: {
+          minGapMs: Math.min(
+            5000,
+            Math.max(200, parseInt(process.env.FINGERPRINT_PIPELINE_MIN_GAP_MS || "750", 10) || 750)
+          ),
+          maxConcurrent: Math.min(
+            8,
+            Math.max(1, parseInt(process.env.FINGERPRINT_PIPELINE_MAX_CONCURRENT || "2", 10) || 2)
+          ),
+        },
+      });
+    } catch (error) {
+      logger.error({ error }, "Failed learning dashboard snapshot");
+      res.status(500).json({ error: "failed_learning_dashboard" });
+    }
   });
 
   app.get("/api/stations/:id/airplays", async (req, res) => {
