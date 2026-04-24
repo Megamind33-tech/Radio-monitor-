@@ -12,7 +12,15 @@ export class FingerprintService {
         resolve(result);
       };
 
-      const fpcalc = spawn('fpcalc', ['-json', filePath]);
+      // Optional: limit seconds analyzed from file start (aligns with Picard/fpcalc — full file not required).
+      const fpLenRaw = process.env.FINGERPRINT_FPCALC_LENGTH_SEC;
+      const fpLen = fpLenRaw != null && fpLenRaw !== "" ? Number.parseInt(fpLenRaw, 10) : NaN;
+      const fpcalcArgs =
+        Number.isFinite(fpLen) && fpLen > 0 && fpLen <= 180
+          ? ["-json", "-length", String(fpLen), filePath]
+          : ["-json", filePath];
+
+      const fpcalc = spawn("fpcalc", fpcalcArgs);
       let stdout = '';
       const timeout = setTimeout(() => {
         fpcalc.kill();
