@@ -104,6 +104,9 @@ interface Metrics {
   music_detections_24h?: number;
   music_matched_24h?: number;
   errors_count: number;
+  matched_by_detection_method_24h?: Record<string, number>;
+  all_detections_by_detection_method_24h?: Record<string, number>;
+  match_rate_note?: string;
 }
 
 interface StationSpinSummary {
@@ -639,6 +642,28 @@ export default function App() {
               sub="Active Zambia stations"
             />
           </div>
+          {metrics?.matched_by_detection_method_24h && (
+            <p className="text-[11px] text-gray-600 max-w-3xl -mt-4 mb-2">
+              Last 24h matched by method: AcoustID{' '}
+              <span className="text-gray-400 font-mono">
+                {metrics.matched_by_detection_method_24h.fingerprint_acoustid ?? 0}
+              </span>
+              {' · '}local{' '}
+              <span className="text-gray-400 font-mono">
+                {metrics.matched_by_detection_method_24h.fingerprint_local ?? 0}
+              </span>
+              {' · '}catalog{' '}
+              <span className="text-gray-400 font-mono">
+                {metrics.matched_by_detection_method_24h.catalog_lookup ?? 0}
+              </span>
+              {' · '}AudD/ACR{' '}
+              <span className="text-gray-400 font-mono">
+                {(metrics.matched_by_detection_method_24h.fingerprint_audd ?? 0) +
+                  (metrics.matched_by_detection_method_24h.fingerprint_acrcloud ?? 0)}
+              </span>
+              . Headline match_rate drops when ICY-only rows are unresolved — use Song match rate above.
+            </p>
+          )}
         </header>
 
         {activeTab === 'stations' && stationPageId && activeStation && (
