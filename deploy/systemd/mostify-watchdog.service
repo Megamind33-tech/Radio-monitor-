@@ -1,0 +1,11 @@
+[Unit]
+Description=MOSTIFY watchdog: restart monitor if /healthz stops responding
+After=mostify-monitor.service
+
+[Service]
+Type=oneshot
+# Adjust APP_HOST/APP_PORT/SERVICE_NAME if your install uses different names.
+Environment=APP_HOST=127.0.0.1
+Environment=APP_PORT=3000
+Environment=SERVICE_NAME=mostify-monitor.service
+ExecStart=/bin/bash /opt/radio-monitor/deploy/watchdog.sh

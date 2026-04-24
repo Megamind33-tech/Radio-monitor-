@@ -1,5 +1,6 @@
 [Unit]
 Description=MOSTIFY Zambian airplay monitor (Node dashboard + station poller)
+Documentation=https://github.com/Megamind33-tech/Radio-monitor-
 After=network-online.target
 Wants=network-online.target
 
@@ -10,10 +11,24 @@ Type=simple
 # Group=mostify
 WorkingDirectory=/opt/radio-monitor
 EnvironmentFile=-/etc/mostify-monitor/mostify-monitor.env
+
+# Give Node enough heap for large station catalogs
+Environment=NODE_OPTIONS=--max-old-space-size=512
+
 # Replace with: which node
 ExecStart=/usr/bin/node dist/server/main.js
+
+# NEVER-SLEEP: restart on any exit, including clean exit.
+# A companion mostify-watchdog.timer probes /healthz and restarts if stuck.
 Restart=always
 RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+TimeoutStopSec=30
+
+# Resource limits
+LimitNOFILE=65536
+
 # Hardening (optional; relax if something legitimate breaks)
 NoNewPrivileges=true
 PrivateTmp=true

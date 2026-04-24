@@ -1,0 +1,11 @@
+[Unit]
+Description=Probe mostify-monitor /healthz every minute (never-sleep guarantee)
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Unit=mostify-watchdog.service
+
+[Install]
+WantedBy=timers.target
