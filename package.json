@@ -14,6 +14,7 @@
     "harvest:zambia:wide": "python3 scripts/zambia_station_harvest.py --max-probe 1400 --mytuner-pages 20 --out scripts/data/zambia_harvest.json",
     "harvest:zambia:with-no-icy": "python3 scripts/zambia_station_harvest.py --max-probe 1400 --mytuner-pages 20 --include-no-icy --out scripts/data/zambia_harvest.json",
     "import:zambia": "node scripts/import_zambia_stations.mjs scripts/data/zambia_harvest.json",
+    "import:zambia:seed": "node scripts/import_zambia_stations.mjs scripts/seed/zambia_catalog_min.json",
     "import:zambia:replace": "node scripts/import_zambia_stations.mjs --replace scripts/data/zambia_harvest.json",
     "import:zambia:replace-stations-only": "node scripts/import_zambia_stations.mjs --replace-stations-only scripts/data/zambia_harvest.json",
     "sync:zambia": "node scripts/sync_zambia_catalog.mjs",

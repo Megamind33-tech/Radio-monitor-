@@ -1,5 +1,7 @@
 import axios from "axios";
 import { createHash } from "crypto";
+import fs from "fs";
+import path from "path";
 import { prisma } from "./prisma.js";
 import { logger } from "./logger.js";
 import { validateCandidateStreamUrl } from "./stream-url-guard.js";
@@ -17,6 +19,12 @@ const RADIO_BROWSER_BASES = [
   "https://all.api.radio-browser.info",
 ];
 
+/** Same as harvest/import stable id from URL (24 hex chars). */
+export function stableRbIdFromUrl(url: string): string {
+  const h = createHash("sha256").update(String(url).trim()).digest("hex").slice(0, 24);
+  return `zm_rb_${h}`;
+}
+
 type RbRow = {
   name?: string;
   url?: string;
@@ -24,22 +32,107 @@ type RbRow = {
   countrycode?: string;
   state?: string;
   tags?: string;
+  stationuuid?: string;
   votes?: number;
   clickcount?: number;
   lastcheckok?: number;
+};
+
+type SeedStation = {
+  id: string;
+  name: string;
+  country: string;
+  district?: string;
+  province?: string;
+  frequencyMhz?: string | null;
+  streamUrl: string;
+  streamFormatHint?: string | null;
+  sourceIdsJson?: string | null;
+  icyQualification?: string | null;
+  icySampleTitle?: string | null;
+  isActive?: boolean;
+  metadataPriorityEnabled?: boolean;
+  fingerprintFallbackEnabled?: boolean;
+  metadataStaleSeconds?: number;
+  pollIntervalSeconds?: number;
+  audioFingerprintIntervalSeconds?: number;
+  sampleSeconds?: number;
+  archiveSongSamples?: boolean;
 };
 
 function bootstrapEnabled(): boolean {
   const v = String(process.env.AUTO_ZAMBIA_CATALOG_BOOTSTRAP ?? "").trim().toLowerCase();
   if (v === "false" || v === "0" || v === "no" || v === "off") return false;
   if (v === "true" || v === "1" || v === "yes" || v === "on") return true;
-  // Default: dev/staging on; production off unless explicitly enabled
   return process.env.NODE_ENV !== "production";
 }
 
-function stableRbId(url: string): string {
-  const h = createHash("sha256").update(url).digest("hex").slice(0, 20);
-  return `zm_rb_${h}`;
+function defaultSeedPath(): string {
+  const fromEnv = String(process.env.ZAMBIA_BOOTSTRAP_SEED_JSON || "").trim();
+  if (fromEnv) {
+    return path.isAbsolute(fromEnv) ? fromEnv : path.join(process.cwd(), fromEnv);
+  }
+  return path.join(process.cwd(), "scripts", "seed", "zambia_catalog_min.json");
+}
+
+/**
+ * Load committed harvest-shaped JSON (same shape as `import_zambia_stations.mjs`) from disk.
+ * Works in fresh clones where `scripts/data/` is gitignored and never populated.
+ */
+function loadSeedStationsFromDisk(): SeedStation[] {
+  const p = defaultSeedPath();
+  try {
+    if (!fs.existsSync(p)) return [];
+    const raw = fs.readFileSync(p, "utf-8");
+    const data = JSON.parse(raw) as { stations?: SeedStation[] };
+    if (!data || !Array.isArray(data.stations)) return [];
+    return data.stations.filter((s) => s && typeof s.id === "string" && typeof s.streamUrl === "string");
+  } catch (e) {
+    logger.warn({ err: String(e), path: p }, "Zambia seed catalog read failed");
+    return [];
+  }
+}
+
+async function upsertSeedStation(row: SeedStation): Promise<boolean> {
+  const urlCheck = validateCandidateStreamUrl(row.streamUrl);
+  if (!urlCheck.accepted) return false;
+
+  await prisma.station.upsert({
+    where: { id: row.id },
+    create: {
+      id: row.id,
+      name: row.name,
+      country: row.country || "Zambia",
+      district: row.district ?? "",
+      province: row.province ?? "",
+      frequencyMhz: row.frequencyMhz ?? null,
+      streamUrl: urlCheck.canonicalUrl,
+      streamFormatHint: row.streamFormatHint ?? "icy",
+      sourceIdsJson: row.sourceIdsJson ?? null,
+      icyQualification: row.icyQualification ?? "partial",
+      icySampleTitle: row.icySampleTitle || null,
+      isActive: row.isActive ?? true,
+      metadataPriorityEnabled: row.metadataPriorityEnabled ?? true,
+      fingerprintFallbackEnabled: row.fingerprintFallbackEnabled ?? true,
+      metadataStaleSeconds: row.metadataStaleSeconds ?? 300,
+      pollIntervalSeconds: row.pollIntervalSeconds ?? 120,
+      audioFingerprintIntervalSeconds: row.audioFingerprintIntervalSeconds ?? 120,
+      sampleSeconds: row.sampleSeconds ?? 20,
+      archiveSongSamples: row.archiveSongSamples ?? true,
+      monitorState: "UNKNOWN",
+      contentClassification: "unknown",
+      visibilityEnabled: true,
+    },
+    update: {
+      name: row.name,
+      streamUrl: urlCheck.canonicalUrl,
+      sourceIdsJson: row.sourceIdsJson ?? undefined,
+      icyQualification: row.icyQualification ?? undefined,
+      isActive: row.isActive ?? true,
+      visibilityEnabled: true,
+    },
+  });
+  return true;
 }
 
 async function upsertZnbcBaseline(): Promise<number> {
@@ -75,7 +168,7 @@ async function upsertZnbcBaseline(): Promise<number> {
         id: row.id,
         name: row.name,
         country: "Zambia",
-        district: row.name.includes("ZNBC") ? "Lusaka" : "",
+        district: "Lusaka",
         province: "Lusaka",
         frequencyMhz: row.frequencyMhz ?? null,
         streamUrl: urlCheck.canonicalUrl,
@@ -108,6 +201,12 @@ async function upsertZnbcBaseline(): Promise<number> {
   return n;
 }
 
+const RB_PATHS = [
+  "/json/stations/bycountrycodeexact/ZM",
+  "/json/stations/bycountry/Zambia",
+  "/json/stations/search?countrycode=ZM&limit=120&hidebroken=false",
+];
+
 async function fetchZambiaStationsFromRadioBrowser(maxStations: number): Promise<RbRow[]> {
   const bases = (process.env.RADIO_BROWSER_API_BASES || "")
     .split(/[\s,]+/)
@@ -115,27 +214,43 @@ async function fetchZambiaStationsFromRadioBrowser(maxStations: number): Promise
     .filter(Boolean);
   const servers = bases.length > 0 ? bases : RADIO_BROWSER_BASES;
 
+  const seen = new Set<string>();
+  const out: RbRow[] = [];
+
   for (const base of servers) {
-    try {
-      const url = `${base}/json/stations/bycountrycodeexact/ZM`;
-      const res = await axios.get<RbRow[]>(url, {
-        timeout: 25_000,
-        headers: { "User-Agent": UA, Accept: "application/json" },
-        validateStatus: (s) => s === 200,
-      });
-      if (Array.isArray(res.data) && res.data.length > 0) {
-        return res.data;
+    for (const rbPath of RB_PATHS) {
+      try {
+        const url = `${base}${rbPath}`;
+        const res = await axios.get<RbRow[]>(url, {
+          timeout: 25_000,
+          headers: { "User-Agent": UA, Accept: "application/json" },
+          validateStatus: (s) => s === 200,
+        });
+        if (!Array.isArray(res.data)) continue;
+        for (const row of res.data) {
+          const u = String(row.url_resolved || row.url || "").trim();
+          if (!u.startsWith("http")) continue;
+          const cc = String(row.countrycode || "").toUpperCase();
+          if (cc && cc !== "ZM") continue;
+          if (seen.has(u)) continue;
+          seen.add(u);
+          out.push(row);
+          if (out.length >= maxStations) return out;
+        }
+        if (out.length > 0) {
+          return out;
+        }
+      } catch (e) {
+        logger.warn({ err: String(e), base, rbPath }, "Radio Browser Zambia fetch failed; trying next");
       }
-    } catch (e) {
-      logger.warn({ err: String(e), base }, "Radio Browser Zambia fetch failed; trying next mirror");
     }
   }
-  return [];
+  return out;
 }
 
 /**
- * When the Station table is empty (fresh DB / mis-pointed SQLite file), load real
- * Zambian streams: ZNBC baseline + Radio Browser countrycode=ZM. No non-Zambia demo URLs.
+ * When the Station table is empty (fresh DB / mis-pointed SQLite file), load Zambia streams:
+ * 1) ZNBC baseline, 2) committed seed JSON (`scripts/seed/zambia_catalog_min.json`), 3) Radio Browser mirrors.
  */
 export async function ensureZambiaCatalogWhenEmpty(): Promise<{
   seeded: number;
@@ -157,6 +272,15 @@ export async function ensureZambiaCatalogWhenEmpty(): Promise<{
   );
 
   const znbc = await upsertZnbcBaseline();
+
+  let seedCount = 0;
+  const seedRows = loadSeedStationsFromDisk();
+  for (const row of seedRows) {
+    if (String(row.country || "").toLowerCase() !== "zambia") continue;
+    const ok = await upsertSeedStation(row);
+    if (ok) seedCount += 1;
+  }
+
   const usedUrls = new Set(
     (
       await prisma.station.findMany({
@@ -185,10 +309,11 @@ export async function ensureZambiaCatalogWhenEmpty(): Promise<{
     if (rbSeeded >= maxRb) break;
     if (usedUrls.has(url)) continue;
 
-    const id = stableRbId(url);
+    const id = stableRbIdFromUrl(url);
     const name = String(row.name || "Zambia station").trim() || "Zambia station";
     const district = String(row.state || "").trim();
     const tags = String(row.tags || "").trim();
+    const uuid = String(row.stationuuid || "").trim();
 
     await prisma.station.upsert({
       where: { id },
@@ -201,6 +326,7 @@ export async function ensureZambiaCatalogWhenEmpty(): Promise<{
         streamUrl: url,
         streamFormatHint: "icy",
         sourceIdsJson: JSON.stringify({
+          radio_browser: uuid || undefined,
           radio_browser_country: "ZM",
           radio_browser_tags: tags || undefined,
         }),
@@ -228,15 +354,19 @@ export async function ensureZambiaCatalogWhenEmpty(): Promise<{
     rbSeeded += 1;
   }
 
-  const seeded = znbc + rbSeeded;
+  const seeded = znbc + seedCount + rbSeeded;
+  const sourceParts = [`znbc=${znbc}`];
+  if (seedCount) sourceParts.push(`seed_file=${seedCount}`);
+  sourceParts.push(`radio_browser=${rbSeeded}`);
+
   logger.warn(
-    { znbcStations: znbc, radioBrowserStations: rbSeeded, total: seeded },
-    "Station catalog was empty — bootstrapped Zambia catalog (ZNBC + Radio Browser ZM). Run npm run harvest:zambia && npm run import:zambia for a fuller curated list."
+    { znbcStations: znbc, seedFileStations: seedCount, radioBrowserStations: rbSeeded, total: seeded },
+    "Station catalog was empty — bootstrapped Zambia catalog. For more stations: npm run harvest:zambia && npm run import:zambia (writes scripts/data/, gitignored)."
   );
 
   return {
     seeded,
     skipped: false,
-    source: rbRows.length ? "znbc_plus_radio_browser" : znbc ? "znbc_only" : "none",
+    source: sourceParts.join(", "),
   };
 }
