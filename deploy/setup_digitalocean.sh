@@ -124,27 +124,37 @@ DATABASE_URL="file:./prisma/prod.db"
 FINGERPRINT_PIPELINE_MAX_CONCURRENT=2
 FINGERPRINT_PIPELINE_MIN_GAP_MS=750
 
-# Sample length: 60s gives AcoustID much better context than 20s default
+# Sample length: 60s gives AcoustID much better context than the 20s default.
 FINGERPRINT_SAMPLE_SECONDS=60
 DEFAULT_SAMPLE_SECONDS=60
+FINGERPRINT_EXTRA_SAMPLE_SECONDS=15
 
-# Retry 3 times (different offsets in the song) before giving up
+# Retry 3 times (different offsets in the song) before giving up.
 FINGERPRINT_MAX_RETRIES=3
 FINGERPRINT_RETRY_DELAY_MS=5000
+
+# Aggressive: also fingerprint when ICY exists but heuristics flag program/slogan.
+FINGERPRINT_AGGRESSIVE_ON_SUSPICIOUS_METADATA=true
+
+# Always try paid identifiers after AcoustID misses (when keys are configured).
+PAID_AUDIO_FALLBACKS_ENABLED=true
+PAID_ON_AUDIO_MISS=true
 
 # Store unresolved samples so you can drain them later
 ARCHIVE_UNRESOLVED_SAMPLES=true
 UNRESOLVED_SAMPLE_MAX_PER_STATION=50
+UNRESOLVED_FORCE_RETRY=true
 
 # Store 30s archive of first play of each song for evidence + local library
 ARCHIVE_SAMPLE_SECONDS=30
 
-# Re-run catalog lookup on recent unresolved rows every 3 minutes
+# Re-run catalog lookup on recent unresolved rows continuously.
 CATALOG_REPAIR_ENABLED=true
-CATALOG_REPAIR_BATCH_LIMIT=25
+CATALOG_REPAIR_BATCH_LIMIT=50
 
-# Aggressive ICY verification — catch stuck metadata
-ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID=true
+# CORRECTNESS: never count an unknown ICY string ("Hot FM 87.7") as a real song match.
+# Requires either a fingerprint hit, a catalog hit, or a clean Artist – Title parse.
+ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID=false
 
 # Raise concurrency when you have more stations
 MAX_STATION_CONCURRENCY=8
@@ -217,6 +227,11 @@ StartLimitBurst=5
 # Resource limits (adjust per droplet size)
 LimitNOFILE=65536
 # MemoryMax=800M   # uncomment on 1GB droplets
+
+# NEVER SLEEP: keep the process pinned to a wake state.
+TimeoutStopSec=30
+# A health-check probe is wired via the watchdog timer; if the HTTP /healthz
+# endpoint does not respond in 90s the watchdog will restart this unit.
 
 # Logging
 StandardOutput=append:$APP_DIR/logs/app.log
@@ -365,12 +380,121 @@ EOF
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 12b. WATCHDOG (NEVER SLEEP)
+# ─────────────────────────────────────────────────────────────────────────────
+info "Installing watchdog: mostify-watchdog.service + .timer…"
+cat > /etc/systemd/system/mostify-watchdog.service <<EOF
+[Unit]
+Description=Watchdog: restart mostify-app if /healthz is unreachable for 90s
+After=mostify-app.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash $APP_DIR/deploy/watchdog.sh
+StandardOutput=append:$APP_DIR/logs/watchdog.log
+StandardError=append:$APP_DIR/logs/watchdog.log
+EOF
+
+cat > /etc/systemd/system/mostify-watchdog.timer <<EOF
+[Unit]
+Description=Probe mostify-app health every minute (never-sleep guarantee)
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Unit=mostify-watchdog.service
+
+[Install]
+WantedBy=timers.target
+EOF
+success "Watchdog installed"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 12c. STREAM VALIDATOR (drops dead/non-audio sources, hourly)
+# ─────────────────────────────────────────────────────────────────────────────
+info "Installing strict stream validator timer…"
+cat > /etc/systemd/system/mostify-stream-validator.service <<EOF
+[Unit]
+Description=Mostify — strict working-audio validator for every active station
+After=mostify-app.service
+
+[Service]
+Type=oneshot
+User=$APP_USER
+WorkingDirectory=$APP_DIR
+EnvironmentFile=$ENV_FILE
+ExecStart=$(which node) scripts/strict_stream_validator.mjs --auto-fix
+TimeoutStartSec=2700
+StandardOutput=append:$APP_DIR/logs/stream-validator.log
+StandardError=append:$APP_DIR/logs/stream-validator.log
+EOF
+
+cat > /etc/systemd/system/mostify-stream-validator.timer <<EOF
+[Unit]
+Description=Run the strict stream validator every hour
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+RandomizedDelaySec=120
+Unit=mostify-stream-validator.service
+
+[Install]
+WantedBy=timers.target
+EOF
+success "Stream validator timer installed"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 12d. ZAMBIA HARVESTER (radio-browser sweep, every 6h)
+# ─────────────────────────────────────────────────────────────────────────────
+info "Installing Zambia radio-browser harvester timer…"
+cat > /etc/systemd/system/mostify-harvest-zambia.service <<EOF
+[Unit]
+Description=Mostify — fetch every Zambian station from radio-browser and import
+After=mostify-app.service
+
+[Service]
+Type=oneshot
+User=$APP_USER
+WorkingDirectory=$APP_DIR
+EnvironmentFile=$ENV_FILE
+ExecStart=$(which node) scripts/zambia_radio_browser_harvest.mjs --import --validate
+TimeoutStartSec=2700
+StandardOutput=append:$APP_DIR/logs/harvest.log
+StandardError=append:$APP_DIR/logs/harvest.log
+EOF
+
+cat > /etc/systemd/system/mostify-harvest-zambia.timer <<EOF
+[Unit]
+Description=Re-harvest Zambian radio stations every 6 hours
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=6h
+RandomizedDelaySec=600
+Unit=mostify-harvest-zambia.service
+
+[Install]
+WantedBy=timers.target
+EOF
+success "Harvest timer installed"
+
+# Drop a runtime watchdog script into the repo deploy dir if missing
+if [[ ! -f "$APP_DIR/deploy/watchdog.sh" ]]; then
+  warn "deploy/watchdog.sh not present — skipping watchdog (timer will no-op)."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 13. RELOAD SYSTEMD + ENABLE SERVICES
 # ─────────────────────────────────────────────────────────────────────────────
 systemctl daemon-reload
 systemctl enable mostify-app.service
 systemctl enable mostify-orb-poller.timer
 systemctl enable mostify-drain.timer
+systemctl enable mostify-watchdog.timer
+systemctl enable mostify-stream-validator.timer
+systemctl enable mostify-harvest-zambia.timer
 success "Services enabled"
 
 # ─────────────────────────────────────────────────────────────────────────────

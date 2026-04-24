@@ -1,0 +1,16 @@
+[Unit]
+Description=MOSTIFY strict stream validator — drops dead / talk-only / non-audio sources
+After=network-online.target mostify-monitor.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/radio-monitor
+EnvironmentFile=-/etc/mostify-monitor/mostify-monitor.env
+ExecStart=/usr/bin/node scripts/strict_stream_validator.mjs --auto-fix
+TimeoutStartSec=2700
+# User=mostify
+# Group=mostify
+
+[Install]
+WantedBy=multi-user.target

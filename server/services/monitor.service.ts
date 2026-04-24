@@ -1059,8 +1059,32 @@ export class MonitorService {
       isProgramLikeTitle(metadata?.rawTitle) ||
       (!metadata?.rawTitle && isProgramLikeTitle(metadata?.combinedRaw));
 
-    /** When true (default), trusted ICY can count as matched without catalog row (pre-improvement behavior). Set false to require catalog/fingerprint ID only. */
-    const allowStreamMetadataOnlyMatch = parseEnvBool("ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID", true);
+    /**
+     * Default CHANGED to false: trusted ICY by itself is NOT enough to count as matched.
+     * A real song match requires either:
+     *   (a) a catalog/fingerprint result (`match` populated), OR
+     *   (b) ICY metadata that clearly contains BOTH a parsed artist AND title
+     *       (the upstream parser only fills `rawArtist`/`rawTitle` when an artist–title
+     *       separator was found — branding strings like "Hot FM 87.7" never qualify),
+     *       AND ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID is explicitly enabled.
+     *
+     * Old behavior: any "trusted" combined ICY text (e.g. "ZNBC Radio 1") was logged as
+     * matched, inflating the apparent match rate while polluting StationSongSpin with
+     * non-songs. That was the "unknown treated as a real match" bug — fixed here.
+     */
+    const allowStreamMetadataOnlyMatch = parseEnvBool("ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID", false);
+    const rawTitleEarly = (metadata?.rawTitle ?? "").trim();
+    const rawArtistEarly = (metadata?.rawArtist ?? "").trim();
+    const hasArtistTitlePair =
+      rawTitleEarly.length >= 2 &&
+      rawArtistEarly.length >= 2 &&
+      rawTitleEarly.toLowerCase() !== rawArtistEarly.toLowerCase();
+    const stationNameLower = (station.name ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+    const looksLikeStationBranding =
+      !!stationNameLower &&
+      (rawTitleEarly.toLowerCase().includes(stationNameLower) ||
+        (metadata?.combinedRaw ?? "").toLowerCase().includes(stationNameLower)) &&
+      !hasArtistTitlePair;
     const isMatched =
       !!match ||
       (allowStreamMetadataOnlyMatch &&
@@ -1068,17 +1092,36 @@ export class MonitorService {
         !!metadata &&
         trustedMeta &&
         !isJunkIcyMetadata(metadata) &&
-        !metadataProgramLike);
+        !metadataProgramLike &&
+        hasArtistTitlePair &&
+        !looksLikeStationBranding);
     const status = isMatched ? "matched" : "unresolved";
     const detectionReason =
       reasonCode ||
-      (status === "unresolved" ? (metadataProgramLike ? "talk_or_program_content" : "no_reliable_match") : null);
+      (status === "unresolved"
+        ? metadataProgramLike
+          ? "talk_or_program_content"
+          : looksLikeStationBranding
+            ? "station_branding_only_not_a_song"
+            : !hasArtistTitlePair && method === "stream_metadata"
+              ? "icy_no_artist_title_pair"
+              : "no_reliable_match"
+        : null);
 
-    const rawTitle = (metadata?.rawTitle ?? "").trim();
-    const rawArtist = (metadata?.rawArtist ?? "").trim();
-    const titleFinal =
-      match?.title || (!metadataProgramLike && rawTitle ? rawTitle : undefined);
-    const artistFinal = match?.artist || (rawArtist ? rawArtist : undefined);
+    const rawTitle = rawTitleEarly;
+    const rawArtist = rawArtistEarly;
+    /**
+     * Only carry ICY title/artist into the persisted log when the row is actually a match
+     * (real catalog/fingerprint hit, or a clear artist–title ICY pair when the operator opted in).
+     * For unresolved rows we keep the raw text in `rawStreamText` only so reports never claim
+     * a station ID like "Hot FM 87.7" was a played song.
+     */
+    const titleFinal = isMatched
+      ? match?.title || (!metadataProgramLike && rawTitle ? rawTitle : undefined)
+      : match?.title || undefined;
+    const artistFinal = isMatched
+      ? match?.artist || (rawArtist ? rawArtist : undefined)
+      : match?.artist || undefined;
 
     let trackDurationMs: number | undefined = match?.durationMs;
     if (!trackDurationMs && match?.recordingId) {

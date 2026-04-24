@@ -1,0 +1,12 @@
+[Unit]
+Description=Re-harvest Zambian radio stations every 6 hours
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=6h
+RandomizedDelaySec=600
+Persistent=true
+Unit=mostify-harvest-zambia.service
+
+[Install]
+WantedBy=timers.target

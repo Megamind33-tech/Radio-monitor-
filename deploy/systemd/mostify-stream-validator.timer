@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the MOSTIFY strict stream validator every hour
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+RandomizedDelaySec=120
+Persistent=true
+Unit=mostify-stream-validator.service
+
+[Install]
+WantedBy=timers.target
