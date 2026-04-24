@@ -995,6 +995,22 @@ async function startServer() {
       },
     });
 
+    const [matchedByMethod24h, allByMethod24h] = await Promise.all([
+      prisma.detectionLog.groupBy({
+        by: ["detectionMethod"],
+        where: { observedAt: { gte: recentWindow }, status: "matched" },
+        _count: { _all: true },
+      }),
+      prisma.detectionLog.groupBy({
+        by: ["detectionMethod"],
+        where: { observedAt: { gte: recentWindow } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const toMethodMap = (rows: { detectionMethod: string; _count: { _all: number } }[]) =>
+      Object.fromEntries(rows.map((r) => [r.detectionMethod, r._count._all]));
+
     res.json({
       total_detections: totalLogs,
       match_rate: totalLogs > 0 ? matchedLogs / totalLogs : 0,
@@ -1008,6 +1024,11 @@ async function startServer() {
       music_detections_24h: recentMusicCandidates,
       music_matched_24h: recentMusicMatched,
       errors_count: stationErrors,
+      /** Proves AcoustID path: matched rows last 24h with detectionMethod fingerprint_acoustid (and similar). */
+      matched_by_detection_method_24h: toMethodMap(matchedByMethod24h as never),
+      all_detections_by_detection_method_24h: toMethodMap(allByMethod24h as never),
+      match_rate_note:
+        "Raw ICY alone no longer counts as matched (stricter truth). Use music_match_rate and matched_by_detection_method_24h. Lower headline match_rate after deploy is often expected.",
     });
   });
 
