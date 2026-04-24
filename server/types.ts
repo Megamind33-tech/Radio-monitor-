@@ -1,6 +1,7 @@
 export type DetectionMethod =
   | 'stream_metadata'
   | 'fingerprint_acoustid'
+  | 'fingerprint_audd'
   | 'fingerprint_local'
   | 'catalog_lookup'
   | 'unresolved';
@@ -46,6 +47,7 @@ export interface MatchResult {
   sourceProvider?:
     | 'acoustid'
     | 'acoustid_open'
+    | 'audd'
     | 'local_fingerprint'
     | 'musicbrainz'
     | 'musicbrainz_search'

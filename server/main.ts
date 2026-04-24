@@ -556,7 +556,22 @@ async function startServer() {
       const stationId = typeof body.stationId === "string" && body.stationId.trim() ? body.stationId.trim() : undefined;
       const limitRaw = typeof body.limit === "number" ? body.limit : Number(body.limit);
       const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 200) : undefined;
-      const out = await UnresolvedRecoveryService.runBatch({ stationId, limit });
+      const force = typeof body.force === "boolean"
+        ? body.force
+        : String(body.force || "").toLowerCase() === "true";
+      const maxPassesRaw =
+        typeof body.maxPasses === "number" ? body.maxPasses : Number(body.maxPasses);
+      const maxPasses = Number.isFinite(maxPassesRaw)
+        ? Math.min(Math.max(Math.trunc(maxPassesRaw), 1), 200)
+        : undefined;
+      const out = force
+        ? await UnresolvedRecoveryService.runUntilDrained({
+            stationId,
+            limit,
+            maxPasses,
+            continueWithoutAcoustid: true,
+          })
+        : await UnresolvedRecoveryService.runBatch({ stationId, limit });
       res.json(out);
     } catch (error) {
       logger.error({ error }, "Failed unresolved recovery run request");

@@ -12,6 +12,7 @@ export class SchedulerService {
   /** Last scheduled poll interval per station (seconds) — resync when DB value changes */
   private static pollIntervals: Map<string, number> = new Map();
   private static pollRunning: Set<string> = new Set();
+  private static stationOrder: string[] = [];
   private static masterJob: cron.ScheduledTask | null = null;
   private static unresolvedRecoveryJob: cron.ScheduledTask | null = null;
   private static spinRefreshJob: cron.ScheduledTask | null = null;
@@ -49,10 +50,21 @@ export class SchedulerService {
   }
 
   private static async runUnresolvedRecoveryTick() {
-    if (!process.env.ACOUSTID_API_KEY) return;
+    const forceWithoutAcoustid =
+      String(process.env.UNRESOLVED_FORCE_RETRY_WITHOUT_ACOUSTID || "").toLowerCase() === "true";
+    if (!process.env.ACOUSTID_API_KEY && !forceWithoutAcoustid) return;
     try {
-      const out = await UnresolvedRecoveryService.runBatch();
-      if (out.processed > 0) {
+      const forcePasses = Math.max(
+        1,
+        Math.min(200, parseInt(process.env.UNRESOLVED_FORCE_MAX_PASSES || "25", 10) || 25)
+      );
+      const out = forceWithoutAcoustid
+        ? await UnresolvedRecoveryService.runUntilDrained({
+            continueWithoutAcoustid: true,
+            maxPasses: forcePasses,
+          })
+        : await UnresolvedRecoveryService.runBatch();
+      if (out.processed > 0 || ("remainingPending" in out && Number((out as { remainingPending?: number }).remainingPending ?? 0) > 0)) {
         logger.info({ out }, "Unresolved recovery scheduler tick");
       }
     } catch (error) {
@@ -63,6 +75,7 @@ export class SchedulerService {
   private static async resyncStations() {
     const stations = await prisma.station.findMany({ where: { isActive: true } });
     const activeIds = new Set(stations.map((s) => s.id));
+    this.stationOrder = stations.map((s) => s.id);
 
     for (const [id, handle] of this.tasks) {
       if (!activeIds.has(id)) {
@@ -102,6 +115,14 @@ export class SchedulerService {
         logger.debug({ stationId: station.id }, "Skipping overlapping poll tick");
         return;
       }
+      const maxConcurrency = Math.max(1, Math.min(50, parseInt(process.env.MAX_STATION_CONCURRENCY || "5", 10) || 5));
+      if (this.pollRunning.size >= maxConcurrency) {
+        logger.debug(
+          { stationId: station.id, activePolls: this.pollRunning.size, maxConcurrency },
+          "Deferring poll due to global station concurrency cap"
+        );
+        return;
+      }
       this.pollRunning.add(station.id);
       try {
         await MonitorService.pollStation(station.id);
@@ -125,7 +146,12 @@ export class SchedulerService {
     }
 
     // Prime immediately so stations don't wait for the first interval tick.
-    void runPoll();
+    // Stagger startup to avoid opening dozens of streams at once.
+    const idx = this.stationOrder.indexOf(station.id);
+    const startJitterMs = Math.max(0, idx) * 200;
+    setTimeout(() => {
+      void runPoll();
+    }, Math.min(15_000, startJitterMs));
 
     this.tasks.set(station.id, handle);
     this.pollIntervals.set(station.id, pollIntervalSeconds);
