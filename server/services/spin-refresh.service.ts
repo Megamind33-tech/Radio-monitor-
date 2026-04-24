@@ -20,6 +20,7 @@
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import axios from "axios";
+import { parseFeaturedFromArtist, titleWithoutFeaturing } from "../lib/track-credits.js";
 
 interface CatalogHit {
   title: string;
@@ -250,16 +251,24 @@ export class SpinRefreshService {
             });
 
             // Also patch LocalFingerprint entries that reference this artist/title combo.
+            const feat = parseFeaturedFromArtist(hit.artist);
+            const featuredJson =
+              feat.featured.length > 0 ? JSON.stringify(feat.featured) : undefined;
+            const titleWo = titleWithoutFeaturing(hit.title) || null;
             await prisma.localFingerprint.updateMany({
               where: {
                 artist: { equals: spin.artistLast || null },
                 title: { equals: spin.titleLast || null },
               },
               data: {
-                artist: hit.artist,
+                artist: feat.primaryArtist || hit.artist,
                 title: hit.title,
+                displayArtist: hit.artist,
+                titleWithoutFeat: titleWo,
+                featuredArtistsJson: featuredJson,
                 releaseTitle: hit.album ?? undefined,
                 genre: hit.genre ?? undefined,
+                durationMs: hit.durationMs ?? undefined,
               },
             });
 

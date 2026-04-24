@@ -23,9 +23,11 @@ import {
   Play,
   Tag,
   Save,
-  Pencil
+  Pencil,
+  Brain
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { LearningLibraryTab } from './LearningLibraryTab';
 
 // --- Types ---
 interface Station {
@@ -138,6 +140,13 @@ interface DependencyStatus {
   };
   fingerprintReady: boolean;
   missing: string[];
+  paidApis?: {
+    auddConfigured: boolean;
+    acrcloudConfigured: boolean;
+    paidFallbacksEnabled: boolean;
+    paidLaneReady: boolean;
+  };
+  integrationNotes?: string[];
 }
 
 type StationListFilter = 'all' | 'running' | 'degraded' | 'inactive' | 'unknown';
@@ -242,7 +251,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedStationId, setSelectedStationId] = useState<string>('all');
-  const [activeTab, setActiveTab] = useState<'stations' | 'history' | 'analytics' | 'audioeditor' | 'settings'>('stations');
+  const [activeTab, setActiveTab] = useState<
+    'stations' | 'history' | 'analytics' | 'learning' | 'audioeditor' | 'settings'
+  >('stations');
   const [isAddingStation, setIsAddingStation] = useState(false);
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
@@ -564,6 +575,7 @@ export default function App() {
           <NavIcon icon={<Activity className="w-6 h-6" />} active={activeTab === 'stations'} onClick={() => setActiveTab('stations')} label="Monitor" />
           <NavIcon icon={<History className="w-6 h-6" />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="History" />
           <NavIcon icon={<LineChart className="w-6 h-6" />} active={activeTab === 'analytics'} onClick={() => setActiveTab('analytics')} label="Song spins" />
+          <NavIcon icon={<Brain className="w-6 h-6" />} active={activeTab === 'learning'} onClick={() => setActiveTab('learning')} label="Learning library" />
           <NavIcon icon={<Headphones className="w-6 h-6" />} active={activeTab === 'audioeditor'} onClick={() => setActiveTab('audioeditor')} label="Audio Editor" />
           <NavIcon icon={<Settings className="w-6 h-6" />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Settings" />
         </div>
@@ -589,7 +601,9 @@ export default function App() {
             <p className="text-gray-400">
               {activeTab === 'stations' && stationPageId
                 ? 'Station profile, logs, and per-station export.'
-                : 'Table-driven station operations and reliable song detection.'}
+                : activeTab === 'learning'
+                  ? 'Self-learned Chromaprint library, pipeline load, and recognition stack status.'
+                  : 'Table-driven station operations and reliable song detection.'}
             </p>
           </div>
           
@@ -660,6 +674,12 @@ export default function App() {
             onOpenStation={(id) => setStationHash(id)}
             onRefreshAll={fetchData}
           />
+        )}
+
+        {activeTab === 'learning' && (
+          <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-sm">
+            <LearningLibraryTab />
+          </div>
         )}
 
         {activeTab === 'analytics' && (
@@ -862,6 +882,67 @@ export default function App() {
                   <p className="text-xs text-yellow-300">
                     Missing: {dependencies.missing.join(', ')}
                   </p>
+                )}
+              </div>
+
+              <div className="bg-black/30 border border-white/10 rounded-2xl p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold">Paid audio fallbacks (AudD / ACRCloud)</span>
+                  <span
+                    className={`px-2 py-1 rounded-lg text-xs font-bold ${
+                      !dependencies?.paidApis
+                        ? 'bg-white/10 text-gray-500'
+                        : !dependencies.paidApis.paidFallbacksEnabled
+                          ? 'bg-white/10 text-gray-400'
+                          : dependencies.paidApis.paidLaneReady
+                            ? 'bg-green-500/20 text-green-400'
+                            : 'bg-amber-500/20 text-amber-200'
+                    }`}
+                  >
+                    {!dependencies?.paidApis
+                      ? '…'
+                      : !dependencies.paidApis.paidFallbacksEnabled
+                        ? 'DISABLED'
+                        : dependencies.paidApis.paidLaneReady
+                          ? 'READY'
+                          : 'NO KEYS'}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Used only after <strong className="text-gray-400">local + AcoustID</strong> miss when ICY looks like slogans /
+                  programmes (not normal song titles). Same binaries as fingerprint pipeline (ffmpeg, fpcalc).
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-gray-300">
+                  <div>
+                    AudD token:{' '}
+                    {dependencies?.paidApis?.auddConfigured ? (
+                      <span className="text-green-400">configured</span>
+                    ) : (
+                      <span className="text-gray-500">not set</span>
+                    )}
+                  </div>
+                  <div>
+                    ACRCloud:{' '}
+                    {dependencies?.paidApis?.acrcloudConfigured ? (
+                      <span className="text-green-400">host + keys</span>
+                    ) : (
+                      <span className="text-gray-500">not set</span>
+                    )}
+                  </div>
+                  <div className="sm:col-span-2 text-xs text-gray-500">
+                    Env: <code className="text-gray-400">AUDD_API_TOKEN</code> ·{' '}
+                    <code className="text-gray-400">ACRCLOUD_HOST</code>,{' '}
+                    <code className="text-gray-400">ACRCLOUD_ACCESS_KEY</code>,{' '}
+                    <code className="text-gray-400">ACRCLOUD_ACCESS_SECRET</code> · optional{' '}
+                    <code className="text-gray-400">PAID_AUDIO_FALLBACKS_ENABLED=false</code> to disable paid calls entirely.
+                  </div>
+                </div>
+                {dependencies?.integrationNotes && dependencies.integrationNotes.length > 0 && (
+                  <ul className="text-xs text-amber-200/90 space-y-1 list-disc list-inside border-t border-white/5 pt-3">
+                    {dependencies.integrationNotes.map((note, i) => (
+                      <li key={i}>{note}</li>
+                    ))}
+                  </ul>
                 )}
               </div>
 

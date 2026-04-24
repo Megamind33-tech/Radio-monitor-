@@ -11,6 +11,7 @@ import { SamplerService } from "./sampler.service.js";
 import { FingerprintService } from "./fingerprint.service.js";
 import { AcoustidService } from "./acoustid.service.js";
 import { AuddService } from "./audd.service.js";
+import { AcrcloudService } from "./acrcloud.service.js";
 import { LocalFingerprintService } from "./local-fingerprint.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { CatalogLookupService } from "./catalog-lookup.service.js";
@@ -151,19 +152,6 @@ function parseSourceIdsMap(json: string | null | undefined): Record<string, stri
   } catch {
     return {};
   }
-}
-
-function stationNameForPolicy(name: string | null | undefined): string {
-  return String(name || "")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-function isPriorityStationForAudd(name: string | null | undefined): boolean {
-  const n = stationNameForPolicy(name);
-  if (!n) return false;
-  return n.includes("znbc") || n.includes("yar fm") || n.includes("hot fm");
 }
 
 export class MonitorService {
@@ -334,12 +322,19 @@ export class MonitorService {
       let fingerprintSamplePathPendingCleanup: string | null = null;
 
       let capturedFingerprint: Awaited<ReturnType<typeof FingerprintService.generateFingerprint>> = null;
-      let audioMatchSource: "local" | "acoustid" | "audd" | null = null;
+      let audioMatchSource: "local" | "acoustid" | "audd" | "acrcloud" | null = null;
       const fingerprintAttempts: Array<{
         attempt: number;
         delaySec: number;
         sampleSec: number;
-        outcome: "match_local" | "match_acoustid" | "match_audd" | "no_match" | "no_sample" | "no_fingerprint";
+        outcome:
+          | "match_local"
+          | "match_acoustid"
+          | "match_audd"
+          | "match_acrcloud"
+          | "no_match"
+          | "no_sample"
+          | "no_fingerprint";
       }> = [];
 
       if (doAudioId && resolvedUrl.startsWith("http")) {
@@ -435,7 +430,7 @@ export class MonitorService {
               break;
             }
           }
-          if (!audioMatch && isPriorityStationForAudd(station.name)) {
+          if (!audioMatch && paidLaneEligible && samplePath) {
             const auddMatch = await AuddService.lookupSample(samplePath);
             if (auddMatch) {
               audioMatch = auddMatch;
@@ -445,6 +440,22 @@ export class MonitorService {
                 delaySec,
                 sampleSec: fpSec,
                 outcome: "match_audd",
+              });
+              break;
+            }
+            const acrMatch = await AcrcloudService.identifyAudioFile(samplePath);
+            if (acrMatch) {
+              let enriched = acrMatch;
+              if (acrMatch.recordingId) {
+                enriched = await MusicbrainzService.enrich(acrMatch);
+              }
+              audioMatch = enriched;
+              audioMatchSource = "acrcloud";
+              fingerprintAttempts.push({
+                attempt: attempt + 1,
+                delaySec,
+                sampleSec: fpSec,
+                outcome: "match_acrcloud",
               });
               break;
             }
@@ -643,7 +654,11 @@ export class MonitorService {
         match,
         processingMs,
         finalReason,
-        JSON.stringify(matchDiagnostics)
+        JSON.stringify(matchDiagnostics),
+        {
+          capturedFingerprint:
+            capturedFingerprint && audioMatchSource !== "local" ? capturedFingerprint : null,
+        }
       );
       if (
         unresolvedSamplePath &&
@@ -993,8 +1008,14 @@ export class MonitorService {
     match: MatchResult | null,
     processingMs: number,
     reasonCode: string | null,
-    matchDiagnosticsJson: string | null = null
-  ): Promise<{ status: "matched" | "unresolved"; reasonCode: string | null; detectionLogId?: string }> {
+    matchDiagnosticsJson: string | null = null,
+    opts?: { capturedFingerprint: import("../types.js").FingerprintResult | null }
+  ): Promise<{
+    status: "matched" | "unresolved";
+    reasonCode: string | null;
+    detectionLogId?: string;
+    learnedLibraryThisPoll: boolean;
+  }> {
     const stationId = station.id;
     const npRow = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
     const trustedMeta =
@@ -1064,7 +1085,12 @@ export class MonitorService {
           update: { updatedAt: new Date() },
           create: { stationId, title: titleFinal, artist: artistFinal },
         });
-        return { status, reasonCode: detectionReason ?? null, detectionLogId: latestLog.id };
+        return {
+          status,
+          reasonCode: detectionReason ?? null,
+          detectionLogId: latestLog.id,
+          learnedLibraryThisPoll: false,
+        };
       }
     }
 
@@ -1115,7 +1141,22 @@ export class MonitorService {
         originalCombinedRaw: (metadata?.combinedRaw ?? "").trim() || null,
       });
       spinPlayCount = spin.playCount;
+      await LocalFingerprintService.bumpPlayAggregates({
+        recordingMbid: match?.recordingId ?? null,
+        artist: artistFinal ?? null,
+        title: titleFinal ?? null,
+      });
     }
+
+    let learnedLibraryThisPoll = false;
+    const matchForLibrary = ((): MatchResult | null => {
+      if (!match) return null;
+      const m = { ...match };
+      if (titleFinal) m.title = titleFinal;
+      if (artistFinal) m.artist = artistFinal;
+      if (!m.durationMs && trackDurationMs) m.durationMs = trackDurationMs;
+      return m;
+    })();
 
     if (
       status === "matched" &&
@@ -1148,18 +1189,40 @@ export class MonitorService {
 
           // Persist to the self-learned fingerprint library so future plays of this
           // song are resolved locally — no AcoustID or catalog call needed.
-          if (fp) {
+          if (fp && matchForLibrary) {
             await LocalFingerprintService.learn({
               fp,
-              match: match ?? null,
+              match: matchForLibrary,
               metadata: metadata ?? null,
               source: match?.sourceProvider?.includes("acoustid") ? "acoustid" : "stream_metadata",
             });
+            learnedLibraryThisPoll = true;
           }
         }
       } catch (e) {
         logger.warn({ e, stationId }, "Song sample archive failed (non-fatal)");
       }
+    }
+
+    if (
+      status === "matched" &&
+      !learnedLibraryThisPoll &&
+      opts?.capturedFingerprint &&
+      matchForLibrary
+    ) {
+      const learnSource: "acoustid" | "stream_metadata" | "manual" =
+        match?.sourceProvider === "audd" || match?.sourceProvider === "acrcloud"
+          ? "manual"
+          : match?.sourceProvider?.includes("acoustid")
+            ? "acoustid"
+            : "stream_metadata";
+      await LocalFingerprintService.learn({
+        fp: opts.capturedFingerprint,
+        match: matchForLibrary,
+        metadata: metadata ?? null,
+        source: learnSource,
+      });
+      learnedLibraryThisPoll = true;
     }
 
     await prisma.currentNowPlaying.upsert({
@@ -1213,7 +1276,12 @@ export class MonitorService {
         playCount: spinPlayCount,
       });
     }
-    return { status, reasonCode: detectionReason ?? null, detectionLogId: log.id };
+    return {
+      status,
+      reasonCode: detectionReason ?? null,
+      detectionLogId: log.id,
+      learnedLibraryThisPoll,
+    };
   }
 
   private static async archiveUnresolvedSample(stationId: string, samplePath: string): Promise<string | null> {

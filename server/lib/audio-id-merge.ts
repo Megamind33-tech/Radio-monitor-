@@ -21,6 +21,9 @@ function fingerprintMethodForProvider(provider: MatchResult["sourceProvider"]): 
   if (provider === "audd") {
     return "fingerprint_audd";
   }
+  if (provider === "acrcloud") {
+    return "fingerprint_acrcloud";
+  }
   return "fingerprint_acoustid";
 }
 

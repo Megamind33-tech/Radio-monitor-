@@ -325,6 +325,20 @@ model LocalFingerprint {
   releaseTitle       String?
   releaseDate        String?
   genre              String?
+  /// Full artist line (e.g. primary feat. guests) from MusicBrainz artist-credit when known.
+  displayArtist      String?
+  /// Track title with featured segment stripped for cleaner exports.
+  titleWithoutFeat     String?
+  /// JSON array of featured artist names (parsed from credits / title).
+  featuredArtistsJson  String?
+  /// Primary release label name (MusicBrainz) when resolved.
+  labelName            String?
+  /// Release country code (MusicBrainz) when known.
+  countryCode          String?
+  /// Track length in ms from catalog (preferred over durationSec*1000 when set).
+  durationMs           Int?
+  /// Total plays observed across all stations (incremented on each confirmed match).
+  playCountTotal       Int      @default(0)
   /// AcoustID track UUID (top-level `results[*].id` from AcoustID lookup, when known).
   acoustidTrackId    String?
   /// MusicBrainz recording MBID from the original resolving lookup.
@@ -342,6 +356,7 @@ model LocalFingerprint {
   @@index([fingerprintPrefix, durationSec])
   @@index([acoustidTrackId])
   @@index([artist, title])
+  @@index([playCountTotal])
 }
 
 model JobRun {

@@ -11,8 +11,17 @@
  * is the upstream chokepoint that shapes the entire capture→fingerprint→lookup chain.
  */
 
-const MAX_CONCURRENT = 2;
-const MIN_GAP_MS = 500; // 2 starts per second
+function parseEnvInt(key: string, fallback: number): number {
+  const v = process.env[key];
+  if (!v) return fallback;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Default 2 concurrent captures; raise cautiously (CPU/IO). */
+const MAX_CONCURRENT = Math.min(8, Math.max(1, parseEnvInt("FINGERPRINT_PIPELINE_MAX_CONCURRENT", 2)));
+/** Gap between starts: default 750ms ≈ 1.33/s so AcoustID (500ms throttle) has headroom across stations. */
+const MIN_GAP_MS = Math.min(5000, Math.max(200, parseEnvInt("FINGERPRINT_PIPELINE_MIN_GAP_MS", 750)));
 
 class FingerprintPipelineGate {
   private active = 0;

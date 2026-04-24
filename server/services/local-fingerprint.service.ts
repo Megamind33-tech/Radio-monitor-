@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { FingerprintResult, MatchResult, NormalizedMetadata } from "../types.js";
+import { parseFeaturedFromArtist, titleWithoutFeaturing } from "../lib/track-credits.js";
 
 /**
  * Self-learned Chromaprint fingerprint library.
@@ -134,6 +135,38 @@ function isLearningEnabled(): boolean {
   if (!v) return true;
   const t = String(v).trim().toLowerCase();
   return !(t === "0" || t === "false" || t === "no" || t === "off");
+}
+
+function deriveCreditFields(match: MatchResult): {
+  displayArtist: string | null;
+  titleWithoutFeat: string | null;
+  featuredArtistsJson: string | null;
+} {
+  const title = (match.title ?? "").trim();
+  const primary = (match.artist ?? "").trim();
+  const displayArtist =
+    (match.displayArtist ?? "").trim() ||
+    (match.featuredArtists?.length && primary
+      ? `${primary} feat. ${match.featuredArtists.join(", ")}`
+      : primary || null);
+  const titleWo = (match.titleWithoutFeat ?? "").trim() || titleWithoutFeaturing(title) || null;
+  const fromTitleFeat = parseFeaturedFromArtist(title).featured;
+  const fromCredit = parseFeaturedFromArtist(displayArtist || primary).featured;
+  const merged = [...new Set([...(match.featuredArtists ?? []), ...fromCredit, ...fromTitleFeat])].filter(
+    (x) => x.length > 0
+  );
+  const featuredArtistsJson = merged.length ? JSON.stringify(merged) : null;
+  return {
+    displayArtist: displayArtist || null,
+    titleWithoutFeat: titleWo,
+    featuredArtistsJson,
+  };
+}
+
+function durationMsFromMatch(match: MatchResult | null, fpDurationSec: number): number | null {
+  if (match?.durationMs && match.durationMs > 0) return Math.round(match.durationMs);
+  if (fpDurationSec > 0) return fpDurationSec * 1000;
+  return null;
 }
 
 export class LocalFingerprintService {
@@ -280,7 +313,6 @@ export class LocalFingerprintService {
     const title = (match?.title || metadata?.rawTitle || "").trim() || null;
     const artist = (match?.artist || metadata?.rawArtist || "").trim() || null;
     if (!title && !artist) {
-      // Nothing to learn without at least one label.
       return;
     }
 
@@ -289,6 +321,23 @@ export class LocalFingerprintService {
     const confidence = match?.confidence ?? match?.score ?? 0.7;
     const isrcsJson =
       match?.isrcs && match.isrcs.length ? JSON.stringify(match.isrcs) : null;
+    const credits = match ? deriveCreditFields(match) : { displayArtist: null, titleWithoutFeat: null, featuredArtistsJson: null };
+    const durationMs = durationMsFromMatch(match, fp.duration);
+
+    const rich = {
+      releaseTitle: match?.releaseTitle ?? null,
+      releaseDate: match?.releaseDate ?? null,
+      genre: match?.genre ?? null,
+      displayArtist: credits.displayArtist,
+      titleWithoutFeat: credits.titleWithoutFeat,
+      featuredArtistsJson: credits.featuredArtistsJson,
+      labelName: match?.labelName?.trim() || null,
+      countryCode: match?.countryCode?.trim() || null,
+      durationMs,
+      acoustidTrackId: match?.acoustidTrackId ?? null,
+      recordingMbid: match?.recordingId ?? null,
+      isrcsJson,
+    };
 
     try {
       const existing = await prisma.localFingerprint.findUnique({
@@ -300,12 +349,18 @@ export class LocalFingerprintService {
           data: {
             title: title ?? existing.title,
             artist: artist ?? existing.artist,
-            releaseTitle: match?.releaseTitle ?? existing.releaseTitle,
-            releaseDate: match?.releaseDate ?? existing.releaseDate,
-            genre: match?.genre ?? existing.genre,
-            acoustidTrackId: match?.acoustidTrackId ?? existing.acoustidTrackId,
-            recordingMbid: match?.recordingId ?? existing.recordingMbid,
-            isrcsJson: isrcsJson ?? existing.isrcsJson,
+            releaseTitle: rich.releaseTitle ?? existing.releaseTitle,
+            releaseDate: rich.releaseDate ?? existing.releaseDate,
+            genre: rich.genre ?? existing.genre,
+            displayArtist: rich.displayArtist ?? existing.displayArtist,
+            titleWithoutFeat: rich.titleWithoutFeat ?? existing.titleWithoutFeat,
+            featuredArtistsJson: rich.featuredArtistsJson ?? existing.featuredArtistsJson,
+            labelName: rich.labelName ?? existing.labelName,
+            countryCode: rich.countryCode ?? existing.countryCode,
+            durationMs: rich.durationMs ?? existing.durationMs,
+            acoustidTrackId: rich.acoustidTrackId ?? existing.acoustidTrackId,
+            recordingMbid: rich.recordingMbid ?? existing.recordingMbid,
+            isrcsJson: rich.isrcsJson ?? existing.isrcsJson,
             confidence: Math.max(existing.confidence, confidence),
             timesMatched: existing.timesMatched + 1,
             lastMatchedAt: new Date(),
@@ -322,12 +377,7 @@ export class LocalFingerprintService {
           durationSec: fp.duration,
           title,
           artist,
-          releaseTitle: match?.releaseTitle ?? null,
-          releaseDate: match?.releaseDate ?? null,
-          genre: match?.genre ?? null,
-          acoustidTrackId: match?.acoustidTrackId ?? null,
-          recordingMbid: match?.recordingId ?? null,
-          isrcsJson,
+          ...rich,
           source,
           confidence,
         },
@@ -338,6 +388,37 @@ export class LocalFingerprintService {
       );
     } catch (error) {
       logger.warn({ error, source }, "Failed to persist learned fingerprint");
+    }
+  }
+
+  /**
+   * Increment aggregate play count on library rows that represent the same identified song
+   * (MusicBrainz id preferred, else primary artist + title).
+   */
+  static async bumpPlayAggregates(params: {
+    recordingMbid?: string | null;
+    artist?: string | null;
+    title?: string | null;
+  }): Promise<void> {
+    const mbid = params.recordingMbid?.trim();
+    const artist = (params.artist ?? "").trim();
+    const title = (params.title ?? "").trim();
+    try {
+      if (mbid) {
+        await prisma.localFingerprint.updateMany({
+          where: { recordingMbid: mbid },
+          data: { playCountTotal: { increment: 1 }, lastMatchedAt: new Date() },
+        });
+        return;
+      }
+      if (artist.length >= 2 && title.length >= 2) {
+        await prisma.localFingerprint.updateMany({
+          where: { artist, title },
+          data: { playCountTotal: { increment: 1 }, lastMatchedAt: new Date() },
+        });
+      }
+    } catch (error) {
+      logger.debug({ error }, "bumpPlayAggregates skipped");
     }
   }
 
@@ -361,9 +442,15 @@ export class LocalFingerprintService {
       id: string;
       title: string | null;
       artist: string | null;
+      displayArtist: string | null;
+      titleWithoutFeat: string | null;
+      featuredArtistsJson: string | null;
       releaseTitle: string | null;
       releaseDate: string | null;
       genre: string | null;
+      labelName: string | null;
+      countryCode: string | null;
+      durationMs: number | null;
       acoustidTrackId: string | null;
       recordingMbid: string | null;
       isrcsJson: string | null;
@@ -382,6 +469,23 @@ export class LocalFingerprintService {
         isrcs = undefined;
       }
     }
+    let featuredArtists: string[] | undefined;
+    if (row.featuredArtistsJson) {
+      try {
+        const parsed = JSON.parse(row.featuredArtistsJson);
+        if (Array.isArray(parsed)) {
+          featuredArtists = parsed.filter((x): x is string => typeof x === "string");
+        }
+      } catch {
+        featuredArtists = undefined;
+      }
+    }
+    const durationMs =
+      typeof row.durationMs === "number" && row.durationMs > 0
+        ? row.durationMs
+        : row.durationSec > 0
+          ? row.durationSec * 1000
+          : undefined;
     return {
       score: similarity,
       confidence: similarity,
@@ -389,14 +493,58 @@ export class LocalFingerprintService {
       acoustidTrackId: row.acoustidTrackId ?? undefined,
       title: row.title ?? undefined,
       artist: row.artist ?? undefined,
+      displayArtist: row.displayArtist ?? undefined,
+      titleWithoutFeat: row.titleWithoutFeat ?? undefined,
+      featuredArtists,
       releaseTitle: row.releaseTitle ?? undefined,
       releaseDate: row.releaseDate ?? undefined,
       genre: row.genre ?? undefined,
+      labelName: row.labelName ?? undefined,
+      countryCode: row.countryCode ?? undefined,
       isrcs,
-      durationMs: row.durationSec * 1000,
+      durationMs,
       sourceProvider: "local_fingerprint",
       reasonCode: "local_fingerprint_library",
     };
+  }
+
+  static async dashboardStats(): Promise<{
+    totalRecordings: number;
+    totalMatches: number;
+    sumPlayCountTotal: number;
+    latestLearnedAt: Date | null;
+    latestMatchedAt: Date | null;
+    bySource: Record<string, number>;
+    learningEnabled: boolean;
+  }> {
+    const base = await this.stats();
+    try {
+      const grouped = await prisma.localFingerprint.groupBy({
+        by: ["source"],
+        _count: { _all: true },
+      });
+      const bySource: Record<string, number> = {};
+      for (const g of grouped) {
+        bySource[g.source || "unknown"] = Number(g._count._all ?? 0);
+      }
+      const sumPlay = await prisma.localFingerprint.aggregate({
+        _sum: { playCountTotal: true },
+      });
+      return {
+        ...base,
+        sumPlayCountTotal: Number(sumPlay._sum.playCountTotal ?? 0),
+        bySource,
+        learningEnabled: isLearningEnabled(),
+      };
+    } catch (error) {
+      logger.warn({ error }, "Failed to read local fingerprint dashboard stats");
+      return {
+        ...base,
+        sumPlayCountTotal: 0,
+        bySource: {},
+        learningEnabled: isLearningEnabled(),
+      };
+    }
   }
 
   static async stats(): Promise<{

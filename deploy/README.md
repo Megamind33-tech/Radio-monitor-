@@ -29,6 +29,23 @@ UNRESOLVED_SAMPLE_DIR="/opt/radio-monitor/data/unresolved_samples"
 
 Optional: `DEEZER_LOOKUP_ENABLED`, `LOG_LEVEL`, etc.
 
+**Paid audio fallbacks** (after AcoustID miss when ICY is flagged non-song; requires same `ffmpeg`/`fpcalc` as fingerprinting):
+
+```bash
+# AudD — https://dashboard.audd.io/
+AUDD_API_TOKEN="your_token"
+
+# ACRCloud Identify — host from project console, e.g. identify-eu-west-1.acrcloud.com
+ACRCLOUD_HOST="identify-eu-west-1.acrcloud.com"
+ACRCLOUD_ACCESS_KEY="..."
+ACRCLOUD_ACCESS_SECRET="..."
+
+# Set to false to never call AudD/ACRCloud (AcoustID + free catalog only)
+# PAID_AUDIO_FALLBACKS_ENABLED="true"
+```
+
+Reload systemd after editing env: `sudo systemctl daemon-reload` (if unit references env file) and `sudo systemctl restart mostify-monitor.service`.
+
 ```bash
 sudo install -d -o root -g root -m 0755 /etc/mostify-monitor
 sudo install -m 0600 /path/to/your.env /etc/mostify-monitor/mostify-monitor.env

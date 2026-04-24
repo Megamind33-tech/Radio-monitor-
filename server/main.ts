@@ -21,9 +21,24 @@ import { StreamDiscoveryService } from "./services/stream-discovery.service.js";
 import { monitorEvents } from "./lib/monitor-events.js";
 import { UnresolvedRecoveryService } from "./services/unresolved-recovery.service.js";
 import { LocalFingerprintService } from "./services/local-fingerprint.service.js";
+import {
+  exportRowsToCsv,
+  isQualityLibraryRow,
+  localFingerprintToExportRow,
+} from "./lib/local-fingerprint-export.js";
+import { parseFeaturedFromArtist, titleWithoutFeaturing } from "./lib/track-credits.js";
 import { fingerprintPipelineGate } from "./lib/fingerprint-pipeline-gate.js";
+import { AuddService } from "./services/audd.service.js";
+import { AcrcloudService } from "./services/acrcloud.service.js";
 import { SpinRefreshService } from "./services/spin-refresh.service.js";
 import * as XLSX from "xlsx";
+
+function envBoolTrue(key: string, defaultTrue = true): boolean {
+  const v = process.env[key];
+  if (v === undefined || v === null || String(v).trim() === "") return defaultTrue;
+  const t = String(v).trim().toLowerCase();
+  return !(t === "0" || t === "false" || t === "no" || t === "off");
+}
 
 function isCommandAvailable(command: string, args: string[] = ["-version"]) {
   try {
@@ -192,6 +207,26 @@ async function startServer() {
     if (!acoustidApiKeyConfigured) missing.push("ACOUSTID_API_KEY");
     if (!musicbrainzUserAgentConfigured) missing.push("MUSICBRAINZ_USER_AGENT");
 
+    const auddApiConfigured = AuddService.isEnabled();
+    const acrcloudApiConfigured = AcrcloudService.isEnabled();
+    const paidFallbacksEnabled = envBoolTrue("PAID_AUDIO_FALLBACKS_ENABLED", true);
+    const paidLaneReady = !paidFallbacksEnabled || auddApiConfigured || acrcloudApiConfigured;
+    const integrationNotes: string[] = [];
+    if (paidFallbacksEnabled && !auddApiConfigured && !acrcloudApiConfigured) {
+      integrationNotes.push(
+        "Paid audio lane is on but neither AUDD_API_TOKEN nor ACRCLOUD_* is set — suspicious ICY will not reach AudD/ACRCloud."
+      );
+    }
+    if (paidFallbacksEnabled && auddApiConfigured) {
+      integrationNotes.push("AudD: token present — used after AcoustID miss when ICY is flagged non-song / untrusted.");
+    }
+    if (paidFallbacksEnabled && acrcloudApiConfigured) {
+      integrationNotes.push("ACRCloud: host + keys present — optional fallback after AudD on the same capture.");
+    }
+    if (!paidFallbacksEnabled) {
+      integrationNotes.push("PAID_AUDIO_FALLBACKS_ENABLED is off — AudD and ACRCloud are never called.");
+    }
+
     res.json({
       ffmpeg,
       ffprobe,
@@ -201,7 +236,14 @@ async function startServer() {
       catalogLookupReady,
       freeApisEnabled,
       fingerprintReady: ffmpeg && ffprobe && fpcalc && acoustidApiKeyConfigured,
-      missing
+      missing,
+      paidApis: {
+        auddConfigured: auddApiConfigured,
+        acrcloudConfigured: acrcloudApiConfigured,
+        paidFallbacksEnabled,
+        paidLaneReady,
+      },
+      integrationNotes,
     });
   });
 
@@ -515,10 +557,20 @@ async function startServer() {
           id: true,
           title: true,
           artist: true,
+          displayArtist: true,
+          titleWithoutFeat: true,
+          featuredArtistsJson: true,
           releaseTitle: true,
+          releaseDate: true,
+          genre: true,
+          labelName: true,
+          countryCode: true,
           durationSec: true,
+          durationMs: true,
+          playCountTotal: true,
           acoustidTrackId: true,
           recordingMbid: true,
+          isrcsJson: true,
           source: true,
           confidence: true,
           timesMatched: true,
@@ -530,6 +582,30 @@ async function startServer() {
     } catch (error) {
       logger.error({ error }, "Failed to list local fingerprints");
       res.status(500).json({ error: "failed_to_list_local_fingerprints" });
+    }
+  });
+
+  /** Quality-filtered catalog export (JSON or CSV) for identified songs only. */
+  app.get("/api/fingerprints/local/export", async (req, res) => {
+    try {
+      const takeRaw = typeof req.query.take === "string" ? Number(req.query.take) : 5000;
+      const take = Number.isFinite(takeRaw) ? Math.min(Math.max(Math.trunc(takeRaw), 1), 50_000) : 5000;
+      const format = String(req.query.format || "json").toLowerCase();
+      const rows = await prisma.localFingerprint.findMany({
+        orderBy: [{ playCountTotal: "desc" }, { lastMatchedAt: "desc" }],
+        take,
+      });
+      const quality = rows.filter(isQualityLibraryRow).map(localFingerprintToExportRow);
+      if (format === "csv") {
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", 'attachment; filename="identified_songs_library.csv"');
+        res.send(exportRowsToCsv(quality));
+        return;
+      }
+      res.json({ count: quality.length, rows: quality });
+    } catch (error) {
+      logger.error({ error }, "Failed to export local fingerprint library");
+      res.status(500).json({ error: "failed_to_export_local_fingerprints" });
     }
   });
 
@@ -714,6 +790,43 @@ async function startServer() {
    */
   app.get("/api/fingerprints/pipeline-gate", (_req, res) => {
     res.json(fingerprintPipelineGate.getStatus());
+  });
+
+  /** Self-learned library + pipeline snapshot for the Learning dashboard UI. */
+  app.get("/api/learning/dashboard", async (_req, res) => {
+    try {
+      const [lib, gate, deps] = await Promise.all([
+        LocalFingerprintService.dashboardStats(),
+        Promise.resolve(fingerprintPipelineGate.getStatus()),
+        Promise.resolve({
+          acoustid: !!process.env.ACOUSTID_API_KEY,
+          acoustidOpen: !!process.env.ACOUSTID_OPEN_CLIENT,
+          musicbrainz: !!process.env.MUSICBRAINZ_USER_AGENT,
+          audd: AuddService.isEnabled(),
+          acrcloud: AcrcloudService.isEnabled(),
+          paidFallbacksEnabled: envBoolTrue("PAID_AUDIO_FALLBACKS_ENABLED", true),
+          localLearningEnabled: envBoolTrue("LOCAL_FP_LEARNING_ENABLED", true),
+        }),
+      ]);
+      res.json({
+        library: lib,
+        pipelineGate: gate,
+        services: deps,
+        pipelineEnv: {
+          minGapMs: Math.min(
+            5000,
+            Math.max(200, parseInt(process.env.FINGERPRINT_PIPELINE_MIN_GAP_MS || "750", 10) || 750)
+          ),
+          maxConcurrent: Math.min(
+            8,
+            Math.max(1, parseInt(process.env.FINGERPRINT_PIPELINE_MAX_CONCURRENT || "2", 10) || 2)
+          ),
+        },
+      });
+    } catch (error) {
+      logger.error({ error }, "Failed learning dashboard snapshot");
+      res.status(500).json({ error: "failed_learning_dashboard" });
+    }
   });
 
   app.get("/api/stations/:id/airplays", async (req, res) => {
@@ -1729,6 +1842,8 @@ async function startServer() {
       if (titleNorm) {
         const artistNorm = normTagStr(artist);
         const albumNorm = normTagStr(album);
+        const credit = parseFeaturedFromArtist(artist);
+        const primaryArtist = credit.primaryArtist || artist;
         await prisma.stationSongSpin.upsert({
           where: {
             stationId_artistNorm_titleNorm_albumNorm: {
@@ -1761,6 +1876,11 @@ async function startServer() {
             manuallyTagged: true,
           },
         });
+        await LocalFingerprintService.bumpPlayAggregates({
+          recordingMbid: null,
+          artist: primaryArtist,
+          title: title || null,
+        });
       }
 
       // 4. Create LocalFingerprint entry if a chromaprint is stored in SongSampleArchive
@@ -1772,6 +1892,11 @@ async function startServer() {
         if (archive?.chromaprint && archive.durationSec) {
           const sha1 = crypto.createHash("sha1").update(archive.chromaprint).digest("hex");
           const prefix = archive.chromaprint.substring(0, 48);
+          const credit = parseFeaturedFromArtist(artist);
+          const titleWo = titleWithoutFeaturing(title) || null;
+          const featuredJson = credit.featured.length ? JSON.stringify(credit.featured) : null;
+          const durationMs =
+            archive.durationSec > 0 ? Math.round(archive.durationSec * 1000) : null;
           await prisma.localFingerprint.upsert({
             where: { fingerprintSha1: sha1 },
             create: {
@@ -1780,18 +1905,26 @@ async function startServer() {
               fingerprintPrefix: prefix,
               durationSec: archive.durationSec,
               title: title || null,
-              artist: artist || null,
+              artist: credit.primaryArtist || artist || null,
+              displayArtist: artist.trim() ? artist : null,
+              titleWithoutFeat: titleWo,
+              featuredArtistsJson: featuredJson,
               releaseTitle: album || null,
               genre: genre || null,
+              durationMs,
               source: "manual",
               confidence: 1.0,
               timesMatched: 1,
             },
             update: {
               title: title || null,
-              artist: artist || null,
+              artist: credit.primaryArtist || artist || null,
+              displayArtist: artist.trim() ? artist : null,
+              titleWithoutFeat: titleWo,
+              featuredArtistsJson: featuredJson,
               releaseTitle: album || null,
               genre: genre || null,
+              durationMs,
               source: "manual",
               confidence: 1.0,
               timesMatched: { increment: 1 },

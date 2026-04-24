@@ -298,6 +298,11 @@ export class UnresolvedRecoveryService {
             mixSplitConfidence: null,
             originalCombinedRaw: linkedDetection?.rawStreamText ?? null,
           });
+          await LocalFingerprintService.bumpPlayAggregates({
+            recordingMbid: match.recordingId ?? null,
+            artist: artistFinal,
+            title: titleFinal,
+          });
 
           if (recoveredViaAcoustid) {
             await LocalFingerprintService.learn({
