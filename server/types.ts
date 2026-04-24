@@ -42,6 +42,16 @@ export interface MatchResult {
   releaseDate?: string;
   isrcs?: string[];
   genre?: string;
+  /** Full artist credit line (e.g. "A feat. B") when resolved from MusicBrainz. */
+  displayArtist?: string;
+  /** Track title with featured segment removed for display/export. */
+  titleWithoutFeat?: string;
+  /** Featured / collaborating artists parsed from credits or title. */
+  featuredArtists?: string[];
+  /** Primary release label from MusicBrainz when available. */
+  labelName?: string;
+  /** ISO 3166-1 alpha-2 from MusicBrainz release country when available. */
+  countryCode?: string;
   /** Track length in ms (MusicBrainz / iTunes / AcoustID) — used to suppress duplicate logs during one long spin */
   durationMs?: number;
   sourceProvider?:

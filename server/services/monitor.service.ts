@@ -591,23 +591,6 @@ export class MonitorService {
         });
       }
 
-      // Self-learning: persist the fingerprint whenever we have a confirmed match
-      // so future plays of the same track are resolved locally (no AcoustID / MB call).
-      if (capturedFingerprint && match && audioMatchSource !== "local") {
-        const learnSource: "acoustid" | "stream_metadata" | "manual" =
-          audioMatchSource === "acoustid"
-            ? "acoustid"
-            : audioMatchSource === "audd"
-              ? "manual"
-              : "stream_metadata";
-        await LocalFingerprintService.learn({
-          fp: capturedFingerprint,
-          match,
-          metadata,
-          source: learnSource,
-        });
-      }
-
       const finalReason =
         mergeReason ||
         reasonCode ||
@@ -643,7 +626,11 @@ export class MonitorService {
         match,
         processingMs,
         finalReason,
-        JSON.stringify(matchDiagnostics)
+        JSON.stringify(matchDiagnostics),
+        {
+          capturedFingerprint:
+            capturedFingerprint && audioMatchSource !== "local" ? capturedFingerprint : null,
+        }
       );
       if (
         unresolvedSamplePath &&
@@ -993,8 +980,14 @@ export class MonitorService {
     match: MatchResult | null,
     processingMs: number,
     reasonCode: string | null,
-    matchDiagnosticsJson: string | null = null
-  ): Promise<{ status: "matched" | "unresolved"; reasonCode: string | null; detectionLogId?: string }> {
+    matchDiagnosticsJson: string | null = null,
+    opts?: { capturedFingerprint: import("../types.js").FingerprintResult | null }
+  ): Promise<{
+    status: "matched" | "unresolved";
+    reasonCode: string | null;
+    detectionLogId?: string;
+    learnedLibraryThisPoll: boolean;
+  }> {
     const stationId = station.id;
     const npRow = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
     const trustedMeta =
@@ -1064,7 +1057,12 @@ export class MonitorService {
           update: { updatedAt: new Date() },
           create: { stationId, title: titleFinal, artist: artistFinal },
         });
-        return { status, reasonCode: detectionReason ?? null, detectionLogId: latestLog.id };
+        return {
+          status,
+          reasonCode: detectionReason ?? null,
+          detectionLogId: latestLog.id,
+          learnedLibraryThisPoll: false,
+        };
       }
     }
 
@@ -1115,7 +1113,22 @@ export class MonitorService {
         originalCombinedRaw: (metadata?.combinedRaw ?? "").trim() || null,
       });
       spinPlayCount = spin.playCount;
+      await LocalFingerprintService.bumpPlayAggregates({
+        recordingMbid: match?.recordingId ?? null,
+        artist: artistFinal ?? null,
+        title: titleFinal ?? null,
+      });
     }
+
+    let learnedLibraryThisPoll = false;
+    const matchForLibrary = ((): MatchResult | null => {
+      if (!match) return null;
+      const m = { ...match };
+      if (titleFinal) m.title = titleFinal;
+      if (artistFinal) m.artist = artistFinal;
+      if (!m.durationMs && trackDurationMs) m.durationMs = trackDurationMs;
+      return m;
+    })();
 
     if (
       status === "matched" &&
@@ -1148,18 +1161,40 @@ export class MonitorService {
 
           // Persist to the self-learned fingerprint library so future plays of this
           // song are resolved locally — no AcoustID or catalog call needed.
-          if (fp) {
+          if (fp && matchForLibrary) {
             await LocalFingerprintService.learn({
               fp,
-              match: match ?? null,
+              match: matchForLibrary,
               metadata: metadata ?? null,
               source: match?.sourceProvider?.includes("acoustid") ? "acoustid" : "stream_metadata",
             });
+            learnedLibraryThisPoll = true;
           }
         }
       } catch (e) {
         logger.warn({ e, stationId }, "Song sample archive failed (non-fatal)");
       }
+    }
+
+    if (
+      status === "matched" &&
+      !learnedLibraryThisPoll &&
+      opts?.capturedFingerprint &&
+      matchForLibrary
+    ) {
+      const learnSource: "acoustid" | "stream_metadata" | "manual" =
+        match?.sourceProvider === "audd"
+          ? "manual"
+          : match?.sourceProvider?.includes("acoustid")
+            ? "acoustid"
+            : "stream_metadata";
+      await LocalFingerprintService.learn({
+        fp: opts.capturedFingerprint,
+        match: matchForLibrary,
+        metadata: metadata ?? null,
+        source: learnSource,
+      });
+      learnedLibraryThisPoll = true;
     }
 
     await prisma.currentNowPlaying.upsert({
@@ -1213,7 +1248,12 @@ export class MonitorService {
         playCount: spinPlayCount,
       });
     }
-    return { status, reasonCode: detectionReason ?? null, detectionLogId: log.id };
+    return {
+      status,
+      reasonCode: detectionReason ?? null,
+      detectionLogId: log.id,
+      learnedLibraryThisPoll,
+    };
   }
 
   private static async archiveUnresolvedSample(stationId: string, samplePath: string): Promise<string | null> {
