@@ -691,6 +691,7 @@ export class MonitorService {
         {
           capturedFingerprint:
             capturedFingerprint && audioMatchSource !== "local" ? capturedFingerprint : null,
+          icyChanged,
         }
       );
       if (
@@ -1042,7 +1043,7 @@ export class MonitorService {
     processingMs: number,
     reasonCode: string | null,
     matchDiagnosticsJson: string | null = null,
-    opts?: { capturedFingerprint: import("../types.js").FingerprintResult | null }
+    opts?: { capturedFingerprint: import("../types.js").FingerprintResult | null; icyChanged?: boolean }
   ): Promise<{
     status: "matched" | "unresolved";
     reasonCode: string | null;
@@ -1157,8 +1158,17 @@ export class MonitorService {
           ? Math.min(catalogGuard, streamMetaOnlyCap)
           : catalogGuard;
       const effectiveGuardMs = Math.min(cappedBySource, maxGuardMs);
+
+      // Without an explicit ICY change signal the same re-detection is just the
+      // periodic fingerprint loop re-matching the still-playing song.  Use the
+      // full maxGuardMs so that identical consecutive detections driven by the
+      // fingerprint interval (no ICY change, stuck ICY, or no-ICY station) do
+      // not produce a new DetectionLog every few minutes and appear as a loop.
+      const hasIcyChange = opts?.icyChanged === true;
+      const loopSafeGuardMs = hasIcyChange ? effectiveGuardMs : maxGuardMs;
+
       const anchor = latestLog.observedAt.getTime();
-      if (Date.now() < anchor + effectiveGuardMs) {
+      if (Date.now() < anchor + loopSafeGuardMs) {
         const icyTitle = rawTitle || (metadata?.combinedRaw ?? "").trim() || null;
         const icyArtist = rawArtist || null;
         const npTitle = (titleFinal && String(titleFinal).trim()) || icyTitle || null;

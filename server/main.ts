@@ -31,6 +31,9 @@ import { fingerprintPipelineGate } from "./lib/fingerprint-pipeline-gate.js";
 import { AuddService } from "./services/audd.service.js";
 import { AcrcloudService } from "./services/acrcloud.service.js";
 import { SpinRefreshService } from "./services/spin-refresh.service.js";
+import { FingerprintService } from "./services/fingerprint.service.js";
+import { AcoustidService } from "./services/acoustid.service.js";
+import { MusicbrainzService } from "./services/musicbrainz.service.js";
 import * as XLSX from "xlsx";
 
 function envBoolTrue(key: string, defaultTrue = true): boolean {
@@ -1982,6 +1985,116 @@ async function startServer() {
     } catch (error) {
       logger.error({ error, id: req.params.id }, "audio-editor patch failed");
       res.status(500).json({ error: "audio_editor_patch_failed" });
+    }
+  });
+
+  /**
+   * Identify an unresolved audio sample via AcoustID and/or AudD.
+   * Returns the match metadata without saving — caller confirms via PATCH.
+   *
+   * Body: { provider?: "acoustid" | "audd" | "auto" }
+   * "auto" tries AcoustID first, then AudD on miss.
+   */
+  app.post("/api/audio-editor/samples/:id/identify", async (req, res) => {
+    try {
+      const provider =
+        typeof req.body?.provider === "string"
+          ? req.body.provider.trim().toLowerCase()
+          : "auto";
+      if (!["acoustid", "audd", "auto"].includes(provider)) {
+        res.status(400).json({ ok: false, error: "invalid_provider" });
+        return;
+      }
+
+      const sample = await prisma.unresolvedSample.findUnique({
+        where: { id: req.params.id },
+        select: { id: true, filePath: true, stationId: true },
+      });
+      if (!sample) {
+        res.status(404).json({ ok: false, error: "sample_not_found" });
+        return;
+      }
+      if (!sample.filePath || !fs.existsSync(sample.filePath)) {
+        res.status(422).json({ ok: false, error: "audio_file_not_on_disk" });
+        return;
+      }
+
+      const tryAcoustid =
+        (provider === "auto" || provider === "acoustid") &&
+        (!!process.env.ACOUSTID_API_KEY || !!process.env.ACOUSTID_OPEN_CLIENT);
+      const tryAudd =
+        (provider === "auto" || provider === "audd") && AuddService.isEnabled();
+
+      if (!tryAcoustid && !tryAudd) {
+        res.status(422).json({
+          ok: false,
+          error: "no_provider_available",
+          detail:
+            provider === "acoustid"
+              ? "ACOUSTID_API_KEY / ACOUSTID_OPEN_CLIENT not configured"
+              : provider === "audd"
+              ? "AUDD_API_TOKEN not configured"
+              : "Neither AcoustID nor AudD is configured",
+        });
+        return;
+      }
+
+      type MatchResult = import("./types.js").MatchResult;
+      let matchResult: MatchResult | null = null;
+      let usedProvider: "acoustid" | "audd" | null = null;
+      let acoustidScore: number | null = null;
+      let fingerprintOk = false;
+
+      if (tryAcoustid) {
+        const releaseGate = await fingerprintPipelineGate.acquire();
+        let fp: Awaited<ReturnType<typeof FingerprintService.generateFingerprint>>;
+        try {
+          fp = await FingerprintService.generateFingerprint(sample.filePath);
+        } finally {
+          releaseGate();
+        }
+        if (fp) {
+          fingerprintOk = true;
+          const acoustid = await AcoustidService.lookup(fp);
+          if (acoustid) {
+            acoustidScore = acoustid.score ?? null;
+            const enriched = await MusicbrainzService.enrich(acoustid);
+            matchResult = enriched || acoustid;
+            usedProvider = "acoustid";
+          }
+        }
+      }
+
+      if (!matchResult && tryAudd) {
+        const auddMatch = await AuddService.lookupSample(sample.filePath);
+        if (auddMatch) {
+          matchResult = auddMatch;
+          usedProvider = "audd";
+        }
+      }
+
+      if (!matchResult) {
+        const tried: string[] = [];
+        if (tryAcoustid) tried.push(fingerprintOk ? "acoustid (no match)" : "acoustid (fingerprint failed)");
+        if (tryAudd) tried.push("audd (no match)");
+        res.json({ ok: false, error: "no_match_found", tried });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        title: matchResult.title ?? null,
+        artist: matchResult.artist ?? null,
+        album: matchResult.releaseTitle ?? null,
+        genre: matchResult.genre ?? null,
+        score: matchResult.score ?? matchResult.confidence ?? null,
+        acoustidScore,
+        provider: usedProvider,
+        recordingId: matchResult.recordingId ?? null,
+      });
+    } catch (error) {
+      logger.error({ error, id: req.params.id }, "audio-editor identify failed");
+      res.status(500).json({ ok: false, error: "identify_failed" });
     }
   });
 

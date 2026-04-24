@@ -24,7 +24,10 @@ import {
   Tag,
   Save,
   Pencil,
-  Brain
+  Brain,
+  Sparkles,
+  ChevronDown,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LearningLibraryTab } from './LearningLibraryTab';
@@ -2131,7 +2134,22 @@ function AudioEditorCard({ sample, onSaved }: AudioEditorCardProps) {
   const [saving, setSaving] = React.useState(false);
   const [saveMsg, setSaveMsg] = React.useState<{ ok: boolean; text: string } | null>(null);
   const [manuallyTagged, setManuallyTagged] = React.useState(sample.manuallyTagged);
+  const [identifying, setIdentifying] = React.useState(false);
+  const [identifyMsg, setIdentifyMsg] = React.useState<{ ok: boolean; text: string; score?: number | null } | null>(null);
+  const [showIdentifyMenu, setShowIdentifyMenu] = React.useState(false);
+  const identifyMenuRef = React.useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+
+  React.useEffect(() => {
+    if (!showIdentifyMenu) return;
+    const onClick = (e: MouseEvent) => {
+      if (identifyMenuRef.current && !identifyMenuRef.current.contains(e.target as Node)) {
+        setShowIdentifyMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [showIdentifyMenu]);
 
   const displayTime = sample.detectedAt || sample.createdAt;
 
@@ -2151,6 +2169,37 @@ function AudioEditorCard({ sample, onSaved }: AudioEditorCardProps) {
     return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/10 text-gray-400">{sample.recoveryStatus}</span>;
   };
 
+  const handleIdentify = async (provider: 'auto' | 'acoustid' | 'audd') => {
+    setShowIdentifyMenu(false);
+    setIdentifying(true);
+    setIdentifyMsg(null);
+    setSaveMsg(null);
+    try {
+      const res = await fetch(`/api/audio-editor/samples/${sample.id}/identify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        const detail = data.detail || data.tried?.join(', ') || data.error || 'No match found';
+        setIdentifyMsg({ ok: false, text: detail });
+        return;
+      }
+      if (data.title) setTitle(data.title);
+      if (data.artist) setArtist(data.artist);
+      if (data.album) setAlbum(data.album);
+      if (data.genre) setGenre(data.genre);
+      const providerLabel = data.provider === 'acoustid' ? 'AcoustID' : data.provider === 'audd' ? 'AudD' : data.provider;
+      const scoreStr = data.score != null ? ` (confidence ${Math.round(data.score * 100)}%)` : '';
+      setIdentifyMsg({ ok: true, text: `Identified via ${providerLabel}${scoreStr} — review and save.`, score: data.score });
+    } catch (e) {
+      setIdentifyMsg({ ok: false, text: e instanceof Error ? e.message : 'Request failed' });
+    } finally {
+      setIdentifying(false);
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setSaveMsg(null);
@@ -2166,6 +2215,7 @@ function AudioEditorCard({ sample, onSaved }: AudioEditorCardProps) {
         return;
       }
       setManuallyTagged(true);
+      setIdentifyMsg(null);
       setSaveMsg({ ok: true, text: 'Metadata saved & embedded in audio file.' });
       onSaved({
         id: sample.id,
@@ -2215,9 +2265,49 @@ function AudioEditorCard({ sample, onSaved }: AudioEditorCardProps) {
       {/* Audio Player */}
       {sample.hasAudioFile ? (
         <div className="bg-black/40 rounded-xl p-3">
-          <div className="flex items-center gap-2 mb-2">
-            <Play className="w-3.5 h-3.5 text-brand-cyan shrink-0" />
-            <span className="text-xs text-gray-400">Recorded audio sample</span>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2">
+              <Play className="w-3.5 h-3.5 text-brand-cyan shrink-0" />
+              <span className="text-xs text-gray-400">Recorded audio sample</span>
+            </div>
+            {/* Identify button — only shown when audio file exists */}
+            <div className="relative" ref={identifyMenuRef}>
+              <button
+                onClick={() => setShowIdentifyMenu((v) => !v)}
+                disabled={identifying}
+                title="Send audio to AcoustID or AudD for automatic identification"
+                className="flex items-center gap-1.5 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 text-[11px] font-semibold px-2.5 py-1 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {identifying
+                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                  : <Sparkles className="w-3 h-3" />}
+                {identifying ? 'Identifying…' : 'Identify'}
+                {!identifying && <ChevronDown className="w-3 h-3 opacity-60" />}
+              </button>
+              {showIdentifyMenu && (
+                <div className="absolute right-0 top-full mt-1 z-50 bg-[#141414] border border-white/10 rounded-xl shadow-2xl py-1 min-w-[160px]">
+                  <button
+                    onClick={() => handleIdentify('auto')}
+                    className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-white/10 transition-colors"
+                  >
+                    <span className="font-semibold">Auto</span>
+                    <span className="text-gray-500 ml-1">AcoustID → AudD</span>
+                  </button>
+                  <button
+                    onClick={() => handleIdentify('acoustid')}
+                    className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-white/10 transition-colors"
+                  >
+                    AcoustID only
+                  </button>
+                  <button
+                    onClick={() => handleIdentify('audd')}
+                    className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-white/10 transition-colors"
+                  >
+                    AudD only
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
           <audio
             ref={audioRef}
@@ -2235,11 +2325,21 @@ function AudioEditorCard({ sample, onSaved }: AudioEditorCardProps) {
         </div>
       )}
 
+      {/* Identify result banner */}
+      {identifyMsg && (
+        <div className={`rounded-xl px-3 py-2 text-xs flex items-start gap-2 ${identifyMsg.ok ? 'bg-purple-500/10 border border-purple-500/20 text-purple-200' : 'bg-red-500/10 border border-red-500/20 text-red-300'}`}>
+          {identifyMsg.ok
+            ? <Sparkles className="w-3.5 h-3.5 shrink-0 mt-0.5 text-purple-400" />
+            : <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />}
+          <span>{identifyMsg.text}</span>
+        </div>
+      )}
+
       {/* Metadata Edit Form */}
       <div className="space-y-3">
         <div className="flex items-center gap-2 text-xs font-medium text-gray-400 border-t border-white/5 pt-3">
           <Pencil className="w-3.5 h-3.5" />
-          {manuallyTagged ? 'Edit metadata' : 'Enter metadata manually'}
+          {manuallyTagged ? 'Edit metadata' : identifyMsg?.ok ? 'Review identified metadata' : 'Enter metadata manually'}
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="space-y-1">
