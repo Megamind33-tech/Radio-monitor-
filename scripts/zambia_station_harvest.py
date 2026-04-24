@@ -156,6 +156,9 @@ ZAMBIA_NAME_HINTS = frozenset(
     luanshya kitwe chililabombwe kalulushi
     chikuni chikumpaushi icengelo oblate phoenix znbc komboni chimwemwe chongwe
     hone yar faith rooster kwithu unza zamcom znbc znbc1 znbc2 znbc3 znbc4
+    power flava qfm sunfm ultra love breeze yango chemba wingkong dorika bigo
+    byta christian voice central eastern western southern northern luapula muchinga
+    community campus paray broadcast streaming zed
     """.split()
 )
 
@@ -707,6 +710,27 @@ async def build_candidates(_max_total: int, extra_tunein_queries: list[str] | No
             "Hot FM Zambia",
             "ZNBC radio",
             "MusicBox Zambia",
+            "community radio Zambia",
+            "campus radio Zambia",
+            "Christian Voice Radio",
+            "Power FM Zambia",
+            "Flava FM Zambia",
+            "5FM Zambia",
+            "Sun FM Zambia",
+            "Ultra Radio Zambia",
+            "Love Radio Zambia",
+            "Breeze FM Zambia",
+            "Yango Radio Zambia",
+            "Chemba Radio",
+            "Wingkong Radio",
+            "Dorika Radio",
+            "Central Province Zambia radio",
+            "Eastern Province Zambia radio",
+            "Western Province Zambia radio",
+            "Southern Province Zambia radio",
+            "Northern Province Zambia radio",
+            "Muchinga Zambia radio",
+            "Luapula Zambia radio",
         ]
         extra = os.environ.get("ZAMBIA_TUNEIN_QUERIES", "").strip()
         if extra:
@@ -871,9 +895,11 @@ async def probe_batch(candidates: list[Candidate], concurrency: int = 25) -> Non
         await asyncio.gather(*(run(c, session) for c in candidates))
 
 
-def to_prisma_row(c: Candidate) -> dict | None:
-    """Skip none/error — do not import dead streams."""
-    if c.icy_qualification in {"none", "error"}:
+def to_prisma_row(c: Candidate, *, include_no_icy: bool = False) -> dict | None:
+    """Skip error streams. Skip `none` unless --include-no-icy (catalogue URL for later fix)."""
+    if c.icy_qualification == "error":
+        return None
+    if c.icy_qualification == "none" and not include_no_icy:
         return None
     source_ids = dict(c.source_map or {c.source: c.source_detail})
     # Keep monitoring set stable by default: weak streams are stored in catalog
@@ -882,6 +908,8 @@ def to_prisma_row(c: Candidate) -> dict | None:
     is_active = c.icy_qualification in {"good", "partial"} or (
         include_weak and c.icy_qualification == "weak"
     )
+    if include_no_icy and c.icy_qualification == "none":
+        is_active = False
     return {
         "id": stable_id_from_candidate(c),
         "name": c.name,
@@ -916,8 +944,13 @@ async def async_main():
     ap.add_argument(
         "--mytuner-pages",
         type=int,
-        default=8,
-        help="How many MyTuner Zambia listing pages to crawl (default 8).",
+        default=14,
+        help="How many MyTuner Zambia listing pages to crawl (default 14).",
+    )
+    ap.add_argument(
+        "--include-no-icy",
+        action="store_true",
+        help="Also write stations where ICY probe found no metadata (inactive). Use to capture missing URLs for manual/stream-refresh.",
     )
     ap.add_argument("--out", type=str, default="scripts/data/zambia_harvest.json")
     ap.add_argument(
@@ -959,7 +992,7 @@ async def async_main():
 
     rows: list[dict] = []
     for c in to_probe:
-        row = to_prisma_row(c)
+        row = to_prisma_row(c, include_no_icy=bool(args.include_no_icy))
         if row is not None:
             rows.append(row)
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
@@ -976,7 +1009,10 @@ async def async_main():
             f,
             indent=2,
         )
-    print(f"Wrote {args.out} (imported {len(rows)} stations with usable ICY — none/error excluded)")
+    print(
+        f"Wrote {args.out} (imported {len(rows)} stations; "
+        f"{'including no-ICY as inactive' if args.include_no_icy else 'none/error excluded unless --include-no-icy'})"
+    )
 
 
 def main():
