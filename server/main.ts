@@ -28,6 +28,7 @@ import {
 } from "./lib/local-fingerprint-export.js";
 import { parseFeaturedFromArtist, titleWithoutFeaturing } from "./lib/track-credits.js";
 import { fingerprintPipelineGate } from "./lib/fingerprint-pipeline-gate.js";
+import { ensureZambiaCatalogWhenEmpty } from "./lib/zambia-catalog-bootstrap.js";
 import { AuddService } from "./services/audd.service.js";
 import { AcrcloudService } from "./services/acrcloud.service.js";
 import { SpinRefreshService } from "./services/spin-refresh.service.js";
@@ -1008,6 +1009,20 @@ async function startServer() {
       }),
     ]);
 
+    const since30m = new Date(Date.now() - 30 * 60 * 1000);
+    const [activeStationCount, stationsOkLast30m] = await Promise.all([
+      prisma.station.count({ where: { isActive: true } }),
+      prisma.station.count({
+        where: {
+          isActive: true,
+          lastPollAt: { gte: since30m },
+          lastPollStatus: "ok",
+        },
+      }),
+    ]);
+    const station_monitoring_health_30m =
+      activeStationCount > 0 ? stationsOkLast30m / activeStationCount : 1;
+
     const toMethodMap = (rows: { detectionMethod: string; _count: { _all: number } }[]) =>
       Object.fromEntries(rows.map((r) => [r.detectionMethod, r._count._all]));
 
@@ -1027,8 +1042,13 @@ async function startServer() {
       /** Proves AcoustID path: matched rows last 24h with detectionMethod fingerprint_acoustid (and similar). */
       matched_by_detection_method_24h: toMethodMap(matchedByMethod24h as never),
       all_detections_by_detection_method_24h: toMethodMap(allByMethod24h as never),
+      stations_active: activeStationCount,
+      stations_poll_ok_last_30m: stationsOkLast30m,
+      station_monitoring_health_30m,
       match_rate_note:
         "Default: trusted ICY can match again (ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID). Use music_match_rate and matched_by_detection_method_24h for AcoustID vs catalog.",
+      monitoring_note:
+        "station_monitoring_health_30m = active stations whose last poll in 30m succeeded (lastPollStatus ok). Target ≥ 0.80 after warm-up.",
     });
   });
 
@@ -1986,6 +2006,8 @@ async function startServer() {
   });
 
   // ── end Audio Metadata Editor ─────────────────────────────────────────────
+
+  await ensureZambiaCatalogWhenEmpty();
 
   // Initialize Scheduler
   await SchedulerService.init();
