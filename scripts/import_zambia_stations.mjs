@@ -244,10 +244,9 @@ for (const row of stations) {
   });
   const mergedSources = mergeSourceIdsJson(existing?.sourceIdsJson, sourceIdsJson);
   const incomingSources = parseSourceIds(sourceIdsJson);
-  const nextIsActive =
-    replaceStationCatalogOnly && existing
-      ? existing.isActive
-      : isActive ?? true;
+  // In monitoring mode, keep stations enabled after catalog refreshes so they
+  // continue to be polled unless they are explicitly removed as stale below.
+  const nextIsActive = replaceStationCatalogOnly ? true : isActive ?? true;
 
   const qualityText = String(icyQualification || "").toLowerCase();
   const weakOrUnverified = !qualityText || ["weak", "none", "error", "pending"].includes(qualityText);
@@ -329,7 +328,12 @@ if (replaceStationCatalogOnly) {
       id: { notIn: Array.from(incomingIds) },
       isActive: true,
     },
-    data: { isActive: false },
+    data: {
+      isActive: false,
+      visibilityEnabled: false,
+      monitorState: "INACTIVE",
+      monitorStateReason: "not present in latest catalog sync",
+    },
   });
   console.log(`Deactivated ${stale.count} stale Zambia station(s) not present in import.`);
 }
