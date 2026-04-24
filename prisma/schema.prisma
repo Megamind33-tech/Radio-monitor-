@@ -37,9 +37,13 @@ model Station {
   sampleSeconds              Int      @default(20)
   pollIntervalSeconds        Int      @default(60)
   /// Minimum seconds between audio fingerprint samples (scheduled), even when ICY unchanged
-  audioFingerprintIntervalSeconds Int @default(300)
+  audioFingerprintIntervalSeconds Int @default(120)
+  /// When ICY is trusted and unchanged, re-fingerprint at least this often to catch stuck/wrong ICY
+  icyVerificationIntervalSeconds Int @default(120)
   /// Last time we captured audio for Chromaprint/AcoustID (scheduled or ICY-change path)
   lastAudioFingerprintAt     DateTime?
+  /// Last time we ran a verification fingerprint while ICY looked trusted/unchanged
+  lastIcyVerificationFingerprintAt DateTime?
   /// First play of each distinct song only: ~30s WAV under SONG_SAMPLE_ARCHIVE_DIR (no duplicate file per repeat play)
   archiveSongSamples         Boolean  @default(true)
   /// Last monitor poll attempt (success or failure) for dashboard uptime

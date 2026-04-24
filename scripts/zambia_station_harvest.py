@@ -899,7 +899,7 @@ def to_prisma_row(c: Candidate) -> dict | None:
         "fingerprintFallbackEnabled": True,
         "metadataStaleSeconds": 300,
         "pollIntervalSeconds": 120,
-        "audioFingerprintIntervalSeconds": 300,
+        "audioFingerprintIntervalSeconds": 120,
         "sampleSeconds": 20,
         "archiveSongSamples": True,
     }

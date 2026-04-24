@@ -250,6 +250,7 @@ async function startServer() {
       sampleSeconds: z.number().int().min(5).max(120).optional(),
       pollIntervalSeconds: z.number().int().min(5).max(3600).optional(),
       audioFingerprintIntervalSeconds: z.number().int().min(30).max(86400).optional(),
+      icyVerificationIntervalSeconds: z.number().int().min(60).max(86400).optional(),
       metadataTrustTightness: z.number().int().min(0).max(2).optional(),
       fingerprintRetries: z.number().int().min(1).max(4).optional(),
       fingerprintRetryDelayMs: z.number().int().min(0).max(60000).optional(),

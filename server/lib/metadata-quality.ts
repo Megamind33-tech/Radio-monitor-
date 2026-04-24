@@ -3,6 +3,8 @@
  * that should not drive catalog alone (prefer fingerprint).
  */
 
+import { classifyMusicContent } from "./music-content-filter.js";
+
 function norm(s: string | null | undefined): string {
   return String(s ?? "")
     .trim()
@@ -58,6 +60,17 @@ export function assessMetadataQuality(
   if (!line || line.length < 2 || line === "-" || line === " - " || line === "...") {
     reasons.push("empty_or_junk");
     return { okForCatalog: false, forceFingerprint: true, catalogConfidenceScale: 0, reasons };
+  }
+
+  const content = classifyMusicContent(line);
+  if (!content.isMusic) {
+    reasons.push(`content_filter:${content.reason}`);
+    return {
+      okForCatalog: false,
+      forceFingerprint: true,
+      catalogConfidenceScale: Math.min(0.45, 0.35),
+      reasons,
+    };
   }
 
   let okForCatalog = true;
