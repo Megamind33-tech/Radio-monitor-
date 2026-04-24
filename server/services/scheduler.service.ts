@@ -4,6 +4,7 @@ import { logger } from "../lib/logger.js";
 import { MonitorService } from "./monitor.service.js";
 import { UnresolvedRecoveryService } from "./unresolved-recovery.service.js";
 import { SpinRefreshService } from "./spin-refresh.service.js";
+import { CatalogRepairService } from "./catalog-repair.service.js";
 
 type PollHandle = { stop: () => void };
 
@@ -16,6 +17,7 @@ export class SchedulerService {
   private static masterJob: cron.ScheduledTask | null = null;
   private static unresolvedRecoveryJob: cron.ScheduledTask | null = null;
   private static spinRefreshJob: cron.ScheduledTask | null = null;
+  private static catalogRepairJob: cron.ScheduledTask | null = null;
 
   static async init() {
     logger.info("Initializing station scheduler");
@@ -34,8 +36,28 @@ export class SchedulerService {
     this.spinRefreshJob = cron.schedule("5 */30 * * * *", () => {
       void this.runSpinRefreshTick();
     });
+    // Re-run free catalog on recent unresolved rows (raw ICY present, no title) — every 3 minutes
+    this.catalogRepairJob = cron.schedule("20 */3 * * * *", () => {
+      void this.runCatalogRepairTick();
+    });
 
     await this.resyncStations();
+  }
+
+  private static async runCatalogRepairTick() {
+    if (String(process.env.CATALOG_REPAIR_ENABLED || "true").toLowerCase() === "false") return;
+    try {
+      const limit = Math.min(
+        80,
+        Math.max(5, parseInt(process.env.CATALOG_REPAIR_BATCH_LIMIT || "25", 10) || 25)
+      );
+      const out = await CatalogRepairService.runBatch({ limit });
+      if (out.repaired > 0) {
+        logger.info({ out }, "Catalog repair scheduler tick");
+      }
+    } catch (error) {
+      logger.warn({ error }, "Catalog repair scheduler tick failed");
+    }
   }
 
   private static async runSpinRefreshTick() {
@@ -161,6 +183,7 @@ export class SchedulerService {
     this.masterJob?.stop();
     this.unresolvedRecoveryJob?.stop();
     this.spinRefreshJob?.stop();
+    this.catalogRepairJob?.stop();
     for (const h of this.tasks.values()) {
       h.stop();
     }

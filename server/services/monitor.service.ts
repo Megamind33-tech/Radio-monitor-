@@ -301,9 +301,14 @@ export class MonitorService {
         !metaQuality.okForCatalog ||
         metaQuality.forceFingerprint;
       const paidFallbacksEnabled = parseEnvBool("PAID_AUDIO_FALLBACKS_ENABLED", true);
+      /** After AcoustID miss, try AudD/ACR even when ICY looked "clean" (default true when keys exist). */
+      const paidOnAudioMiss =
+        paidFallbacksEnabled &&
+        parseEnvBool("PAID_ON_AUDIO_MISS", true) &&
+        (AuddService.isEnabled() || AcrcloudService.isEnabled());
       const paidLaneEligible =
         paidFallbacksEnabled &&
-        suspiciousIcyForPaidLane &&
+        (suspiciousIcyForPaidLane || paidOnAudioMiss) &&
         (AuddService.isEnabled() || AcrcloudService.isEnabled());
 
       /** Trusted ICY but unchanged: still re-fingerprint on this cadence to catch wrong/stuck ICY. */
@@ -651,6 +656,7 @@ export class MonitorService {
         icyCrossCheckAudio,
         icyVerificationDue,
         suspiciousIcyForPaidLane,
+        paidOnAudioMiss,
         paidLaneEligible,
         legacyFingerprint,
         fingerprintEveryPoll,
