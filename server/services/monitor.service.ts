@@ -10,6 +10,7 @@ import { MetadataService } from "./metadata.service.js";
 import { SamplerService } from "./sampler.service.js";
 import { FingerprintService } from "./fingerprint.service.js";
 import { AcoustidService } from "./acoustid.service.js";
+import { AuddService } from "./audd.service.js";
 import { LocalFingerprintService } from "./local-fingerprint.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { CatalogLookupService } from "./catalog-lookup.service.js";
@@ -150,6 +151,19 @@ function parseSourceIdsMap(json: string | null | undefined): Record<string, stri
   } catch {
     return {};
   }
+}
+
+function stationNameForPolicy(name: string | null | undefined): string {
+  return String(name || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isPriorityStationForAudd(name: string | null | undefined): boolean {
+  const n = stationNameForPolicy(name);
+  if (!n) return false;
+  return n.includes("znbc") || n.includes("yar fm") || n.includes("hot fm");
 }
 
 export class MonitorService {
@@ -298,12 +312,12 @@ export class MonitorService {
       let sampledAudioPath: string | null = null;
 
       let capturedFingerprint: Awaited<ReturnType<typeof FingerprintService.generateFingerprint>> = null;
-      let audioMatchSource: "local" | "acoustid" | null = null;
+      let audioMatchSource: "local" | "acoustid" | "audd" | null = null;
       const fingerprintAttempts: Array<{
         attempt: number;
         delaySec: number;
         sampleSec: number;
-        outcome: "match_local" | "match_acoustid" | "no_match" | "no_sample" | "no_fingerprint";
+        outcome: "match_local" | "match_acoustid" | "match_audd" | "no_match" | "no_sample" | "no_fingerprint";
       }> = [];
 
       if (doAudioId && resolvedUrl.startsWith("http")) {
@@ -357,8 +371,10 @@ export class MonitorService {
           }
           sampledAudioPath = samplePath;
           const fp = await FingerprintService.generateFingerprint(samplePath);
+          if (sampledAudioPath === samplePath) {
+            sampledAudioPath = null;
+          }
           SamplerService.cleanup(samplePath);
-          sampledAudioPath = null;
           if (!fp) {
             fingerprintAttempts.push({
               attempt: attempt + 1,
@@ -391,6 +407,20 @@ export class MonitorService {
                 delaySec,
                 sampleSec: fpSec,
                 outcome: "match_acoustid",
+              });
+              break;
+            }
+          }
+          if (!audioMatch && isPriorityStationForAudd(station.name)) {
+            const auddMatch = await AuddService.lookupSample(samplePath);
+            if (auddMatch) {
+              audioMatch = auddMatch;
+              audioMatchSource = "audd";
+              fingerprintAttempts.push({
+                attempt: attempt + 1,
+                delaySec,
+                sampleSec: fpSec,
+                outcome: "match_audd",
               });
               break;
             }
@@ -528,8 +558,12 @@ export class MonitorService {
       // Self-learning: persist the fingerprint whenever we have a confirmed match
       // so future plays of the same track are resolved locally (no AcoustID / MB call).
       if (capturedFingerprint && match && audioMatchSource !== "local") {
-        const learnSource: "acoustid" | "stream_metadata" =
-          audioMatchSource === "acoustid" ? "acoustid" : "stream_metadata";
+        const learnSource: "acoustid" | "stream_metadata" | "manual" =
+          audioMatchSource === "acoustid"
+            ? "acoustid"
+            : audioMatchSource === "audd"
+              ? "manual"
+              : "stream_metadata";
         await LocalFingerprintService.learn({
           fp: capturedFingerprint,
           match,

@@ -28,6 +28,7 @@ function parseEnvFloat(key: string, fallback: number): number {
 export class UnresolvedRecoveryService {
   private static running = false;
   private static lastRunAt: Date | null = null;
+  private static forceRetryPasses = 0;
 
   static status() {
     return {
@@ -35,10 +36,78 @@ export class UnresolvedRecoveryService {
       lastRunAt: this.lastRunAt,
       acoustidEnabled: !!process.env.ACOUSTID_API_KEY,
       fpcalcExpected: true,
+      forceRetryPasses: this.forceRetryPasses,
     };
   }
 
-  static async runBatch(opts?: { stationId?: string; limit?: number }): Promise<{
+  static async runUntilDrained(opts?: {
+    stationId?: string;
+    limit?: number;
+    maxPasses?: number;
+    continueWithoutAcoustid?: boolean;
+  }): Promise<{
+    passes: number;
+    processed: number;
+    recovered: number;
+    noMatch: number;
+    skipped: number;
+    errored: number;
+    remainingPending: number;
+  }> {
+    const maxPasses = Math.min(200, Math.max(1, opts?.maxPasses ?? parseEnvInt("UNRESOLVED_FORCE_MAX_PASSES", 25)));
+    let passes = 0;
+    let processed = 0;
+    let recovered = 0;
+    let noMatch = 0;
+    let skipped = 0;
+    let errored = 0;
+
+    for (; passes < maxPasses; passes++) {
+      const out = await this.runBatch({
+        stationId: opts?.stationId,
+        limit: opts?.limit,
+        continueWithoutAcoustid: opts?.continueWithoutAcoustid,
+      });
+      processed += out.processed;
+      recovered += out.recovered;
+      noMatch += out.noMatch;
+      skipped += out.skipped;
+      errored += out.errored;
+      const remainingPending = await prisma.unresolvedSample.count({
+        where: {
+          ...(opts?.stationId ? { stationId: opts.stationId } : {}),
+          recoveryStatus: { in: ["pending", "error", "no_match"] },
+        },
+      });
+      if (remainingPending === 0 || out.processed === 0) {
+        this.forceRetryPasses = passes + 1;
+        return {
+          passes: passes + 1,
+          processed,
+          recovered,
+          noMatch,
+          skipped,
+          errored,
+          remainingPending,
+        };
+      }
+    }
+
+    const remainingPending = await prisma.unresolvedSample.count({
+      where: {
+        ...(opts?.stationId ? { stationId: opts.stationId } : {}),
+        recoveryStatus: { in: ["pending", "error", "no_match"] },
+      },
+    });
+    this.forceRetryPasses = passes;
+    return { passes, processed, recovered, noMatch, skipped, errored, remainingPending };
+  }
+
+  static async runBatch(opts?: {
+    stationId?: string;
+    limit?: number;
+    continueWithoutAcoustid?: boolean;
+  }): Promise<{
     processed: number;
     recovered: number;
     noMatch: number;
@@ -54,6 +123,11 @@ export class UnresolvedRecoveryService {
 
     const limit = Math.min(200, Math.max(1, opts?.limit ?? parseEnvInt("UNRESOLVED_RECOVERY_BATCH_SIZE", 50)));
     const maxAttempts = Math.min(80, Math.max(1, parseEnvInt("UNRESOLVED_RECOVERY_MAX_ATTEMPTS", 24)));
+    const acoustidEnabled = !!process.env.ACOUSTID_API_KEY;
+    if (!acoustidEnabled && !opts?.continueWithoutAcoustid) {
+      logger.info("Skipping unresolved recovery batch: ACOUSTID_API_KEY not configured");
+      return { processed: 0, recovered: 0, noMatch: 0, skipped: 0, errored: 0 };
+    }
 
     let processed = 0;
     let recovered = 0;
@@ -135,7 +209,7 @@ export class UnresolvedRecoveryService {
           // Try the self-learned library first — avoids hitting AcoustID/MB for repeat songs.
           let audioMatch: MatchResult | null = await LocalFingerprintService.lookup(fingerprint);
           let recoveredViaAcoustid = false;
-          if (!audioMatch) {
+          if (!audioMatch && acoustidEnabled) {
             const acoustid = await AcoustidService.lookup(fingerprint);
             if (acoustid) {
               audioMatch = await MusicbrainzService.enrich(acoustid);
@@ -149,7 +223,7 @@ export class UnresolvedRecoveryService {
               data: {
                 ...baseUpdate,
                 recoveryStatus: "no_match",
-                lastRecoveryError: "acoustid_no_match",
+                lastRecoveryError: acoustidEnabled ? "acoustid_no_match" : "local_no_match_without_acoustid",
               },
             });
             continue;
