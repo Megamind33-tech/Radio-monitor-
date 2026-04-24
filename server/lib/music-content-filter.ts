@@ -40,22 +40,29 @@ const NON_MUSIC_FRAGMENTS: readonly string[] = [
   "drive show", "drive time", "drivetime", "night show", "midnight show",
   "weekend show", "talk show", "chat show", "phone-in", "call-in",
   "on the couch", "studio session", "exclusive session",
+  "triple threat", "playlist with dj", "dj online", "with dj ",
   // News / current affairs
   "news update", "news bulletin", "news hour", "headline", "weather report",
   "traffic update", "sports report", "sports update", "sports news",
   "match preview", "match report", "commentary",
+  "number one for", "hits uninterrupted",
+  "radio is our business", "now playing info", "goes here",
   // Religious / church
   "sunday service", "church service", "bible study", "devotion",
   "morning devotion", "daily devotion", "gospel hour",
+  "corinthians", "all chapters", "confession final",
   // Greetings / openers
   "good morning", "good afternoon", "good evening", "welcome to",
   "join us", "stay tuned", "coming up", "after the break",
+  "rise, learn, and shine",
   // Station IDs / branding phrases (> 3 words suggests branding, not a song)
   "radio zambia", "znbc radio", "radio phoenix", "radio mano",
   "hot fm", "muvi tv", "diamond tv",
+  "sun fm tv", "kwacha radio",
   // Ads / sponsored content
   "sponsored by", "brought to you", "advertisement", "advert",
   "commercial break",
+  "attacking the power source",
 ];
 
 /**
@@ -78,6 +85,16 @@ const NON_MUSIC_PATTERNS: readonly RegExp[] = [
   /^\s*$/,
   // Pure dash / ellipsis (no real content)
   /^[-–—.… ]+$/,
+  // Dated show titles: "KHASU LAKALE 12TH NOVEMBER 2025"
+  /\b\d{1,2}(st|nd|rd|th)?\s+[A-Za-z]+\s+\d{4}\b/i,
+  // Parenthetical chapter counts: "(8) 2 Corinthians"
+  /^\(\s*\d+\s*\)\s*\d+\s+[A-Za-z]/,
+  // Encoded / opaque IDs (e.g. FOTMUL709-e0d1aWQ)
+  /[a-z]{4,}\d+[._-][a-z0-9]{8,}/i,
+  /\b[a-z]{2,}\d{3,}-[a-f0-9]{8,}\b/i,
+  // Football-style fixture lines (e.g. "NKANA FC vs KONKOLA BLADES FC")
+  /\bfc\s+vs\s+/i,
+  /\bvs\s+.{0,40}\bfc\b/i,
 ];
 
 // ---------------------------------------------------------------------------

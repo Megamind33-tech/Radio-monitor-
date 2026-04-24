@@ -11,6 +11,7 @@ import { SamplerService } from "./sampler.service.js";
 import { FingerprintService } from "./fingerprint.service.js";
 import { AcoustidService } from "./acoustid.service.js";
 import { AuddService } from "./audd.service.js";
+import { AcrcloudService } from "./acrcloud.service.js";
 import { LocalFingerprintService } from "./local-fingerprint.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { CatalogLookupService } from "./catalog-lookup.service.js";
@@ -153,19 +154,6 @@ function parseSourceIdsMap(json: string | null | undefined): Record<string, stri
   }
 }
 
-function stationNameForPolicy(name: string | null | undefined): string {
-  return String(name || "")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-function isPriorityStationForAudd(name: string | null | undefined): boolean {
-  const n = stationNameForPolicy(name);
-  if (!n) return false;
-  return n.includes("znbc") || n.includes("yar fm") || n.includes("hot fm");
-}
-
 export class MonitorService {
   /**
    * Main logic for a single station poll.
@@ -299,6 +287,25 @@ export class MonitorService {
       const forceFingerprintAggressive =
         metaQuality.forceFingerprint || parseEnvBool("FINGERPRINT_AGGRESSIVE_ON_SUSPICIOUS_METADATA", false);
 
+      const combinedLine = (metadata?.combinedRaw ?? "").trim();
+      const titleLine = (metadata?.rawTitle ?? combinedLine).trim();
+      const contentClass = classifyMusicContent(combinedLine || titleLine);
+      const programLikeIcy =
+        isProgramLikeTitle(metadata?.rawTitle) ||
+        (!metadata?.rawTitle && isProgramLikeTitle(metadata?.combinedRaw)) ||
+        !contentClass.isMusic;
+      /** Non-song / slogan ICY or missing/untrusted: allow paid APIs only in this lane (after AcoustID). */
+      const suspiciousIcyForPaidLane =
+        programLikeIcy ||
+        legacyFingerprint ||
+        !metaQuality.okForCatalog ||
+        metaQuality.forceFingerprint;
+      const paidFallbacksEnabled = parseEnvBool("PAID_AUDIO_FALLBACKS_ENABLED", true);
+      const paidLaneEligible =
+        paidFallbacksEnabled &&
+        suspiciousIcyForPaidLane &&
+        (AuddService.isEnabled() || AcrcloudService.isEnabled());
+
       /** Trusted ICY but unchanged: still re-fingerprint on this cadence to catch wrong/stuck ICY. */
       const icyVerificationIntervalSec = Math.max(
         60,
@@ -334,12 +341,19 @@ export class MonitorService {
       let fingerprintSamplePathPendingCleanup: string | null = null;
 
       let capturedFingerprint: Awaited<ReturnType<typeof FingerprintService.generateFingerprint>> = null;
-      let audioMatchSource: "local" | "acoustid" | "audd" | null = null;
+      let audioMatchSource: "local" | "acoustid" | "audd" | "acrcloud" | null = null;
       const fingerprintAttempts: Array<{
         attempt: number;
         delaySec: number;
         sampleSec: number;
-        outcome: "match_local" | "match_acoustid" | "match_audd" | "no_match" | "no_sample" | "no_fingerprint";
+        outcome:
+          | "match_local"
+          | "match_acoustid"
+          | "match_audd"
+          | "match_acrcloud"
+          | "no_match"
+          | "no_sample"
+          | "no_fingerprint";
       }> = [];
 
       if (doAudioId && resolvedUrl.startsWith("http")) {
@@ -435,7 +449,7 @@ export class MonitorService {
               break;
             }
           }
-          if (!audioMatch && isPriorityStationForAudd(station.name)) {
+          if (!audioMatch && paidLaneEligible && samplePath) {
             const auddMatch = await AuddService.lookupSample(samplePath);
             if (auddMatch) {
               audioMatch = auddMatch;
@@ -445,6 +459,22 @@ export class MonitorService {
                 delaySec,
                 sampleSec: fpSec,
                 outcome: "match_audd",
+              });
+              break;
+            }
+            const acrMatch = await AcrcloudService.identifyAudioFile(samplePath);
+            if (acrMatch) {
+              let enriched = acrMatch;
+              if (acrMatch.recordingId) {
+                enriched = await MusicbrainzService.enrich(acrMatch);
+              }
+              audioMatch = enriched;
+              audioMatchSource = "acrcloud";
+              fingerprintAttempts.push({
+                attempt: attempt + 1,
+                delaySec,
+                sampleSec: fpSec,
+                outcome: "match_acrcloud",
               });
               break;
             }
@@ -603,6 +633,8 @@ export class MonitorService {
         intervalElapsed,
         icyCrossCheckAudio,
         icyVerificationDue,
+        suspiciousIcyForPaidLane,
+        paidLaneEligible,
         legacyFingerprint,
         fingerprintEveryPoll,
         doAudioId,
@@ -1183,7 +1215,7 @@ export class MonitorService {
       matchForLibrary
     ) {
       const learnSource: "acoustid" | "stream_metadata" | "manual" =
-        match?.sourceProvider === "audd"
+        match?.sourceProvider === "audd" || match?.sourceProvider === "acrcloud"
           ? "manual"
           : match?.sourceProvider?.includes("acoustid")
             ? "acoustid"
