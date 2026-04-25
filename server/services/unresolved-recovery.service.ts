@@ -399,7 +399,7 @@ export class UnresolvedRecoveryService {
             where: { id: row.id },
             data: {
               ...baseUpdate,
-              detectionLogId: row.detectionLogId ?? linkedDetection?.id ?? null,
+              detectionLogId: row.detectionLogId ?? null,
               recoveryStatus: "recovered",
               recoveredAt: new Date(),
               lastRecoveryError: null,
