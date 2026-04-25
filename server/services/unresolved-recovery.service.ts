@@ -5,6 +5,8 @@ import { logger } from "../lib/logger.js";
 import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
 import { FingerprintService } from "./fingerprint.service.js";
 import { AcoustidService } from "./acoustid.service.js";
+import { AuddService } from "./audd.service.js";
+import { AcrcloudService } from "./acrcloud.service.js";
 import { LocalFingerprintService } from "./local-fingerprint.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
@@ -25,16 +27,34 @@ function parseEnvFloat(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function envBoolTrue(key: string, fallback = true): boolean {
+  const raw = process.env[key];
+  if (raw === undefined || raw === null || String(raw).trim() === "") return fallback;
+  const t = String(raw).trim().toLowerCase();
+  return !(t === "0" || t === "false" || t === "no" || t === "off");
+}
+
+function detectionMethodForProvider(provider: MatchResult["sourceProvider"] | undefined): string {
+  if (provider === "audd") return "fingerprint_audd";
+  if (provider === "acrcloud") return "fingerprint_acrcloud";
+  if (provider === "local_fingerprint") return "fingerprint_local";
+  return "fingerprint_acoustid";
+}
+
 export class UnresolvedRecoveryService {
   private static running = false;
   private static lastRunAt: Date | null = null;
   private static forceRetryPasses = 0;
 
   static status() {
+    const paidFallbacksEnabled = envBoolTrue("PAID_AUDIO_FALLBACKS_ENABLED", true);
     return {
       running: this.running,
       lastRunAt: this.lastRunAt,
       acoustidEnabled: !!process.env.ACOUSTID_API_KEY,
+      auddEnabled: paidFallbacksEnabled && AuddService.isEnabled(),
+      acrcloudEnabled: paidFallbacksEnabled && AcrcloudService.isEnabled(),
+      paidFallbacksEnabled,
       fpcalcExpected: true,
       forceRetryPasses: this.forceRetryPasses,
     };
@@ -124,8 +144,11 @@ export class UnresolvedRecoveryService {
     const limit = Math.min(200, Math.max(1, opts?.limit ?? parseEnvInt("UNRESOLVED_RECOVERY_BATCH_SIZE", 50)));
     const maxAttempts = Math.min(80, Math.max(1, parseEnvInt("UNRESOLVED_RECOVERY_MAX_ATTEMPTS", 24)));
     const acoustidEnabled = !!process.env.ACOUSTID_API_KEY;
-    if (!acoustidEnabled && !opts?.continueWithoutAcoustid) {
-      logger.info("Skipping unresolved recovery batch: ACOUSTID_API_KEY not configured");
+    const paidFallbacksEnabled = envBoolTrue("PAID_AUDIO_FALLBACKS_ENABLED", true);
+    const auddEnabled = paidFallbacksEnabled && AuddService.isEnabled();
+    const acrcloudEnabled = paidFallbacksEnabled && AcrcloudService.isEnabled();
+    if (!acoustidEnabled && !auddEnabled && !acrcloudEnabled && !opts?.continueWithoutAcoustid) {
+      logger.info("Skipping unresolved recovery batch: no audio resolver configured");
       return { processed: 0, recovered: 0, noMatch: 0, skipped: 0, errored: 0 };
     }
 
@@ -151,7 +174,7 @@ export class UnresolvedRecoveryService {
         },
       });
       if (retried.count > 0) {
-        logger.info({ retried: retried.count, cooldownDays }, "Re-queued stale no_match unresolved samples for AcoustID retry");
+        logger.info({ retried: retried.count, cooldownDays }, "Re-queued stale no_match unresolved samples for audio resolver retry");
       }
 
       const rows = await prisma.unresolvedSample.findMany({
@@ -206,9 +229,12 @@ export class UnresolvedRecoveryService {
             continue;
           }
 
-          // Try the self-learned library first — avoids hitting AcoustID/MB for repeat songs.
+          // Try the self-learned library first — avoids hitting paid/free APIs for repeat songs.
           let audioMatch: MatchResult | null = await LocalFingerprintService.lookup(fingerprint);
           let recoveredViaAcoustid = false;
+          let recoveredViaAudd = false;
+          let recoveredViaAcrcloud = false;
+
           if (!audioMatch && acoustidEnabled) {
             const acoustid = await AcoustidService.lookup(fingerprint);
             if (acoustid) {
@@ -216,14 +242,39 @@ export class UnresolvedRecoveryService {
               recoveredViaAcoustid = !!audioMatch;
             }
           }
+
+          // Important: saved unresolved samples must also reach AudD/ACRCloud.
+          // Before this, recovery was AcoustID-only, leaving many valid music clips stuck as unknown.
+          if (!audioMatch && auddEnabled) {
+            const audd = await AuddService.lookupSample(row.filePath);
+            if (audd) {
+              audioMatch = audd;
+              recoveredViaAudd = true;
+            }
+          }
+
+          if (!audioMatch && acrcloudEnabled) {
+            const acrcloud = await AcrcloudService.identifyAudioFile(row.filePath);
+            if (acrcloud) {
+              audioMatch = acrcloud.recordingId ? await MusicbrainzService.enrich(acrcloud) : acrcloud;
+              recoveredViaAcrcloud = !!audioMatch;
+            }
+          }
+
           if (!audioMatch) {
             noMatch += 1;
+            const resolvers = [
+              "local",
+              ...(acoustidEnabled ? ["acoustid"] : []),
+              ...(auddEnabled ? ["audd"] : []),
+              ...(acrcloudEnabled ? ["acrcloud"] : []),
+            ];
             await prisma.unresolvedSample.update({
               where: { id: row.id },
               data: {
                 ...baseUpdate,
                 recoveryStatus: "no_match",
-                lastRecoveryError: acoustidEnabled ? "acoustid_no_match" : "local_no_match_without_acoustid",
+                lastRecoveryError: `${resolvers.join("+")}_no_match`,
               },
             });
             continue;
@@ -263,7 +314,7 @@ export class UnresolvedRecoveryService {
             data: {
               stationId: row.stationId,
               observedAt,
-              detectionMethod: "fingerprint_acoustid",
+              detectionMethod: detectionMethodForProvider(match.sourceProvider),
               rawStreamText: linkedDetection?.rawStreamText ?? null,
               parsedArtist: linkedDetection?.parsedArtist ?? artistFinal,
               parsedTitle: linkedDetection?.parsedTitle ?? titleFinal,
@@ -304,11 +355,11 @@ export class UnresolvedRecoveryService {
             title: titleFinal,
           });
 
-          if (recoveredViaAcoustid) {
+          if (recoveredViaAcoustid || recoveredViaAudd || recoveredViaAcrcloud) {
             await LocalFingerprintService.learn({
               fp: fingerprint,
               match,
-              source: "acoustid",
+              source: recoveredViaAcoustid ? "acoustid" : "manual",
             });
           }
 
@@ -354,6 +405,16 @@ export class UnresolvedRecoveryService {
               lastRecoveryError: null,
             },
           });
+          logger.info(
+            {
+              unresolvedSampleId: row.id,
+              stationId: row.stationId,
+              provider: match.sourceProvider,
+              title: titleFinal,
+              artist: artistFinal,
+            },
+            "Recovered unresolved sample via audio resolver"
+          );
           recovered += 1;
         } catch (error) {
           errored += 1;
