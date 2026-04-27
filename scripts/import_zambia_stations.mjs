@@ -1,5 +1,5 @@
 /**
- * Usage: node scripts/import_zambia_stations.mjs [path/to/zambia_harvest.json]
+ * Usage: node scripts/import_zambia_stations.mjs [--replace|--replace-stations-only] [--deactivate-missing] [path/to/zambia_harvest.json]
  * Upserts stations from harvest JSON into Prisma (SQLite/Postgres).
  * Merges sourceIdsJson on update so the same stream URL keeps hints from all sites (e.g. radio_garden + onlineradiobox).
  */
@@ -9,6 +9,7 @@ import { PrismaClient } from "@prisma/client";
 const args = process.argv.slice(2);
 const replaceAll = args.includes("--replace");
 const replaceStationCatalogOnly = args.includes("--replace-stations-only");
+const deactivateMissing = args.includes("--deactivate-missing");
 const pathArg = args.find((a) => !a.startsWith("--") && a.endsWith(".json"));
 const path = pathArg || "scripts/data/zambia_harvest.json";
 const raw = readFileSync(path, "utf-8");
@@ -81,12 +82,8 @@ if (replaceAll) {
   await prisma.station.deleteMany();
   console.log("Replaced entire station catalog and detections (--replace).");
 } else if (replaceStationCatalogOnly) {
-  // Keep historical detections/logs for trend continuity.
-  // We do NOT delete stations here because historical DetectionLog rows are FK-linked.
-  // Instead, upsert incoming rows and deactivate Zambia rows that are no longer in the feed.
-  console.log("Replacing station catalog shape via upsert/deactivate (detections preserved).");
+  console.log("Replacing station catalog shape via upsert (detections preserved).");
 } else {
-  // Remove non-Zambia test/seed stations only
   const outsiders = await prisma.station.findMany({
     where: { NOT: { country: "Zambia" } },
     select: { id: true },
@@ -110,7 +107,7 @@ async function upsertStreamEndpointRow(stationId, streamUrl, sourceIdsJson, qual
   const isLowQuality = qualityText && !["good", "partial"].includes(qualityText);
   const suppressed = source === "zeno" && isLowQuality;
   const status =
-    qualityText === "error" || qualityText === "none"
+    qualityText === "error"
       ? "inactive"
       : isLowQuality
         ? "degraded"
@@ -138,6 +135,12 @@ async function upsertStreamEndpointRow(stationId, streamUrl, sourceIdsJson, qual
     },
   });
 }
+
+const ZNBC_BASELINE_STATION_IDS = [
+  "zm_req_znbc_radio_1",
+  "zm_req_znbc_radio_2",
+  "zm_req_znbc_radio_4",
+];
 
 async function ensureZnbcBaselineStations() {
   const rows = [
@@ -244,9 +247,7 @@ for (const row of stations) {
   });
   const mergedSources = mergeSourceIdsJson(existing?.sourceIdsJson, sourceIdsJson);
   const incomingSources = parseSourceIds(sourceIdsJson);
-  // In monitoring mode, keep stations enabled after catalog refreshes so they
-  // continue to be polled unless they are explicitly removed as stale below.
-  const nextIsActive = replaceStationCatalogOnly ? true : isActive ?? true;
+  const nextIsActive = isActive ?? true;
 
   const qualityText = String(icyQualification || "").toLowerCase();
   const weakOrUnverified = !qualityText || ["weak", "none", "error", "pending"].includes(qualityText);
@@ -321,7 +322,9 @@ for (const row of stations) {
   upserted++;
 }
 
-if (replaceStationCatalogOnly) {
+for (const id of ZNBC_BASELINE_STATION_IDS) incomingIds.add(id);
+
+if (replaceStationCatalogOnly && deactivateMissing) {
   const stale = await prisma.station.updateMany({
     where: {
       country: "Zambia",
@@ -336,11 +339,12 @@ if (replaceStationCatalogOnly) {
     },
   });
   console.log(`Deactivated ${stale.count} stale Zambia station(s) not present in import.`);
+} else if (replaceStationCatalogOnly) {
+  console.log("Did not deactivate missing Zambia stations; pass --deactivate-missing after a known-complete harvest.");
 }
 
 await ensureZnbcBaselineStations();
 
-// Keep endpoint table aligned: non-current for rows absent from latest import.
 if (incomingIds.size > 0) {
   await prisma.stationStreamEndpoint.updateMany({
     where: {

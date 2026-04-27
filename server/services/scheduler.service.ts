@@ -6,15 +6,21 @@ import { UnresolvedRecoveryService } from "./unresolved-recovery.service.js";
 import { SpinRefreshService } from "./spin-refresh.service.js";
 import { CatalogRepairService } from "./catalog-repair.service.js";
 
-type PollHandle = { stop: () => void };
+type ScheduledStation = {
+  id: string;
+  name: string;
+  intervalSeconds: number;
+  nextDueAt: number;
+};
 
 export class SchedulerService {
-  private static tasks: Map<string, PollHandle> = new Map();
-  /** Last scheduled poll interval per station (seconds) — resync when DB value changes */
+  private static scheduledStations: Map<string, ScheduledStation> = new Map();
+  /** Last scheduled poll interval per station (seconds) - resync when DB value changes */
   private static pollIntervals: Map<string, number> = new Map();
   private static pollRunning: Set<string> = new Set();
   private static stationOrder: string[] = [];
   private static masterJob: cron.ScheduledTask | null = null;
+  private static dispatchTimer: NodeJS.Timeout | null = null;
   private static unresolvedRecoveryJob: cron.ScheduledTask | null = null;
   private static spinRefreshJob: cron.ScheduledTask | null = null;
   private static catalogRepairJob: cron.ScheduledTask | null = null;
@@ -22,26 +28,28 @@ export class SchedulerService {
   static async init() {
     logger.info("Initializing station scheduler");
 
-    // Keep scheduler state in sync every 30s (not only once per minute),
-    // so station toggles and interval changes are reflected quickly.
     this.masterJob = cron.schedule("*/30 * * * * *", () => {
       void this.resyncStations();
     });
+    const dispatchTickMs = Math.max(
+      1000,
+      Math.min(30_000, parseInt(process.env.SCHEDULER_DISPATCH_TICK_MS || "5000", 10) || 5000)
+    );
+    this.dispatchTimer = setInterval(() => {
+      void this.dispatchDuePolls();
+    }, dispatchTickMs);
     this.unresolvedRecoveryJob = cron.schedule("*/2 * * * *", () => {
       void this.runUnresolvedRecoveryTick();
     });
-    // Metadata repair: scan for poorly-structured song entries and refresh them
-    // via iTunes / Deezer every 30 minutes.  Runs at :05 past each half-hour
-    // to avoid colliding with the :00 recovery batch.
     this.spinRefreshJob = cron.schedule("5 */30 * * * *", () => {
       void this.runSpinRefreshTick();
     });
-    // Re-run free catalog on recent unresolved rows (raw ICY present, no title) — every 3 minutes
     this.catalogRepairJob = cron.schedule("20 */3 * * * *", () => {
       void this.runCatalogRepairTick();
     });
 
     await this.resyncStations();
+    await this.dispatchDuePolls();
   }
 
   private static async runCatalogRepairTick() {
@@ -52,9 +60,7 @@ export class SchedulerService {
         Math.max(5, parseInt(process.env.CATALOG_REPAIR_BATCH_LIMIT || "25", 10) || 25)
       );
       const out = await CatalogRepairService.runBatch({ limit });
-      if (out.repaired > 0) {
-        logger.info({ out }, "Catalog repair scheduler tick");
-      }
+      if (out.repaired > 0) logger.info({ out }, "Catalog repair scheduler tick");
     } catch (error) {
       logger.warn({ error }, "Catalog repair scheduler tick failed");
     }
@@ -63,9 +69,7 @@ export class SchedulerService {
   private static async runSpinRefreshTick() {
     try {
       const out = await SpinRefreshService.runBatch({ limit: 30 });
-      if (out.refreshed > 0 || out.scanned > 0) {
-        logger.info({ out }, "Spin metadata refresh scheduler tick");
-      }
+      if (out.refreshed > 0 || out.scanned > 0) logger.info({ out }, "Spin metadata refresh scheduler tick");
     } catch (error) {
       logger.warn({ error }, "Spin metadata refresh scheduler tick failed");
     }
@@ -99,11 +103,10 @@ export class SchedulerService {
     const activeIds = new Set(stations.map((s) => s.id));
     this.stationOrder = stations.map((s) => s.id);
 
-    for (const [id, handle] of this.tasks) {
+    for (const id of Array.from(this.scheduledStations.keys())) {
       if (!activeIds.has(id)) {
-        logger.info({ stationId: id }, "Stopping scheduler for station");
-        handle.stop();
-        this.tasks.delete(id);
+        logger.info({ stationId: id }, "Removing inactive station from scheduler queue");
+        this.scheduledStations.delete(id);
         this.pollIntervals.delete(id);
       }
     }
@@ -111,83 +114,92 @@ export class SchedulerService {
     for (const station of stations) {
       const prevInterval = this.pollIntervals.get(station.id);
       const interval = this.normalizePollSeconds(station.pollIntervalSeconds);
-      if (this.tasks.has(station.id) && prevInterval !== undefined && prevInterval !== interval) {
-        logger.info({ stationId: station.id, prevInterval, interval }, "Poll interval changed; rescheduling");
-        this.tasks.get(station.id)?.stop();
-        this.tasks.delete(station.id);
+      const existing = this.scheduledStations.get(station.id);
+      if (!existing) {
+        const idx = this.stationOrder.indexOf(station.id);
+        const delayMs = this.initialSpreadDelayMs(interval, idx, this.stationOrder.length);
+        this.scheduledStations.set(station.id, {
+          id: station.id,
+          name: station.name,
+          intervalSeconds: interval,
+          nextDueAt: Date.now() + delayMs,
+        });
+        this.pollIntervals.set(station.id, interval);
+        logger.info({ station: station.name, interval, delayMs }, "Queued station poll schedule");
+        continue;
       }
-      if (!this.tasks.has(station.id)) {
-        this.scheduleStation(station, interval);
+
+      existing.name = station.name;
+      if (prevInterval !== undefined && prevInterval !== interval) {
+        const idx = this.stationOrder.indexOf(station.id);
+        const delayMs = this.initialSpreadDelayMs(interval, idx, this.stationOrder.length);
+        logger.info({ stationId: station.id, prevInterval, interval }, "Poll interval changed; updating queue");
+        existing.intervalSeconds = interval;
+        existing.nextDueAt = Math.min(existing.nextDueAt, Date.now() + delayMs);
+        this.pollIntervals.set(station.id, interval);
       }
     }
   }
 
-  /** 5s–3600s; node-cron second field only supports 1–59, so longer intervals use setInterval. */
   private static normalizePollSeconds(raw: unknown): number {
     const n = typeof raw === "number" ? raw : Number(raw);
     const v = Number.isFinite(n) ? Math.trunc(n) : 60;
     return Math.min(3600, Math.max(5, v || 60));
   }
 
-  private static scheduleStation(station: { id: string; name: string }, pollIntervalSeconds: number) {
-    logger.info({ station: station.name, interval: pollIntervalSeconds }, "Scheduling station poll");
+  private static initialSpreadDelayMs(intervalSeconds: number, index: number, total: number): number {
+    const intervalMs = intervalSeconds * 1000;
+    const count = Math.max(1, total);
+    const idx = Math.max(0, index);
+    return Math.floor((idx / count) * intervalMs);
+  }
 
+  private static maxStationConcurrency(): number {
+    return Math.max(1, Math.min(50, parseInt(process.env.MAX_STATION_CONCURRENCY || "8", 10) || 8));
+  }
+
+  private static async dispatchDuePolls() {
+    const available = this.maxStationConcurrency() - this.pollRunning.size;
+    if (available <= 0) return;
+
+    const now = Date.now();
+    const due = Array.from(this.scheduledStations.values())
+      .filter((station) => station.nextDueAt <= now && !this.pollRunning.has(station.id))
+      .sort((a, b) => a.nextDueAt - b.nextDueAt)
+      .slice(0, available);
+
+    for (const station of due) this.startPoll(station);
+  }
+
+  private static startPoll(station: ScheduledStation) {
     const runPoll = async () => {
       if (this.pollRunning.has(station.id)) {
         logger.debug({ stationId: station.id }, "Skipping overlapping poll tick");
         return;
       }
-      const maxConcurrency = Math.max(1, Math.min(50, parseInt(process.env.MAX_STATION_CONCURRENCY || "8", 10) || 8));
-      if (this.pollRunning.size >= maxConcurrency) {
-        logger.debug(
-          { stationId: station.id, activePolls: this.pollRunning.size, maxConcurrency },
-          "Deferring poll due to global station concurrency cap"
-        );
-        return;
-      }
       this.pollRunning.add(station.id);
+      station.nextDueAt = Date.now() + station.intervalSeconds * 1000;
       try {
         await MonitorService.pollStation(station.id);
       } finally {
         this.pollRunning.delete(station.id);
+        void this.dispatchDuePolls();
       }
     };
 
-    let handle: PollHandle;
-    if (pollIntervalSeconds <= 59) {
-      const cronExpr = `*/${pollIntervalSeconds} * * * * *`;
-      const task = cron.schedule(cronExpr, () => {
-        void runPoll();
-      });
-      handle = { stop: () => task.stop() };
-    } else {
-      const id = setInterval(() => {
-        void runPoll();
-      }, pollIntervalSeconds * 1000);
-      handle = { stop: () => clearInterval(id) };
-    }
-
-    // Prime immediately so stations don't wait for the first interval tick.
-    // Stagger startup to avoid opening dozens of streams at once.
-    const idx = this.stationOrder.indexOf(station.id);
-    const startJitterMs = Math.max(0, idx) * 200;
-    setTimeout(() => {
-      void runPoll();
-    }, Math.min(15_000, startJitterMs));
-
-    this.tasks.set(station.id, handle);
-    this.pollIntervals.set(station.id, pollIntervalSeconds);
+    void runPoll();
   }
 
   static stopAll() {
     this.masterJob?.stop();
+    if (this.dispatchTimer) {
+      clearInterval(this.dispatchTimer);
+      this.dispatchTimer = null;
+    }
     this.unresolvedRecoveryJob?.stop();
     this.spinRefreshJob?.stop();
     this.catalogRepairJob?.stop();
-    for (const h of this.tasks.values()) {
-      h.stop();
-    }
-    this.tasks.clear();
+    this.scheduledStations.clear();
     this.pollIntervals.clear();
     this.pollRunning.clear();
   }
