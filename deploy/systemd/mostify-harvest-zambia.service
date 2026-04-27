@@ -1,5 +1,5 @@
 [Unit]
-Description=MOSTIFY — fetch every Zambian radio station from radio-browser and import
+Description=MOSTIFY - fetch the broad Zambian radio catalog and import
 After=network-online.target mostify-monitor.service
 Wants=network-online.target
 
@@ -7,8 +7,8 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=/opt/radio-monitor
 EnvironmentFile=-/etc/mostify-monitor/mostify-monitor.env
-ExecStart=/usr/bin/node scripts/zambia_radio_browser_harvest.mjs --import --validate
-TimeoutStartSec=2700
+ExecStart=/bin/bash -lc 'python3 scripts/zambia_station_harvest.py --max-probe 1400 --mytuner-pages 20 --include-no-icy --out scripts/data/zambia_harvest.json && /usr/bin/node scripts/import_zambia_stations.mjs --replace-stations-only scripts/data/zambia_harvest.json'
+TimeoutStartSec=3600
 # User=mostify
 # Group=mostify
 
