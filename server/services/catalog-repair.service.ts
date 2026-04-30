@@ -5,6 +5,35 @@ import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
 import { monitorEvents } from "../lib/monitor-events.js";
 import type { NormalizedMetadata } from "../types.js";
 
+function isRepairableMetadataText(combined: string, title: string, artist: string): boolean {
+  if (isPlaceholderText(title) || isPlaceholderText(artist)) return false;
+  if (/^[_\s-]{6,}$/.test(title) && /^preteen zenith$/i.test(artist)) return false;
+
+  const line = [artist, title].filter(Boolean).join(" - ").trim() || combined.trim();
+  if (!line || line.length < 3) return false;
+  if (isPlaceholderText(line)) return false;
+  if (/^[\s'"`.,:;|/\\()[\]{}<>~+=_*#-]+$/.test(line)) return false;
+  const compact = line.replace(/\s+/g, "");
+  if (compact.length >= 6) {
+    const lettersOrDigits = (compact.match(/[A-Za-z0-9]/g) ?? []).length;
+    const nonLatin = (compact.match(/[^\x00-\x7F]/g) ?? []).length;
+    const bracketNoise = (compact.match(/[⫷⫸⫹⫺ꢂꢃꢄꢊ]/g) ?? []).length;
+    if (lettersOrDigits / compact.length < 0.25) return false;
+    if (bracketNoise >= 2 || nonLatin / compact.length > 0.45) return false;
+  }
+  if (/(['"`]\s*){5,}/.test(line)) return false;
+  return true;
+}
+
+function isPlaceholderText(text: string): boolean {
+  const t = String(text || "").trim();
+  if (!t) return false;
+  if (/^[_\s-]{6,}$/.test(t)) return true;
+  if (/^[-=_*.!·•\s]{6,}$/.test(t)) return true;
+  if (/^(online|live|replay|feel the power)$/i.test(t)) return true;
+  return false;
+}
+
 /**
  * Re-run free catalog lookup on recent unresolved DetectionLog rows that still
  * carry raw ICY but no identified title — fixes rows that failed at poll time
@@ -53,6 +82,10 @@ export class CatalogRepairService {
         const title = (row.parsedTitle ?? "").trim();
         const artist = (row.parsedArtist ?? "").trim();
         if (!combined && !title) {
+          skipped++;
+          continue;
+        }
+        if (!isRepairableMetadataText(combined, title, artist)) {
           skipped++;
           continue;
         }

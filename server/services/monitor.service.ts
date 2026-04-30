@@ -122,6 +122,19 @@ function isJunkIcyMetadata(metadata: NormalizedMetadata | null): boolean {
   const raw = (metadata.combinedRaw ?? "").trim();
   if (raw.length < 2) return true;
   if (raw === "-" || raw === " - " || raw === "...") return true;
+  if (/^[_\s-]{6,}$/.test(raw)) return true;
+  if (/^[-=_*.!·•\s]{6,}$/.test(raw)) return true;
+  if (/^(online|live|replay|feel the power)$/i.test(raw)) return true;
+  if (/^[\s'"`.,:;|/\\()[\]{}<>~+=_*#-]+$/.test(raw)) return true;
+  const compact = raw.replace(/\s+/g, "");
+  if (compact.length >= 6) {
+    const lettersOrDigits = (compact.match(/[A-Za-z0-9]/g) ?? []).length;
+    const nonLatin = (compact.match(/[^\x00-\x7F]/g) ?? []).length;
+    const bracketNoise = (compact.match(/[⫷⫸⫹⫺ꢂꢃꢄꢊ]/g) ?? []).length;
+    if (lettersOrDigits / compact.length < 0.25) return true;
+    if (bracketNoise >= 2 || nonLatin / compact.length > 0.45) return true;
+  }
+  if (/(['"`]\s*){5,}/.test(raw)) return true;
   return false;
 }
 
@@ -166,6 +179,7 @@ export class MonitorService {
     if (!station || !station.isActive) return;
 
     logger.info({ station: station.name }, "Polling station");
+        let latestNowPlaying = null;
     const markPollError = async (message: string) => {
       await prisma.station.update({
         where: { id: stationId },
@@ -193,7 +207,7 @@ export class MonitorService {
         if (!metadata) {
           metadata = await MetadataService.readProviderNowPlayingMetadata(resolvedUrl);
         }
-        const latestNowPlaying = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
+        latestNowPlaying = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
 
         if (!metadata) {
           const tuneStub = await MetadataService.readTuneInStubMetadata(station.sourceIdsJson, station.name);

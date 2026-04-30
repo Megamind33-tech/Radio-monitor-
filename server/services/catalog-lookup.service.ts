@@ -15,6 +15,9 @@ export class CatalogLookupService {
     if (!title && !combined) {
       return null;
     }
+    if (!this.isSearchableMetadata(title, artist, combined)) {
+      return null;
+    }
 
     // 1) Public MusicBrainz search (free, no API key)
     if (process.env.MUSICBRAINZ_SEARCH_ENABLED !== "false") {
@@ -45,6 +48,45 @@ export class CatalogLookupService {
     }
 
     return null;
+  }
+
+  private static isSearchableMetadata(title?: string, artist?: string, combined?: string): boolean {
+    const titleText = String(title || "").trim();
+    const artistText = String(artist || "").trim();
+    if (this.isPlaceholderText(titleText) || this.isPlaceholderText(artistText)) return false;
+    if (this.isKnownBadCatalogPair(titleText, artistText)) return false;
+
+    const line = [artist, title].filter(Boolean).join(" - ").trim() || String(combined || "").trim();
+    if (!line || line.length < 3) return false;
+    if (this.isPlaceholderText(line)) return false;
+    if (/^[\s'"`.,:;|/\\()[\]{}<>~+=_*#-]+$/.test(line)) return false;
+
+    const compact = line.replace(/\s+/g, "");
+    if (compact.length >= 6) {
+      const lettersOrDigits = (compact.match(/[A-Za-z0-9]/g) ?? []).length;
+      const nonLatin = (compact.match(/[^\x00-\x7F]/g) ?? []).length;
+      const bracketNoise = (compact.match(/[⫷⫸⫹⫺ꢂꢃꢄꢊ]/g) ?? []).length;
+      if (lettersOrDigits / compact.length < 0.25) return false;
+      if (bracketNoise >= 2 || nonLatin / compact.length > 0.45) return false;
+    }
+    if (/(['"`]\s*){5,}/.test(line)) return false;
+    return true;
+  }
+
+  private static isPlaceholderText(text: string): boolean {
+    const t = String(text || "").trim();
+    if (!t) return false;
+    if (/^[_\s-]{6,}$/.test(t)) return true;
+    if (/^[-=_*.!·•\s]{6,}$/.test(t)) return true;
+    if (/^(online|live|replay|feel the power)$/i.test(t)) return true;
+    return false;
+  }
+
+  private static isKnownBadCatalogPair(title: string, artist: string): boolean {
+    return (
+      /^[_\s-]{6,}$/.test(title) &&
+      /^preteen zenith$/i.test(artist)
+    );
   }
 
   private static async musicbrainzSearch(title?: string, artist?: string, combined?: string): Promise<MatchResult | null> {

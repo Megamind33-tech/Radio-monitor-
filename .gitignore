@@ -14,3 +14,23 @@ data/song_samples/
 data/unresolved_samples/
 # SQLite dev DB (often under prisma/ when DATABASE_URL uses file:./prisma/*.db)
 prisma/**/*.db
+
+# Runtime/server-only files - do not commit
+.env
+.env.*
+!.env.example
+prisma/*.db
+prisma/*.db-*
+prisma/*.sqlite
+data/unresolved_samples/
+data/song_samples/
+data/radiobox-weekly-playlists/
+data/radiobox_backfill/
+data/radiobox_clean/
+logs/
+*.bak.*
+*.broken.*
+*.tar.gz
+
+# Ignore all runtime data by default
+data/
