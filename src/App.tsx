@@ -110,6 +110,11 @@ interface Metrics {
   matched_by_detection_method_24h?: Record<string, number>;
   all_detections_by_detection_method_24h?: Record<string, number>;
   match_rate_note?: string;
+  /** Share of active stations with a successful poll in the last 30 minutes */
+  station_monitoring_health_30m?: number;
+  stations_active?: number;
+  stations_poll_ok_last_30m?: number;
+  monitoring_note?: string;
 }
 
 interface StationSpinSummary {
@@ -639,10 +644,18 @@ export default function App() {
                     : 'Last 24h'
               }
             />
-            <MetricCard 
-              label="Monitoring" 
-              value={monitoredCount.toString()} 
-              sub="Active Zambia stations"
+            <MetricCard
+              label="Monitoring health"
+              value={
+                metrics?.station_monitoring_health_30m != null
+                  ? `${(metrics.station_monitoring_health_30m * 100).toFixed(0)}%`
+                  : monitoredCount.toString()
+              }
+              sub={
+                metrics?.stations_active != null && metrics?.stations_poll_ok_last_30m != null
+                  ? `${metrics.stations_poll_ok_last_30m} / ${metrics.stations_active} active stations polled OK (30m) · target ≥ 80%`
+                  : `${monitoredCount} active station(s) in list`
+              }
             />
           </div>
           {metrics?.matched_by_detection_method_24h && (
