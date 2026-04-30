@@ -156,6 +156,7 @@ interface DependencyStatus {
 }
 
 type StationListFilter = 'all' | 'running' | 'degraded' | 'inactive' | 'unknown';
+type SourceFilter = 'all' | 'onlineradiobox' | 'stream_metadata' | 'other';
 
 interface AudioEditorSample {
   id: string;
@@ -268,6 +269,7 @@ export default function App() {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [stationSearch, setStationSearch] = useState('');
   const [stationFilter, setStationFilter] = useState<StationListFilter>('all');
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
   const [stationPageId, setStationPageId] = useState<string | null>(() => parseStationHash());
   const [stationPageLogs, setStationPageLogs] = useState<DetectionLog[]>([]);
   const [stationPageSongSpins, setStationPageSongSpins] = useState<SongSpinRow[]>([]);
@@ -559,6 +561,16 @@ export default function App() {
       if (stationFilter !== 'all' && stationGroup(station) !== stationFilter) {
         return false;
       }
+      if (sourceFilter !== 'all') {
+        const sp = station.currentNowPlaying?.sourceProvider || '';
+        if (sourceFilter === 'onlineradiobox') {
+          if (sp !== 'onlineradiobox') return false;
+        } else if (sourceFilter === 'stream_metadata') {
+          if (!sp.startsWith('stream_metadata')) return false;
+        } else if (sourceFilter === 'other') {
+          if (sp === 'onlineradiobox' || sp.startsWith('stream_metadata') || !sp) return false;
+        }
+      }
       if (!searchQuery) return true;
 
       const haystack = [
@@ -573,7 +585,7 @@ export default function App() {
         .toLowerCase();
       return haystack.includes(searchQuery);
     });
-  }, [orderedStations, stationFilter, stationSearch]);
+  }, [orderedStations, stationFilter, stationSearch, sourceFilter]);
 
   const activeStation = stationPageId ? stationById.get(stationPageId) || null : null;
 
@@ -705,8 +717,10 @@ export default function App() {
             stateCounts={stateCounts}
             stationSearch={stationSearch}
             stationFilter={stationFilter}
+            sourceFilter={sourceFilter}
             onSearchChange={setStationSearch}
             onFilterChange={setStationFilter}
+            onSourceFilterChange={setSourceFilter}
             onOpenStation={(id) => setStationHash(id)}
             onRefreshAll={fetchData}
           />
@@ -1121,8 +1135,10 @@ function StationsManagementTable({
   stateCounts,
   stationSearch,
   stationFilter,
+  sourceFilter,
   onSearchChange,
   onFilterChange,
+  onSourceFilterChange,
   onOpenStation,
   onRefreshAll,
 }: {
@@ -1132,8 +1148,10 @@ function StationsManagementTable({
   stateCounts: Record<StationListFilter, number>;
   stationSearch: string;
   stationFilter: StationListFilter;
+  sourceFilter: SourceFilter;
   onSearchChange: (value: string) => void;
   onFilterChange: (value: StationListFilter) => void;
+  onSourceFilterChange: (value: SourceFilter) => void;
   onOpenStation: (stationId: string) => void;
   onRefreshAll: () => void;
 }) {
@@ -1178,6 +1196,16 @@ function StationsManagementTable({
             className="w-full bg-black/40 border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none focus:border-brand-cyan/40"
           />
         </div>
+        <select
+          value={sourceFilter}
+          onChange={(event) => onSourceFilterChange(event.target.value as SourceFilter)}
+          className="bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-cyan/40 text-gray-200"
+        >
+          <option value="all">All Sources</option>
+          <option value="onlineradiobox">OnlineRadioBox</option>
+          <option value="stream_metadata">ICY Stream</option>
+          <option value="other">Other</option>
+        </select>
         <button
           type="button"
           onClick={onRefreshAll}
@@ -1302,6 +1330,15 @@ function StationTableRow({
       <td className="py-3 px-3 min-w-0">
         <div className="font-medium text-gray-200 truncate" title={station.currentNowPlaying?.title || '—'}>{station.currentNowPlaying?.title || '—'}</div>
         <div className="text-xs text-gray-500 truncate" title={station.currentNowPlaying?.artist || 'No current track'}>{station.currentNowPlaying?.artist || 'No current track'}</div>
+        {station.currentNowPlaying?.sourceProvider && (
+          <span className={`inline-block mt-0.5 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+            station.currentNowPlaying.sourceProvider === 'onlineradiobox'
+              ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+              : 'bg-brand-cyan/10 text-brand-cyan border border-brand-cyan/20'
+          }`}>
+            {station.currentNowPlaying.sourceProvider === 'onlineradiobox' ? 'RadioBox' : station.currentNowPlaying.sourceProvider === 'stream_metadata' ? 'ICY' : station.currentNowPlaying.sourceProvider}
+          </span>
+        )}
       </td>
       <td className="py-3 px-3">
         <span
