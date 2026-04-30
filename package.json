@@ -19,6 +19,8 @@
     "sync:zambia": "node scripts/sync_zambia_catalog.mjs",
     "audit:mytuner-zambia": "python3 scripts/mytuner_zambia_audit.py scripts/data/zambia_harvest.json scripts/data/mytuner_zambia_audit.csv",
     "poll:orb-tracks": "node scripts/orb_track_poller.mjs",
+    "connect:orb-zambia": "node scripts/orb_connect_zambia.mjs",
+    "connect:orb-zambia:dry": "node scripts/orb_connect_zambia.mjs --dry-run",
     "backfill:song-spins": "node scripts/backfill_station_song_spins.mjs",
     "audit:stream-health": "node scripts/stream_health_audit.mjs",
     "fetch:radiotime:zambia": "python3 scripts/radiotime_zambia_fetch.py --out scripts/data/radiotime_zambia.json",
