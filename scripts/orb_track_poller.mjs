@@ -164,6 +164,41 @@ function artistTitleFromOrb(data) {
   return { artist: "", song: title, combined: title };
 }
 
+/**
+ * For stations on break (showing junk metadata), scrape their ORB playlist page
+ * for the most recent actual song played.
+ */
+async function getLastSongFromPlaylist(radioId) {
+  const slug = radioId.replace("zm.", "");
+  try {
+    const res = await fetch(
+      `https://onlineradiobox.com/zm/${slug}/playlist/`,
+      { headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36" }, signal: AbortSignal.timeout(10000) }
+    );
+    if (!res.ok) return null;
+    const html = await res.text();
+    const re = />(\d{1,2}:\d{2})<.*?class="[^"]*"[^>]*>([^<]+)</gs;
+    let match;
+    while ((match = re.exec(html)) !== null) {
+      const trackText = match[2].trim();
+      if (!trackText || trackText.length < 3) continue;
+      // Skip jingles/sweepers in playlist too
+      if (/jingle|sweeper|promo|station id/i.test(trackText)) continue;
+      if (/now playing on|you are listening/i.test(trackText)) continue;
+      // Parse artist - title
+      if (trackText.includes(" - ")) {
+        const idx = trackText.indexOf(" - ");
+        const artist = trackText.slice(0, idx).trim();
+        const song = trackText.slice(idx + 3).trim();
+        // Skip station name entries
+        if (/harmony fm|radio|fm\s*$/i.test(artist) && /jingle|sweeper|musical/i.test(song)) continue;
+        if (artist && song) return { artist, song, combined: trackText };
+      }
+    }
+  } catch {}
+  return null;
+}
+
 async function main() {
   const prisma = new PrismaClient();
   const state = loadState();
@@ -208,11 +243,19 @@ async function main() {
       continue;
     }
 
-    const { artist, song, combined } = artistTitleFromOrb(data);
+    let { artist, song, combined } = artistTitleFromOrb(data);
     if (!song && !combined) continue;
     if (isJunkMetadata(artist, song, combined)) {
-      state[radioId] = { l: data.updated, skipped: "junk" };
-      continue;
+      // Station is on break — try playlist for last real song
+      const playlist = await getLastSongFromPlaylist(radioId);
+      if (playlist) {
+        artist = playlist.artist;
+        song = playlist.song;
+        combined = playlist.combined;
+      } else {
+        state[radioId] = { l: data.updated, skipped: "junk" };
+        continue;
+      }
     }
 
     const lastLog = await prisma.detectionLog.findFirst({
