@@ -158,6 +158,25 @@ async function main() {
       },
       select: { id: true },
     });
+    await prisma.currentNowPlaying.upsert({
+      where: { stationId: st.id },
+      update: {
+        title: song || combined || null,
+        artist: artist || null,
+        album: null,
+        genre: null,
+        sourceProvider: "onlineradiobox",
+        streamText: combined || null,
+        updatedAt: new Date(),
+      },
+      create: {
+        stationId: st.id,
+        title: song || combined || undefined,
+        artist: artist || undefined,
+        sourceProvider: "onlineradiobox",
+        streamText: combined || undefined,
+      },
+    });
     await upsertSongSpinOnNewPlay(prisma, {
       stationId: st.id,
       artist,
