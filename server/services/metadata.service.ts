@@ -451,6 +451,19 @@ export class MetadataService {
     if (low === '-' || low === 'n/a') return false;
     if (low === 'no name' || low === 'unknown') return false;
     if (low === 'offline' || low === 'not available') return false;
+    if (/^[_\s-]{6,}$/.test(t)) return false;
+    if (/^[-=_*.!·•\s]{6,}$/.test(t)) return false;
+    if (/^(online|live|replay|feel the power)$/i.test(t)) return false;
+    if (/^[\s'"`.,:;|/\\()[\]{}<>~+=_*#-]+$/.test(t)) return false;
+    const compact = t.replace(/\s+/g, '');
+    if (compact.length >= 6) {
+      const lettersOrDigits = (compact.match(/[A-Za-z0-9]/g) ?? []).length;
+      const nonLatin = (compact.match(/[^\x00-\x7F]/g) ?? []).length;
+      const bracketNoise = (compact.match(/[⫷⫸⫹⫺ꢂꢃꢄꢊ]/g) ?? []).length;
+      if (lettersOrDigits / compact.length < 0.25) return false;
+      if (bracketNoise >= 2 || nonLatin / compact.length > 0.45) return false;
+    }
+    if (/(['"`]\s*){5,}/.test(t)) return false;
     return true;
   }
 

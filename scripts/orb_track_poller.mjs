@@ -19,6 +19,18 @@ import { upsertSongSpinOnNewPlay } from "./song_spin_upsert.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATE_PATH = join(__dirname, "data", "orb_track_state.json");
+const MAX_TRACK_AGE_SECONDS = Math.max(
+  60,
+  Number.parseInt(process.env.ORB_MAX_TRACK_AGE_SECONDS || "900", 10) || 900
+);
+const FETCH_TIMEOUT_MS = Math.max(
+  1500,
+  Number.parseInt(process.env.ORB_FETCH_TIMEOUT_MS || "2500", 10) || 2500
+);
+const MAX_STATIONS_PER_RUN = Math.max(
+  3,
+  Number.parseInt(process.env.ORB_MAX_STATIONS_PER_RUN || "8", 10) || 8
+);
 
 function loadState() {
   try {
@@ -39,7 +51,11 @@ function parseOrbRadioId(json) {
   try {
     const o = JSON.parse(json);
     const v = o.onlineradiobox;
-    return typeof v === "string" && v.includes(".") ? v : null;
+    if (typeof v === "string" && v.includes(".")) return v;
+    const url = typeof o.onlineRadioBoxUrl === "string" ? o.onlineRadioBoxUrl : "";
+    const m = url.match(/onlineradiobox\.com\/([a-z]{2})\/([^/?#]+)/i);
+    if (m?.[1] && m?.[2]) return `${m[1].toLowerCase()}.${m[2].toLowerCase()}`;
+    return null;
   } catch {
     return null;
   }
@@ -75,9 +91,16 @@ async function main() {
     where: { country: "Zambia", isActive: true },
     select: { id: true, name: true, sourceIdsJson: true },
   });
+  const orbStations = stations.filter((st) => parseOrbRadioId(st.sourceIdsJson));
+  const cursor = Number.isInteger(state.__cursor) ? state.__cursor : 0;
+  const ordered = orbStations.length
+    ? [...orbStations.slice(cursor), ...orbStations.slice(0, cursor)]
+    : [];
+  const runStations = ordered.slice(0, Math.min(MAX_STATIONS_PER_RUN, ordered.length));
+  state.__cursor = orbStations.length ? (cursor + runStations.length) % orbStations.length : 0;
 
   let newRows = 0;
-  for (const st of stations) {
+  for (const st of runStations) {
     const radioId = parseOrbRadioId(st.sourceIdsJson);
     if (!radioId) continue;
 
@@ -87,6 +110,7 @@ async function main() {
     try {
       const res = await fetch(url, {
         headers: { "User-Agent": "ZambiaMonitor/1.0 ORB-track" },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       data = await res.json();
     } catch (e) {
@@ -96,6 +120,13 @@ async function main() {
 
     if (!data || data.updated === 0 || data.updated === undefined) continue;
     if (data.alias && data.alias !== radioId) continue;
+    const updatedSec = Number(data.updated);
+    if (!Number.isFinite(updatedSec) || updatedSec <= 0) continue;
+    const ageSec = Math.floor(Date.now() / 1000) - updatedSec;
+    if (ageSec > MAX_TRACK_AGE_SECONDS) {
+      state[radioId] = { l: data.updated, stale: true, ageSec };
+      continue;
+    }
 
     const { artist, song, combined } = artistTitleFromOrb(data);
     if (!song && !combined) continue;
