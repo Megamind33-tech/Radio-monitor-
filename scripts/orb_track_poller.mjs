@@ -61,6 +61,86 @@ function parseOrbRadioId(json) {
   }
 }
 
+/**
+ * Detect non-song metadata: programme/show names, station jingles, DJ mixes,
+ * religious broadcasts, talk shows, promos, and other non-music content.
+ * Returns true if the text is NOT a real song (should be rejected).
+ */
+function isJunkMetadata(artist, song, combined) {
+  const text = (combined || `${artist} - ${song}`).toLowerCase();
+  const titleLow = (song || "").toLowerCase();
+  const artistLow = (artist || "").toLowerCase();
+
+  // Station jingles / self-references
+  if (/you are listening/i.test(text)) return true;
+  if (/now playing on/i.test(text)) return true;
+  if (/this is .* (fm|radio)/i.test(text)) return true;
+  if (/keeping you entertained/i.test(text)) return true;
+  if (/your (next )?play on us/i.test(text)) return true;
+  if (/station (beta|id|promo)/i.test(text)) return true;
+  if (/^\s*jingle/i.test(titleLow)) return true;
+
+  // Talk shows / chat programmes
+  if (/direct chat/i.test(text)) return true;
+  if (/\b(programme|program)\b/i.test(text)) return true;
+  if (/\b(interview|discussion|talk ?show)\b/i.test(text)) return true;
+  if (/confession/i.test(titleLow) && !/confessions? (on|of)/i.test(titleLow)) return true;
+
+  // Religious broadcasts (not songs)
+  if (/\b(sermon|preaching|evangelism|homily)\b/i.test(text)) return true;
+  if (/\b(bible|scripture)\b/i.test(artistLow)) return true;
+  if (/^\(?\w*\s*bible\)/i.test(artistLow)) return true;
+  if (/chapter/i.test(titleLow) && /bible|luke|matthew|john|genesis|psalm/i.test(text)) return true;
+  if (/kufungua anga/i.test(text)) return true;
+  if (/day \d+.*lango/i.test(text)) return true;
+
+  // DJ mixes / compilations (not individual songs)
+  if (/\bmix(tape|down)?\s*(vol|episode|\d)/i.test(text)) return true;
+  if (/\bdj .* mix\b/i.test(text)) return true;
+  if (/\bdrive mix\b/i.test(text)) return true;
+  if (/\bgroove top\s*\d/i.test(text)) return true;
+  if (/\blistener.*choice\b/i.test(text)) return true;
+  if (/\bafrobeat \d{4}\b.*\bmix/i.test(text)) return true;
+
+  // YouTube rips / low quality markers
+  if (/y2mate/i.test(artistLow)) return true;
+  if (/y2mate\.com/i.test(text) && !artist) return true;
+
+  // Video/visualizer references (not audio tracks)
+  if (/\(official\s*(hd|video|visualizer|audio)\)/i.test(titleLow)) return true;
+  if (/official visualizer/i.test(text)) return true;
+
+  // Bitrate markers suggesting raw file names
+  if (/\(\d+k\)\s*$/i.test(titleLow)) return true;
+  if (/\b(128|256|320)k\)?\s*$/i.test(titleLow)) return true;
+
+  // Motivational / sermon videos
+  if (/\b(motivational|inspirational)\b.*\bvideo\b/i.test(text)) return true;
+  if (/discovering.*destiny/i.test(text)) return true;
+  if (/\bapostle\b/i.test(artistLow) && /\b(glory|power|faith)\b/i.test(titleLow)) return true;
+  if (/\b(fulfilling|destiny|powerful)\b/i.test(titleLow) && titleLow.length > 40) return true;
+
+  // Station promos / jingles
+  if (/\bradio playing\b/i.test(text)) return true;
+  if (/only .* artists/i.test(artistLow)) return true;
+  if (/^music\s*\d*\.\w{3,4}$/i.test(titleLow)) return true;
+
+  // BBC/news programmes
+  if (/bbc.*service/i.test(text)) return true;
+  if (/world questions/i.test(text)) return true;
+
+  // File extensions in title
+  if (/\.(mp3|m4a|wav|mpeg|ogg)\s*$/i.test(titleLow)) return true;
+  if (/\(\d+k\)\.(m4a|mp3)/i.test(titleLow)) return true;
+
+  // Empty or too short (likely station ID)
+  if (!song && !artist) return true;
+  if ((song || "").trim().length < 2 && (artist || "").trim().length < 2) return true;
+  if (/^(yes|no|test|live|on air)$/i.test((song || "").trim())) return true;
+
+  return false;
+}
+
 /** @param {Record<string, unknown>} data */
 function artistTitleFromOrb(data) {
   const title = String(data.title ?? "").trim();
@@ -82,6 +162,41 @@ function artistTitleFromOrb(data) {
     };
   }
   return { artist: "", song: title, combined: title };
+}
+
+/**
+ * For stations on break (showing junk metadata), scrape their ORB playlist page
+ * for the most recent actual song played.
+ */
+async function getLastSongFromPlaylist(radioId) {
+  const slug = radioId.replace("zm.", "");
+  try {
+    const res = await fetch(
+      `https://onlineradiobox.com/zm/${slug}/playlist/`,
+      { headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36" }, signal: AbortSignal.timeout(10000) }
+    );
+    if (!res.ok) return null;
+    const html = await res.text();
+    const re = />(\d{1,2}:\d{2})<.*?class="[^"]*"[^>]*>([^<]+)</gs;
+    let match;
+    while ((match = re.exec(html)) !== null) {
+      const trackText = match[2].trim();
+      if (!trackText || trackText.length < 3) continue;
+      // Skip jingles/sweepers in playlist too
+      if (/jingle|sweeper|promo|station id/i.test(trackText)) continue;
+      if (/now playing on|you are listening/i.test(trackText)) continue;
+      // Parse artist - title
+      if (trackText.includes(" - ")) {
+        const idx = trackText.indexOf(" - ");
+        const artist = trackText.slice(0, idx).trim();
+        const song = trackText.slice(idx + 3).trim();
+        // Skip station name entries
+        if (/harmony fm|radio|fm\s*$/i.test(artist) && /jingle|sweeper|musical/i.test(song)) continue;
+        if (artist && song) return { artist, song, combined: trackText };
+      }
+    }
+  } catch {}
+  return null;
 }
 
 async function main() {
@@ -128,8 +243,20 @@ async function main() {
       continue;
     }
 
-    const { artist, song, combined } = artistTitleFromOrb(data);
+    let { artist, song, combined } = artistTitleFromOrb(data);
     if (!song && !combined) continue;
+    if (isJunkMetadata(artist, song, combined)) {
+      // Station is on break — try playlist for last real song
+      const playlist = await getLastSongFromPlaylist(radioId);
+      if (playlist) {
+        artist = playlist.artist;
+        song = playlist.song;
+        combined = playlist.combined;
+      } else {
+        state[radioId] = { l: data.updated, skipped: "junk" };
+        continue;
+      }
+    }
 
     const lastLog = await prisma.detectionLog.findFirst({
       where: { stationId: st.id },
@@ -157,6 +284,25 @@ async function main() {
         sourceProvider: "onlineradiobox",
       },
       select: { id: true },
+    });
+    await prisma.currentNowPlaying.upsert({
+      where: { stationId: st.id },
+      update: {
+        title: song || combined || null,
+        artist: artist || null,
+        album: null,
+        genre: null,
+        sourceProvider: "onlineradiobox",
+        streamText: combined || null,
+        updatedAt: new Date(),
+      },
+      create: {
+        stationId: st.id,
+        title: song || combined || undefined,
+        artist: artist || undefined,
+        sourceProvider: "onlineradiobox",
+        streamText: combined || undefined,
+      },
     });
     await upsertSongSpinOnNewPlay(prisma, {
       stationId: st.id,
