@@ -34,3 +34,6 @@ logs/
 
 # Ignore all runtime data by default
 data/
+
+# Local Python environment
+.venv/
