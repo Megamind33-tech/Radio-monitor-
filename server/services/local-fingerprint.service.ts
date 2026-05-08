@@ -169,6 +169,80 @@ function durationMsFromMatch(match: MatchResult | null, fpDurationSec: number): 
   return null;
 }
 
+
+function isJunkLocalFingerprintTitle(value: string | null | undefined): boolean {
+  const text = (value ?? "").trim().toLowerCase();
+  if (!text) return true;
+
+  return (
+    text === "unknown" ||
+    text === "unknown title" ||
+    /^track\s*0*\d+(\b|\s|\(|\[|-|:)/.test(text) ||
+    text.includes("y2mate") ||
+    text.includes("fakaza") ||
+    text.includes("songslover") ||
+    text.includes("kopalajams") ||
+    text.includes("mp3lio") ||
+    text.includes("playlist") ||
+    text.includes("advert") ||
+    text.includes("jingle")
+  );
+}
+
+function isJunkLocalFingerprintArtist(value: string | null | undefined): boolean {
+  const text = (value ?? "").trim().toLowerCase();
+  if (!text) return false;
+
+  return (
+    text === "unknown" ||
+    text === "unknown artist" ||
+    text === "various artists" ||
+    text.includes("y2mate") ||
+    text.includes("fakaza") ||
+    text.includes("songslover") ||
+    text.includes("kopalajams") ||
+    text.includes("mp3lio")
+  );
+}
+
+function isUnsafeLocalFingerprintLearningTarget(params: {
+  title: string | null;
+  artist: string | null;
+  metadata?: NormalizedMetadata | null;
+  source: "acoustid" | "stream_metadata" | "manual";
+}): boolean {
+  const rawText = [
+    params.title,
+    params.artist,
+    (params.metadata as { title?: string | null } | null)?.title,
+    (params.metadata as { artist?: string | null } | null)?.artist,
+    (params.metadata as { combinedRaw?: string | null } | null)?.combinedRaw,
+    (params.metadata as { raw?: string | null } | null)?.raw,
+    (params.metadata as { rawStreamText?: string | null } | null)?.rawStreamText,
+    (params.metadata as { rawTitle?: string | null } | null)?.rawTitle,
+    (params.metadata as { rawArtist?: string | null } | null)?.rawArtist,
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+
+  if (isJunkLocalFingerprintTitle(params.title)) return true;
+  if (isJunkLocalFingerprintArtist(params.artist)) return true;
+
+  return (
+    rawText.includes("unknown artist") ||
+    rawText.includes("streamtitle=' - '") ||
+    rawText.includes("streamtitle=-") ||
+    rawText.includes("y2mate") ||
+    rawText.includes("fakaza") ||
+    rawText.includes("songslover") ||
+    rawText.includes("kopalajams") ||
+    rawText.includes("mp3lio") ||
+    rawText.includes("playlist")
+  );
+}
+
+
 export class LocalFingerprintService {
   /**
    * Look up a fingerprint in the local library. Returns a MatchResult when a
@@ -316,9 +390,77 @@ export class LocalFingerprintService {
       return;
     }
 
+      if (isUnsafeLocalFingerprintLearningTarget({ title, artist, metadata, source })) {
+        logger.warn(
+          {
+            title,
+            artist,
+            source,
+          },
+          "Skipped unsafe local fingerprint learning target"
+        );
+        return;
+      }
+
+
+    const maxRowsPerSongDuration = parseIntEnv("LOCAL_FP_MAX_ROWS_PER_SONG_DURATION", 8);
+    if (source === "stream_metadata" && maxRowsPerSongDuration > 0) {
+      const existingRowsForSongDuration = await prisma.localFingerprint.count({
+        where: {
+          title,
+          artist,
+          source,
+          durationSec: fp.duration,
+        },
+      });
+
+      if (existingRowsForSongDuration >= maxRowsPerSongDuration) {
+        logger.info(
+          {
+            title,
+            artist,
+            source,
+            durationSec: fp.duration,
+            existingRowsForSongDuration,
+            maxRowsPerSongDuration,
+          },
+          "Skipped local fingerprint learning because song-duration cap is reached"
+        );
+        return;
+      }
+    }
+
     const hash = sha1(fp.fingerprint);
     const pfx = prefix(fp.fingerprint);
     const confidence = match?.confidence ?? match?.score ?? 0.7;
+
+    const learnMinConfidence = parseFloatEnv("LOCAL_FP_LEARN_MIN_CONFIDENCE", 0.6);
+
+    if (source === "stream_metadata" && confidence < learnMinConfidence) {
+
+      logger.warn(
+
+        {
+
+          title,
+
+          artist,
+
+          source,
+
+          confidence,
+
+          learnMinConfidence,
+
+        },
+
+        "Skipped low-confidence local fingerprint learning target"
+
+      );
+
+      return;
+
+    }
     const isrcsJson =
       match?.isrcs && match.isrcs.length ? JSON.stringify(match.isrcs) : null;
     const credits = match ? deriveCreditFields(match) : { displayArtist: null, titleWithoutFeat: null, featuredArtistsJson: null };

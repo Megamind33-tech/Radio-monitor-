@@ -299,8 +299,8 @@ export class MonitorService {
 
       /** When true, also fingerprint when ICY exists but quality heuristics flag it. Default off for ICY stability (set true for bad streams). */
       const forceFingerprintAggressive =
-        metaQuality.forceFingerprint ||
-        parseEnvBool("FINGERPRINT_AGGRESSIVE_ON_SUSPICIOUS_METADATA", false);
+        parseEnvBool("FINGERPRINT_AGGRESSIVE_ON_SUSPICIOUS_METADATA", false) &&
+        metaQuality.forceFingerprint;
 
       const combinedLine = (metadata?.combinedRaw ?? "").trim();
       const titleLine = (metadata?.rawTitle ?? combinedLine).trim();
@@ -344,12 +344,39 @@ export class MonitorService {
         reasonCode !== "metadata_disabled" &&
         icyVerificationDue;
 
+      const metadataTextForAudioFallback = [
+        (metadata as { artist?: string | null } | null)?.artist,
+        (metadata as { title?: string | null } | null)?.title,
+        (metadata as { combinedRaw?: string | null } | null)?.combinedRaw,
+        (metadata as { raw?: string | null } | null)?.raw,
+        (metadata as { rawStreamText?: string | null } | null)?.rawStreamText,
+      ]
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .join(" ");
+
+      const badMetadataAudioFallback =
+        forceAudioFallback &&
+        (
+          !metadata ||
+          isJunkIcyMetadata(metadata) ||
+          isProgramLikeTitle((metadata as { title?: string | null } | null)?.title) ||
+          isProgramLikeTitle((metadata as { combinedRaw?: string | null } | null)?.combinedRaw) ||
+          isProgramLikeTitle((metadata as { raw?: string | null } | null)?.raw) ||
+          isProgramLikeTitle((metadata as { rawStreamText?: string | null } | null)?.rawStreamText) ||
+          isProgramLikeTitle(metadataTextForAudioFallback)
+        );
+
+      // Legacy fallback means metadata is missing/junk/stale, but it should not fingerprint every poll.
+      // It is allowed only when the station audio fingerprint interval is due.
+      const legacyFingerprintDue = legacyFingerprint && intervalElapsed;
+
       const doAudioId =
         !!station.fingerprintFallbackEnabled &&
         (forceAudioFallback || !!acoustidKey) &&
-        (legacyFingerprint ||
+        (legacyFingerprintDue ||
           icyChanged ||
           intervalElapsed ||
+          badMetadataAudioFallback ||
           fingerprintEveryPoll ||
           forceFingerprintAggressive ||
           icyCrossCheckAudio);
@@ -413,6 +440,13 @@ export class MonitorService {
               icyChanged,
               intervalElapsed,
               icyCrossCheckAudio,
+              legacyFingerprint,
+              legacyFingerprintDue,
+              badMetadataAudioFallback,
+              fingerprintEveryPoll,
+              forceFingerprintAggressive,
+              doAudioId,
+              metaQualityReasons: metaQuality.reasons,
               fpSec,
               delaySec,
             },
@@ -678,6 +712,7 @@ export class MonitorService {
         paidOnAudioMiss,
         paidLaneEligible,
         legacyFingerprint,
+        legacyFingerprintDue,
         fingerprintEveryPoll,
         forceFingerprintAggressive,
         doAudioId,
@@ -691,16 +726,36 @@ export class MonitorService {
         healthReason: health.reason,
       };
 
+      const catalogOnlyRejectedAfterAudioNoMatch =
+        method === "catalog_lookup" &&
+        finalReason === "catalog_only_low_trust" &&
+        fingerprintAttempts.length > 0 &&
+        fingerprintAttempts.every((attempt) => attempt.outcome === "no_match");
+
+      if (catalogOnlyRejectedAfterAudioNoMatch) {
+        Object.assign(matchDiagnostics, {
+          catalogOnlyRejectedAfterAudioNoMatch: true,
+          originalCatalogReason: finalReason,
+          originalCatalogMethod: method,
+          effectiveMethod: "unresolved",
+          originalCatalogTitle: match?.title ?? null,
+          originalCatalogArtist: match?.artist ?? null,
+          rejectionReason: "audio_no_match_catalog_rejected",
+        });
+      }
+
+      const effectiveMatch = catalogOnlyRejectedAfterAudioNoMatch ? null : match;
+      const effectiveMethod = catalogOnlyRejectedAfterAudioNoMatch ? "unresolved" : method;
       const processingMs = Date.now() - start;
-      let detectionReason = finalReason;
+      let detectionReason = catalogOnlyRejectedAfterAudioNoMatch ? "audio_no_match_catalog_rejected" : finalReason;
       const detection = await this.saveDetection(
         station,
         resolvedUrl,
-        method,
+        effectiveMethod,
         metadata,
-        match,
+        effectiveMatch,
         processingMs,
-        finalReason,
+        detectionReason,
         JSON.stringify(matchDiagnostics),
         {
           capturedFingerprint:
