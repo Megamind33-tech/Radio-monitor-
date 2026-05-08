@@ -35,6 +35,20 @@ import { FingerprintService } from "./services/fingerprint.service.js";
 import { AcoustidService } from "./services/acoustid.service.js";
 import { MusicbrainzService } from "./services/musicbrainz.service.js";
 import * as XLSX from "xlsx";
+import http from "node:http";
+import https from "node:https";
+
+// Limit outbound HTTP/TLS socket pressure for radio stream validation and catalog/metadata calls.
+// This prevents Axios/follow-redirects from piling many listeners onto reused TLSSockets.
+const outboundMaxSockets = Math.max(
+  2,
+  parseInt(process.env.OUTBOUND_HTTP_MAX_SOCKETS || "6", 10) || 6
+);
+http.globalAgent.maxSockets = outboundMaxSockets;
+http.globalAgent.maxFreeSockets = 0;
+https.globalAgent.maxSockets = outboundMaxSockets;
+https.globalAgent.maxFreeSockets = 0;
+
 
 function envBoolTrue(key: string, defaultTrue = true): boolean {
   const v = process.env[key];
