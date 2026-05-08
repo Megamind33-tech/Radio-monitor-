@@ -370,11 +370,15 @@ export class MonitorService {
       // It is allowed only when the station audio fingerprint interval is due.
       const legacyFingerprintDue = legacyFingerprint && intervalElapsed;
 
+      // ICY can change rapidly on some streams. Do not fingerprint every ICY change;
+      // only verify by audio when the station fingerprint interval is due.
+      const icyChangedAudioDue = icyChanged && intervalElapsed;
+
       const doAudioId =
         !!station.fingerprintFallbackEnabled &&
         (forceAudioFallback || !!acoustidKey) &&
         (legacyFingerprintDue ||
-          icyChanged ||
+          icyChangedAudioDue ||
           intervalElapsed ||
           badMetadataAudioFallback ||
           fingerprintEveryPoll ||
@@ -442,6 +446,7 @@ export class MonitorService {
               icyCrossCheckAudio,
               legacyFingerprint,
               legacyFingerprintDue,
+              icyChangedAudioDue,
               badMetadataAudioFallback,
               fingerprintEveryPoll,
               forceFingerprintAggressive,
@@ -713,6 +718,7 @@ export class MonitorService {
         paidLaneEligible,
         legacyFingerprint,
         legacyFingerprintDue,
+        icyChangedAudioDue,
         fingerprintEveryPoll,
         forceFingerprintAggressive,
         doAudioId,
