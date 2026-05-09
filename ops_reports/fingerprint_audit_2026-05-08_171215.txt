@@ -1,0 +1,733 @@
+==============================
+RADIO MONITOR FINGERPRINT AUDIT
+Date: Fri May  8 17:12:22 UTC 2026
+Path: /opt/radio-monitor
+==============================
+
+### 1. DISK / DATA SIZE
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           392M  1.0M  391M   1% /run
+/dev/vda1        77G   55G   23G  71% /
+tmpfs           2.0G     0  2.0G   0% /dev/shm
+tmpfs           5.0M     0  5.0M   0% /run/lock
+/dev/vda16      881M  117M  703M  15% /boot
+/dev/vda15      105M  6.2M   99M   6% /boot/efi
+tmpfs           392M   16K  392M   1% /run/user/0
+
+42G	data
+38G	data/unresolved_samples
+3.4G	data/song_samples
+2.0M	logs
+151M	prisma/dev_runtime.db
+
+### 2. SERVICE STATUS
+● mostify-monitor.service - Mostify Radio Monitor
+     Loaded: loaded (/etc/systemd/system/mostify-monitor.service; enabled; preset: enabled)
+    Drop-In: /etc/systemd/system/mostify-monitor.service.d
+             └─env.conf, fingerprint-index.conf, node-network.conf, zz-cost-control.conf, zz-realtime-fingerprint-fallback.conf, zzzz-final-fingerprint-quality.conf, zzzzzz-disable-catalog-repair.conf, zzzzzz-disable-musicbrainz-search.conf, zzzzzz-safe-fingerprint-throttle.conf, zzzzzz-validation-throttle.conf, zzzzzzz-trace-warnings.conf, zzzzzzzz-final-node-options.conf, zzzzzzzz-http-agent-throttle.conf
+     Active: active (running) since Fri 2026-05-08 17:07:30 UTC; 4min 52s ago
+    Process: 641914 ExecStartPre=/usr/local/bin/mostify-sync-static.sh (code=exited, status=0/SUCCESS)
+    Process: 641920 ExecStartPre=/bin/bash -lc sqlite3 /opt/radio-monitor/prisma/dev_runtime.db "UPDATE Station SET sampleSeconds=15, audioFingerprintIntervalSeconds=240, icyVerificationIntervalSeconds=180, fingerprintRetries=0, fingerprintRetryDelayMs=3500, catalogConfidenceFloor=CASE WHEN catalogConfidenceFloor IS NULL OR catalogConfidenceFloor < 0.78 THEN 0.78 ELSE catalogConfidenceFloor END, lastAudioFingerprintAt=datetime('now'), lastIcyVerificationFingerprintAt=datetime('now') WHERE isActive=1;" (code=exited, status=0/SUCCESS)
+    Process: 641924 ExecStartPre=/bin/bash -lc sqlite3 /opt/radio-monitor/prisma/dev_runtime.db "UPDATE Station SET pollIntervalSeconds=CASE WHEN pollIntervalSeconds IS NULL OR pollIntervalSeconds < 90 THEN 90 ELSE pollIntervalSeconds END, deepValidationIntervalSeconds=CASE WHEN deepValidationIntervalSeconds IS NULL OR deepValidationIntervalSeconds < 1800 THEN 1800 ELSE deepValidationIntervalSeconds END WHERE isActive=1;" (code=exited, status=0/SUCCESS)
+   Main PID: 641927 (node)
+      Tasks: 21 (limit: 4653)
+     Memory: 168.9M (peak: 222.9M)
+        CPU: 1min 39.088s
+     CGroup: /system.slice/mostify-monitor.service
+             ├─641927 /usr/bin/node /opt/radio-monitor/dist/server/main.js
+             └─642399 ffmpeg -i https://chikunir.radioca.st/live -t 15 -vn -ac 1 -ar 11025 -f wav -y /tmp/radio_monitor/sample_1778260330285_idcu9r.wav
+
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:12:10.285] INFO (641927): Capturing audio sample
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     url: "https://chikunir.radioca.st/live"
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     durationSeconds: 15
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     delaySeconds: 0
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     outputPath: "/tmp/radio_monitor/sample_1778260330285_idcu9r.wav"
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     pipelineStatus: {
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "active": 1,
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "maxConcurrent": 1,
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "minGapMs": 3500
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     }
+
+○ zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table
+     Loaded: loaded (/etc/systemd/system/zambian-localfp-sync.service; static)
+     Active: inactive (dead) since Fri 2026-05-08 17:03:54 UTC; 8min ago
+TriggeredBy: ● zambian-localfp-sync.timer
+    Process: 638856 ExecStart=/bin/bash -lc source /opt/radio-monitor/.venv/bin/activate && python /opt/radio-monitor/scripts/sync_zambian_trusted_local_fingerprints.py >> /opt/radio-monitor/logs/zambian-localfp-sync.log 2>&1 (code=exited, status=0/SUCCESS)
+   Main PID: 638856 (code=exited, status=0/SUCCESS)
+        CPU: 1min 40.620s
+
+May 08 16:48:27 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 17:03:54 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 17:03:54 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 17:03:54 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 1min 40.620s CPU time.
+
+### 3. ACTIVE FINGERPRINT / AUDIO PROCESSES
+root      642399  1.1  1.4 517300 56176 ?        SLl  17:12   0:00 ffmpeg -i https://chikunir.radioca.st/live -t 15 -vn -ac 1 -ar 11025 -f wav -y /tmp/radio_monitor/sample_1778260330285_idcu9r.wav
+root      642427  0.0  0.0   6120  1852 pts/0    S+   17:12   0:00 tee ops_reports/fingerprint_audit_2026-05-08_171215.txt
+
+### 4. RECENT LOCAL FINGERPRINT SYNC LOG
+SYNC track=791 offset=90s Sky Bwoy - Mfumu Zambobwela
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Bwoy-Mfumu-Zambobwela.mp3
+IMPORTED duration=35s sha1=10d7363ae3f5c6f5f3240bfd50701bdc51c30b84
+
+SYNC track=791 offset=135s Sky Bwoy - Mfumu Zambobwela
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Bwoy-Mfumu-Zambobwela.mp3
+IMPORTED duration=35s sha1=10fa7e639d8773978de6f0f655ca6c68ccf9eca0
+
+SYNC track=792 offset=0s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Battle-Scares.mp3
+IMPORTED duration=35s sha1=3bb37a839707a260095bd9229539380b8261b3ef
+
+SYNC track=792 offset=45s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Battle-Scares.mp3
+IMPORTED duration=35s sha1=791d4b48085125270650e0ecf6fb50ccfe674ea2
+
+SYNC track=792 offset=90s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Battle-Scares.mp3
+IMPORTED duration=35s sha1=81a18c87aea6403657da3d610265279250c4f1b6
+
+SYNC track=792 offset=135s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Battle-Scares.mp3
+IMPORTED duration=35s sha1=528348c25e91ad2110f67367a17da56dc7fde405
+
+SYNC track=793 offset=0s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Eyes-Of-Love.mp3
+IMPORTED duration=35s sha1=b8e69fdd3881e68efa433b6d637cc1fd4d493424
+
+SYNC track=793 offset=45s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Eyes-Of-Love.mp3
+IMPORTED duration=35s sha1=108bda9e7d59487de722b8f402dfeb36d566a90d
+
+SYNC track=793 offset=90s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Eyes-Of-Love.mp3
+IMPORTED duration=35s sha1=ddb973426bda2a9cc2a04983cff95102636ce52d
+
+SYNC track=793 offset=135s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Eyes-Of-Love.mp3
+IMPORTED duration=35s sha1=8028359a50606b369939f5957093287628f6e3c2
+
+SYNC track=794 offset=0s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Ft-MLC-The-Tradged-Prod-Mr-Sight-1.mp3
+IMPORTED duration=35s sha1=a6600cf217c6b6bd0d342125b6feb4449077904a
+
+SYNC track=794 offset=45s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Ft-MLC-The-Tradged-Prod-Mr-Sight-1.mp3
+IMPORTED duration=35s sha1=59fdfd12393f35456a910804a3c52b9a1c9668c5
+
+SYNC track=794 offset=90s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Ft-MLC-The-Tradged-Prod-Mr-Sight-1.mp3
+IMPORTED duration=35s sha1=a544ff4198ed07b550fb5c3c2e3b2d3b73b2a4e6
+
+SYNC track=794 offset=135s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Ft-MLC-The-Tradged-Prod-Mr-Sight-1.mp3
+IMPORTED duration=35s sha1=dfdef60b2fb026adbcac67f94f7227ff0f3e4d3b
+
+SYNC track=795 offset=0s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Ft-Snabz_Disclosed.mp3
+IMPORTED duration=35s sha1=a5f7277acc9e5fd4be38e68246e3d3db63aa5a77
+
+SYNC track=795 offset=45s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Ft-Snabz_Disclosed.mp3
+IMPORTED duration=35s sha1=0abd49fcf6aacc6a20a4052919e867e33ee167d8
+
+SYNC track=795 offset=90s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Ft-Snabz_Disclosed.mp3
+IMPORTED duration=35s sha1=73b854fc45dc9c4a90d356f5ef7ad27a4b2a8b40
+
+SYNC track=795 offset=135s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Ft-Snabz_Disclosed.mp3
+IMPORTED duration=35s sha1=904af19ff1f21f41e196a1602e1ca55ea77461e5
+
+SYNC track=796 offset=0s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Piece-Of-You-.mp3
+IMPORTED duration=35s sha1=dab02cfd1f7a3471a7d6734807a2d7a685c0f9b2
+
+SYNC track=796 offset=45s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Piece-Of-You-.mp3
+IMPORTED duration=35s sha1=854435ab469c0bbb54344f90cbef9a23505261bb
+
+SYNC track=796 offset=90s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Piece-Of-You-.mp3
+IMPORTED duration=35s sha1=ee4bb6d50bf7b0df34effa91cb08c1d2278cf545
+
+SYNC track=796 offset=135s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Piece-Of-You-.mp3
+IMPORTED duration=35s sha1=ba34ac02d9aed942425c51b53a39b03f1e4f3bcf
+
+SYNC track=797 offset=0s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Unphased.mp3
+IMPORTED duration=35s sha1=4ab86ccc0f1981c804620e3b72feecb33c3b3b6a
+
+SYNC track=797 offset=45s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Unphased.mp3
+IMPORTED duration=35s sha1=91e8ea31f1dfdc5338d2b4650244542f964ebd83
+
+SYNC track=797 offset=90s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Unphased.mp3
+IMPORTED duration=35s sha1=2aa9417e8202f6626bf4dc01a42a938d2c0ab8ad
+
+SYNC track=797 offset=135s Sky Trex - The Trail (Epic Dialogue Vol. 2)
+https://zambianplay.com/wp-content/uploads/2024/08/Sky-Trex-Unphased.mp3
+IMPORTED duration=35s sha1=030d574b7b2239ac471ab54353228a1fbaa52377
+
+SYNC track=798 offset=0s Sky Trex - Unphased
+https://zambianplay.com/wp-content/uploads/2023/09/Sky-Trex-Unphased.mp3
+IMPORTED duration=35s sha1=4ab86ccc0f1981c804620e3b72feecb33c3b3b6a
+
+SYNC track=798 offset=45s Sky Trex - Unphased
+https://zambianplay.com/wp-content/uploads/2023/09/Sky-Trex-Unphased.mp3
+IMPORTED duration=35s sha1=91e8ea31f1dfdc5338d2b4650244542f964ebd83
+
+SYNC track=798 offset=90s Sky Trex - Unphased
+https://zambianplay.com/wp-content/uploads/2023/09/Sky-Trex-Unphased.mp3
+IMPORTED duration=35s sha1=2aa9417e8202f6626bf4dc01a42a938d2c0ab8ad
+
+Imported segments: 160
+Skipped already imported: 3000
+Failed segments: 11
+Source: zambian_trusted_35s
+
+### 5. RECENT SYSTEMD LOG FOR LOCAL FINGERPRINT SYNC
+May 08 08:08:38 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 08:10:58 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 08:10:58 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 08:10:58 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 32.230s CPU time.
+May 08 08:21:57 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 08:23:04 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 08:23:04 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 08:23:04 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 31.172s CPU time.
+May 08 08:34:50 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 08:36:32 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 08:36:32 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 08:36:32 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 31.466s CPU time.
+May 08 08:46:39 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 08:47:55 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 08:47:55 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 08:47:55 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 31.370s CPU time.
+May 08 08:59:47 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 09:05:16 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 09:05:16 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 09:05:16 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 32.898s CPU time.
+May 08 09:17:25 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 09:22:04 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 09:22:04 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 09:22:04 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 31.496s CPU time.
+May 08 09:32:05 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 09:36:41 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 09:36:41 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 09:36:41 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 31.793s CPU time, 30.3M memory peak, 0B memory swap peak.
+May 08 09:48:21 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 09:53:00 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 09:53:00 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 09:53:00 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 32.155s CPU time.
+May 08 10:04:58 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 10:09:36 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 10:09:36 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 10:09:36 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 31.264s CPU time.
+May 08 10:20:45 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 10:25:24 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 10:25:24 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 10:25:24 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 32.229s CPU time.
+May 08 10:35:26 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 10:40:03 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 10:40:03 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 10:40:03 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 31.810s CPU time.
+May 08 10:50:17 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 10:54:56 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 10:54:56 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 10:54:56 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 32.580s CPU time.
+May 08 11:06:16 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 11:11:01 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 11:11:01 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 11:11:01 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 32.529s CPU time.
+May 08 11:22:59 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 11:27:42 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 11:27:42 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 11:27:42 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 32.294s CPU time.
+May 08 11:38:12 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 11:46:19 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 11:46:19 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 11:46:19 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 33.335s CPU time, 30.2M memory peak, 0B memory swap peak.
+May 08 13:09:50 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 13:12:43 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 13:12:43 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 13:12:43 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 1min 49.434s CPU time.
+May 08 13:23:07 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 13:31:59 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 13:31:59 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 13:31:59 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 1min 53.115s CPU time.
+May 08 13:43:27 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 13:54:05 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 13:54:05 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 13:54:05 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 1min 54.546s CPU time.
+May 08 14:04:27 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 14:15:08 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 14:15:08 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 14:15:08 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 1min 52.854s CPU time, 32.6M memory peak, 0B memory swap peak.
+May 08 14:25:51 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 14:37:33 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 14:37:33 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 14:37:33 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 1min 54.842s CPU time, 34.0M memory peak, 0B memory swap peak.
+May 08 14:48:27 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 15:00:07 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 15:00:07 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 15:00:07 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 2min 3.554s CPU time, 32.6M memory peak, 0B memory swap peak.
+May 08 15:11:52 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 15:22:55 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 15:22:55 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 15:22:55 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 1min 52.805s CPU time, 32.4M memory peak, 0B memory swap peak.
+May 08 15:34:27 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 15:45:08 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 15:45:08 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 15:45:08 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 1min 35.662s CPU time.
+May 08 15:56:19 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 16:10:31 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 16:10:31 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 16:10:31 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 1min 38.957s CPU time, 32.6M memory peak, 0B memory swap peak.
+May 08 16:22:27 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 16:37:53 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 16:37:53 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 16:37:53 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 1min 38.396s CPU time.
+May 08 16:48:27 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Starting zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table...
+May 08 17:03:54 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Deactivated successfully.
+May 08 17:03:54 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: Finished zambian-localfp-sync.service - Sync trusted Zambian fingerprints into Mostify LocalFingerprint table.
+May 08 17:03:54 ubuntu-s-2vcpu-4gb-syd1 systemd[1]: zambian-localfp-sync.service: Consumed 1min 40.620s CPU time.
+
+### 6. RECENT MONITOR LOGS
+May 08 17:11:25 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`LocalFingerprint`.`id`, `main`.`LocalFingerprint`.`fingerprint`, `main`.`LocalFingerprint`.`fingerprintSha1`, `main`.`LocalFingerprint`.`fingerprintPrefix`, `main`.`LocalFingerprint`.`durationSec`, `main`.`LocalFingerprint`.`title`, `main`.`LocalFingerprint`.`artist`, `main`.`LocalFingerprint`.`releaseTitle`, `main`.`LocalFingerprint`.`releaseDate`, `main`.`LocalFingerprint`.`genre`, `main`.`LocalFingerprint`.`displayArtist`, `main`.`LocalFingerprint`.`titleWithoutFeat`, `main`.`LocalFingerprint`.`featuredArtistsJson`, `main`.`LocalFingerprint`.`labelName`, `main`.`LocalFingerprint`.`countryCode`, `main`.`LocalFingerprint`.`durationMs`, `main`.`LocalFingerprint`.`playCountTotal`, `main`.`LocalFingerprint`.`acoustidTrackId`, `main`.`LocalFingerprint`.`recordingMbid`, `main`.`LocalFingerprint`.`isrcsJson`, `main`.`LocalFingerprint`.`source`, `main`.`LocalFingerprint`.`confidence`, `main`.`LocalFingerprint`.`timesMatched`, `main`.`LocalFingerprint`.`firstLearnedAt`, `main`.`LocalFingerprint`.`lastMatchedAt`, `main`.`LocalFingerprint`.`updatedAt` FROM `main`.`LocalFingerprint` WHERE (`main`.`LocalFingerprint`.`fingerprintPrefix` = ? AND `main`.`LocalFingerprint`.`durationSec` >= ? AND `main`.`LocalFingerprint`.`durationSec` <= ?) ORDER BY `main`.`LocalFingerprint`.`id` ASC LIMIT ? OFFSET ?
+May 08 17:11:25 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`LocalFingerprint`.`id`, `main`.`LocalFingerprint`.`fingerprint`, `main`.`LocalFingerprint`.`fingerprintSha1`, `main`.`LocalFingerprint`.`fingerprintPrefix`, `main`.`LocalFingerprint`.`durationSec`, `main`.`LocalFingerprint`.`title`, `main`.`LocalFingerprint`.`artist`, `main`.`LocalFingerprint`.`releaseTitle`, `main`.`LocalFingerprint`.`releaseDate`, `main`.`LocalFingerprint`.`genre`, `main`.`LocalFingerprint`.`displayArtist`, `main`.`LocalFingerprint`.`titleWithoutFeat`, `main`.`LocalFingerprint`.`featuredArtistsJson`, `main`.`LocalFingerprint`.`labelName`, `main`.`LocalFingerprint`.`countryCode`, `main`.`LocalFingerprint`.`durationMs`, `main`.`LocalFingerprint`.`playCountTotal`, `main`.`LocalFingerprint`.`acoustidTrackId`, `main`.`LocalFingerprint`.`recordingMbid`, `main`.`LocalFingerprint`.`isrcsJson`, `main`.`LocalFingerprint`.`source`, `main`.`LocalFingerprint`.`confidence`, `main`.`LocalFingerprint`.`timesMatched`, `main`.`LocalFingerprint`.`firstLearnedAt`, `main`.`LocalFingerprint`.`lastMatchedAt`, `main`.`LocalFingerprint`.`updatedAt` FROM `main`.`LocalFingerprint` WHERE (`main`.`LocalFingerprint`.`durationSec` >= ? AND `main`.`LocalFingerprint`.`durationSec` <= ?) ORDER BY `main`.`LocalFingerprint`.`lastMatchedAt` DESC LIMIT ? OFFSET ?
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:11:25.418] INFO (641927): Sample captured successfully
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     outputPath: "/tmp/radio_monitor/sample_1778260252631_mb8w9q.wav"
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:11:25.456] INFO (641927): Capturing audio sample
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     url: "https://carina.streamerr.co:8078/stream"
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     durationSeconds: 15
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     delaySeconds: 0
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     outputPath: "/tmp/radio_monitor/sample_1778260285456_l1d77g.wav"
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     pipelineStatus: {
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "active": 1,
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "maxConcurrent": 1,
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "minGapMs": 3500
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     }
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:11:25.561] INFO (641927): Querying AcoustID API
+May 08 17:11:26 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     duration: 35
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:11:26.744] INFO (641927): Audio fingerprint sample (ICY change, interval, verification, suspicious metadata, or retry)
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     station: "Central Voice Radio"
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     attempt: 2
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     maxRetries: 2
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     reason: null
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     icyChanged: false
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     intervalElapsed: true
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     icyCrossCheckAudio: true
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     legacyFingerprint: false
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     legacyFingerprintDue: false
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     icyChangedAudioDue: false
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     badMetadataAudioFallback: false
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     fingerprintEveryPoll: false
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     forceFingerprintAggressive: false
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     doAudioId: true
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     metaQualityReasons: []
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     fpSec: 47
+May 08 17:11:27 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     delaySec: 2.5
+May 08 17:11:30 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`Station`.`id`, `main`.`Station`.`name`, `main`.`Station`.`country`, `main`.`Station`.`district`, `main`.`Station`.`province`, `main`.`Station`.`frequencyMhz`, `main`.`Station`.`streamUrl`, `main`.`Station`.`preferredStreamUrl`, `main`.`Station`.`streamFormatHint`, `main`.`Station`.`sourceIdsJson`, `main`.`Station`.`icyQualification`, `main`.`Station`.`icySampleTitle`, `main`.`Station`.`isActive`, `main`.`Station`.`metadataPriorityEnabled`, `main`.`Station`.`fingerprintFallbackEnabled`, `main`.`Station`.`metadataStaleSeconds`, `main`.`Station`.`sampleSeconds`, `main`.`Station`.`pollIntervalSeconds`, `main`.`Station`.`audioFingerprintIntervalSeconds`, `main`.`Station`.`icyVerificationIntervalSeconds`, `main`.`Station`.`lastAudioFingerprintAt`, `main`.`Station`.`lastIcyVerificationFingerprintAt`, `main`.`Station`.`archiveSongSamples`, `main`.`Station`.`lastPollAt`, `main`.`Station`.`lastPollStatus`, `main`.`Station`.`lastPollError`, `main`.`Station`.`monitorState`, `main`.`Station`.`monitorStateReason`, `main`.`Station`.`contentClassification`, `main`.`Station`.`lastValidationAt`, `main`.`Station`.`lastValidationReason`, `main`.`Station`.`lastResolvedStreamUrl`, `main`.`Station`.`lastStreamContentType`, `main`.`Station`.`lastStreamCodec`, `main`.`Station`.`lastStreamBitrate`, `main`.`Station`.`lastHealthyAt`, `main`.`Station`.`lastGoodAudioAt`, `main`.`Station`.`lastMetadataAt`, `main`.`Station`.`lastSongDetectedAt`, `main`.`Station`.`consecutivePollFailures`, `main`.`Station`.`consecutiveHealthyPolls`, `main`.`Station`.`deepValidationIntervalSeconds`, `main`.`Station`.`failureThreshold`, `main`.`Station`.`recoveryThreshold`, `main`.`Station`.`visibilityEnabled`, `main`.`Station`.`detectionLagMsAvg`, `main`.`Station`.`detectionLagSamples`, `main`.`Station`.`streamRefreshedAt`, `main`.`Station`.`streamSourceType`, `main`.`Station`.`streamSourceQualityScore`, `main`.`Station`.`streamSourceLastEvaluatedAt`, `main`.`Station`.`decodeHealthEma`, `main`.`Station`.`fingerprintHitEma`, `main`.`Station`.`metadataPresentEma`, `main`.`Station`.`streamOnlineLast`, `main`.`Station`.`audioDetectedLast`, `main`.`Station`.`metadataAvailableLast`, `main`.`Station`.`songIdentifiedLast`, `main`.`Station`.`metadataTrustTightness`, `main`.`Station`.`fingerprintRetries`, `main`.`Station`.`fingerprintRetryDelayMs`, `main`.`Station`.`catalogConfidenceFloor`, `main`.`Station`.`createdAt`, `main`.`Station`.`updatedAt` FROM `main`.`Station` WHERE `main`.`Station`.`isActive` = ? LIMIT ? OFFSET ?
+May 08 17:11:30 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`CurrentNowPlaying`.`stationId`, `main`.`CurrentNowPlaying`.`title`, `main`.`CurrentNowPlaying`.`artist`, `main`.`CurrentNowPlaying`.`album`, `main`.`CurrentNowPlaying`.`genre`, `main`.`CurrentNowPlaying`.`sourceProvider`, `main`.`CurrentNowPlaying`.`streamText`, `main`.`CurrentNowPlaying`.`updatedAt` FROM `main`.`CurrentNowPlaying` WHERE (`main`.`CurrentNowPlaying`.`stationId` = ? AND 1=1) LIMIT ? OFFSET ?
+May 08 17:11:30 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`CurrentNowPlaying`.`stationId`, `main`.`CurrentNowPlaying`.`title`, `main`.`CurrentNowPlaying`.`artist`, `main`.`CurrentNowPlaying`.`album`, `main`.`CurrentNowPlaying`.`genre`, `main`.`CurrentNowPlaying`.`sourceProvider`, `main`.`CurrentNowPlaying`.`streamText`, `main`.`CurrentNowPlaying`.`updatedAt` FROM `main`.`CurrentNowPlaying` WHERE (`main`.`CurrentNowPlaying`.`stationId` = ? AND 1=1) LIMIT ? OFFSET ?
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:11:30.949] INFO (641927): Audio fingerprint sample (ICY change, interval, verification, suspicious metadata, or retry)
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     station: "Flava FM"
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     attempt: 1
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     maxRetries: 1
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     reason: "tunein_stub_metadata"
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     icyChanged: false
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     intervalElapsed: true
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     icyCrossCheckAudio: true
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     legacyFingerprint: false
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     legacyFingerprintDue: false
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     icyChangedAudioDue: false
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     badMetadataAudioFallback: false
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     fingerprintEveryPoll: false
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     forceFingerprintAggressive: false
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     doAudioId: true
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     metaQualityReasons: []
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     fpSec: 15
+May 08 17:11:31 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     delaySec: 0
+May 08 17:11:38 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`LocalFingerprint`.`id`, `main`.`LocalFingerprint`.`fingerprint`, `main`.`LocalFingerprint`.`fingerprintSha1`, `main`.`LocalFingerprint`.`fingerprintPrefix`, `main`.`LocalFingerprint`.`durationSec`, `main`.`LocalFingerprint`.`title`, `main`.`LocalFingerprint`.`artist`, `main`.`LocalFingerprint`.`releaseTitle`, `main`.`LocalFingerprint`.`releaseDate`, `main`.`LocalFingerprint`.`genre`, `main`.`LocalFingerprint`.`displayArtist`, `main`.`LocalFingerprint`.`titleWithoutFeat`, `main`.`LocalFingerprint`.`featuredArtistsJson`, `main`.`LocalFingerprint`.`labelName`, `main`.`LocalFingerprint`.`countryCode`, `main`.`LocalFingerprint`.`durationMs`, `main`.`LocalFingerprint`.`playCountTotal`, `main`.`LocalFingerprint`.`acoustidTrackId`, `main`.`LocalFingerprint`.`recordingMbid`, `main`.`LocalFingerprint`.`isrcsJson`, `main`.`LocalFingerprint`.`source`, `main`.`LocalFingerprint`.`confidence`, `main`.`LocalFingerprint`.`timesMatched`, `main`.`LocalFingerprint`.`firstLearnedAt`, `main`.`LocalFingerprint`.`lastMatchedAt`, `main`.`LocalFingerprint`.`updatedAt` FROM `main`.`LocalFingerprint` WHERE (`main`.`LocalFingerprint`.`fingerprintSha1` = ? AND 1=1) LIMIT ? OFFSET ?
+May 08 17:11:38 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`LocalFingerprint`.`id`, `main`.`LocalFingerprint`.`fingerprint`, `main`.`LocalFingerprint`.`fingerprintSha1`, `main`.`LocalFingerprint`.`fingerprintPrefix`, `main`.`LocalFingerprint`.`durationSec`, `main`.`LocalFingerprint`.`title`, `main`.`LocalFingerprint`.`artist`, `main`.`LocalFingerprint`.`releaseTitle`, `main`.`LocalFingerprint`.`releaseDate`, `main`.`LocalFingerprint`.`genre`, `main`.`LocalFingerprint`.`displayArtist`, `main`.`LocalFingerprint`.`titleWithoutFeat`, `main`.`LocalFingerprint`.`featuredArtistsJson`, `main`.`LocalFingerprint`.`labelName`, `main`.`LocalFingerprint`.`countryCode`, `main`.`LocalFingerprint`.`durationMs`, `main`.`LocalFingerprint`.`playCountTotal`, `main`.`LocalFingerprint`.`acoustidTrackId`, `main`.`LocalFingerprint`.`recordingMbid`, `main`.`LocalFingerprint`.`isrcsJson`, `main`.`LocalFingerprint`.`source`, `main`.`LocalFingerprint`.`confidence`, `main`.`LocalFingerprint`.`timesMatched`, `main`.`LocalFingerprint`.`firstLearnedAt`, `main`.`LocalFingerprint`.`lastMatchedAt`, `main`.`LocalFingerprint`.`updatedAt` FROM `main`.`LocalFingerprint` WHERE (`main`.`LocalFingerprint`.`fingerprintPrefix` = ? AND `main`.`LocalFingerprint`.`durationSec` >= ? AND `main`.`LocalFingerprint`.`durationSec` <= ?) ORDER BY `main`.`LocalFingerprint`.`id` ASC LIMIT ? OFFSET ?
+May 08 17:11:38 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`LocalFingerprint`.`id`, `main`.`LocalFingerprint`.`fingerprint`, `main`.`LocalFingerprint`.`fingerprintSha1`, `main`.`LocalFingerprint`.`fingerprintPrefix`, `main`.`LocalFingerprint`.`durationSec`, `main`.`LocalFingerprint`.`title`, `main`.`LocalFingerprint`.`artist`, `main`.`LocalFingerprint`.`releaseTitle`, `main`.`LocalFingerprint`.`releaseDate`, `main`.`LocalFingerprint`.`genre`, `main`.`LocalFingerprint`.`displayArtist`, `main`.`LocalFingerprint`.`titleWithoutFeat`, `main`.`LocalFingerprint`.`featuredArtistsJson`, `main`.`LocalFingerprint`.`labelName`, `main`.`LocalFingerprint`.`countryCode`, `main`.`LocalFingerprint`.`durationMs`, `main`.`LocalFingerprint`.`playCountTotal`, `main`.`LocalFingerprint`.`acoustidTrackId`, `main`.`LocalFingerprint`.`recordingMbid`, `main`.`LocalFingerprint`.`isrcsJson`, `main`.`LocalFingerprint`.`source`, `main`.`LocalFingerprint`.`confidence`, `main`.`LocalFingerprint`.`timesMatched`, `main`.`LocalFingerprint`.`firstLearnedAt`, `main`.`LocalFingerprint`.`lastMatchedAt`, `main`.`LocalFingerprint`.`updatedAt` FROM `main`.`LocalFingerprint` WHERE (`main`.`LocalFingerprint`.`durationSec` >= ? AND `main`.`LocalFingerprint`.`durationSec` <= ?) ORDER BY `main`.`LocalFingerprint`.`lastMatchedAt` DESC LIMIT ? OFFSET ?
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:11:38.906] INFO (641927): Sample captured successfully
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     outputPath: "/tmp/radio_monitor/sample_1778260285456_l1d77g.wav"
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:11:38.913] INFO (641927): Capturing audio sample
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     url: "https://ec4.yesstreaming.net:1925/stream"
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     durationSeconds: 35
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     delaySeconds: 0
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     outputPath: "/tmp/radio_monitor/sample_1778260298913_h0gpe.wav"
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     pipelineStatus: {
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "active": 1,
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "maxConcurrent": 1,
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "minGapMs": 3500
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     }
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:11:39.015] INFO (641927): Querying AcoustID API
+May 08 17:11:39 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     duration: 15
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT 1
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query UPDATE `main`.`Station` SET `lastAudioFingerprintAt` = ?, `lastIcyVerificationFingerprintAt` = ?, `updatedAt` = ? WHERE (`main`.`Station`.`id` = ? AND 1=1) RETURNING `id` AS `id`, `name` AS `name`, `country` AS `country`, `district` AS `district`, `province` AS `province`, `frequencyMhz` AS `frequencyMhz`, `streamUrl` AS `streamUrl`, `preferredStreamUrl` AS `preferredStreamUrl`, `streamFormatHint` AS `streamFormatHint`, `sourceIdsJson` AS `sourceIdsJson`, `icyQualification` AS `icyQualification`, `icySampleTitle` AS `icySampleTitle`, `isActive` AS `isActive`, `metadataPriorityEnabled` AS `metadataPriorityEnabled`, `fingerprintFallbackEnabled` AS `fingerprintFallbackEnabled`, `metadataStaleSeconds` AS `metadataStaleSeconds`, `sampleSeconds` AS `sampleSeconds`, `pollIntervalSeconds` AS `pollIntervalSeconds`, `audioFingerprintIntervalSeconds` AS `audioFingerprintIntervalSeconds`, `icyVerificationIntervalSeconds` AS `icyVerificationIntervalSeconds`, `lastAudioFingerprintAt` AS `lastAudioFingerprintAt`, `lastIcyVerificationFingerprintAt` AS `lastIcyVerificationFingerprintAt`, `archiveSongSamples` AS `archiveSongSamples`, `lastPollAt` AS `lastPollAt`, `lastPollStatus` AS `lastPollStatus`, `lastPollError` AS `lastPollError`, `monitorState` AS `monitorState`, `monitorStateReason` AS `monitorStateReason`, `contentClassification` AS `contentClassification`, `lastValidationAt` AS `lastValidationAt`, `lastValidationReason` AS `lastValidationReason`, `lastResolvedStreamUrl` AS `lastResolvedStreamUrl`, `lastStreamContentType` AS `lastStreamContentType`, `lastStreamCodec` AS `lastStreamCodec`, `lastStreamBitrate` AS `lastStreamBitrate`, `lastHealthyAt` AS `lastHealthyAt`, `lastGoodAudioAt` AS `lastGoodAudioAt`, `lastMetadataAt` AS `lastMetadataAt`, `lastSongDetectedAt` AS `lastSongDetectedAt`, `consecutivePollFailures` AS `consecutivePollFailures`, `consecutiveHealthyPolls` AS `consecutiveHealthyPolls`, `deepValidationIntervalSeconds` AS `deepValidationIntervalSeconds`, `failureThreshold` AS `failureThreshold`, `recoveryThreshold` AS `recoveryThreshold`, `visibilityEnabled` AS `visibilityEnabled`, `detectionLagMsAvg` AS `detectionLagMsAvg`, `detectionLagSamples` AS `detectionLagSamples`, `streamRefreshedAt` AS `streamRefreshedAt`, `streamSourceType` AS `streamSourceType`, `streamSourceQualityScore` AS `streamSourceQualityScore`, `streamSourceLastEvaluatedAt` AS `streamSourceLastEvaluatedAt`, `decodeHealthEma` AS `decodeHealthEma`, `fingerprintHitEma` AS `fingerprintHitEma`, `metadataPresentEma` AS `metadataPresentEma`, `streamOnlineLast` AS `streamOnlineLast`, `audioDetectedLast` AS `audioDetectedLast`, `metadataAvailableLast` AS `metadataAvailableLast`, `songIdentifiedLast` AS `songIdentifiedLast`, `metadataTrustTightness` AS `metadataTrustTightness`, `fingerprintRetries` AS `fingerprintRetries`, `fingerprintRetryDelayMs` AS `fingerprintRetryDelayMs`, `catalogConfidenceFloor` AS `catalogConfidenceFloor`, `createdAt` AS `createdAt`, `updatedAt` AS `updatedAt`
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`CurrentNowPlaying`.`stationId`, `main`.`CurrentNowPlaying`.`title`, `main`.`CurrentNowPlaying`.`artist`, `main`.`CurrentNowPlaying`.`album`, `main`.`CurrentNowPlaying`.`genre`, `main`.`CurrentNowPlaying`.`sourceProvider`, `main`.`CurrentNowPlaying`.`streamText`, `main`.`CurrentNowPlaying`.`updatedAt` FROM `main`.`CurrentNowPlaying` WHERE (`main`.`CurrentNowPlaying`.`stationId` = ? AND 1=1) LIMIT ? OFFSET ?
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`DetectionLog`.`id`, `main`.`DetectionLog`.`stationId`, `main`.`DetectionLog`.`observedAt`, `main`.`DetectionLog`.`detectionMethod`, `main`.`DetectionLog`.`rawStreamText`, `main`.`DetectionLog`.`parsedArtist`, `main`.`DetectionLog`.`parsedTitle`, `main`.`DetectionLog`.`confidence`, `main`.`DetectionLog`.`acoustidScore`, `main`.`DetectionLog`.`acoustidId`, `main`.`DetectionLog`.`recordingMbid`, `main`.`DetectionLog`.`titleFinal`, `main`.`DetectionLog`.`artistFinal`, `main`.`DetectionLog`.`releaseFinal`, `main`.`DetectionLog`.`releaseDate`, `main`.`DetectionLog`.`genreFinal`, `main`.`DetectionLog`.`sourceProvider`, `main`.`DetectionLog`.`isrcList`, `main`.`DetectionLog`.`sampleSeconds`, `main`.`DetectionLog`.`processingMs`, `main`.`DetectionLog`.`trackDurationMs`, `main`.`DetectionLog`.`status`, `main`.`DetectionLog`.`reasonCode`, `main`.`DetectionLog`.`matchDiagnosticsJson`, `main`.`DetectionLog`.`manuallyTagged`, `main`.`DetectionLog`.`manualTaggedAt` FROM `main`.`DetectionLog` WHERE `main`.`DetectionLog`.`stationId` = ? ORDER BY `main`.`DetectionLog`.`observedAt` DESC LIMIT ? OFFSET ?
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query INSERT INTO `main`.`CurrentNowPlaying` (`stationId`, `title`, `artist`, `sourceProvider`, `streamText`, `updatedAt`) VALUES (?,?,?,?,?,?) ON CONFLICT  (`stationId`) DO UPDATE SET `title` = ?, `artist` = ?, `sourceProvider` = ?, `streamText` = ?, `updatedAt` = ? WHERE (`main`.`CurrentNowPlaying`.`stationId` = ? AND 1=1) RETURNING `stationId` AS `stationId`, `title` AS `title`, `artist` AS `artist`, `album` AS `album`, `genre` AS `genre`, `sourceProvider` AS `sourceProvider`, `streamText` AS `streamText`, `updatedAt` AS `updatedAt`
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query UPDATE `main`.`Station` SET `lastPollAt` = ?, `lastPollStatus` = ?, `lastPollError` = ?, `monitorState` = ?, `monitorStateReason` = ?, `contentClassification` = ?, `consecutivePollFailures` = ?, `consecutiveHealthyPolls` = ?, `lastValidationAt` = ?, `lastValidationReason` = ?, `lastResolvedStreamUrl` = ?, `lastStreamContentType` = ?, `lastStreamCodec` = ?, `lastStreamBitrate` = ?, `streamSourceType` = ?, `streamSourceQualityScore` = ?, `streamSourceLastEvaluatedAt` = ?, `decodeHealthEma` = ?, `fingerprintHitEma` = ?, `metadataPresentEma` = ?, `streamOnlineLast` = ?, `audioDetectedLast` = ?, `metadataAvailableLast` = ?, `songIdentifiedLast` = ?, `lastHealthyAt` = ?, `lastGoodAudioAt` = ?, `lastMetadataAt` = ?, `lastSongDetectedAt` = ?, `detectionLagMsAvg` = ?, `detectionLagSamples` = ?, `deepValidationIntervalSeconds` = ?, `failureThreshold` = ?, `recoveryThreshold` = ?, `updatedAt` = ? WHERE (`main`.`Station`.`id` = ? AND 1=1) RETURNING `id` AS `id`, `name` AS `name`, `country` AS `country`, `district` AS `district`, `province` AS `province`, `frequencyMhz` AS `frequencyMhz`, `streamUrl` AS `streamUrl`, `preferredStreamUrl` AS `preferredStreamUrl`, `streamFormatHint` AS `streamFormatHint`, `sourceIdsJson` AS `sourceIdsJson`, `icyQualification` AS `icyQualification`, `icySampleTitle` AS `icySampleTitle`, `isActive` AS `isActive`, `metadataPriorityEnabled` AS `metadataPriorityEnabled`, `fingerprintFallbackEnabled` AS `fingerprintFallbackEnabled`, `metadataStaleSeconds` AS `metadataStaleSeconds`, `sampleSeconds` AS `sampleSeconds`, `pollIntervalSeconds` AS `pollIntervalSeconds`, `audioFingerprintIntervalSeconds` AS `audioFingerprintIntervalSeconds`, `icyVerificationIntervalSeconds` AS `icyVerificationIntervalSeconds`, `lastAudioFingerprintAt` AS `lastAudioFingerprintAt`, `lastIcyVerificationFingerprintAt` AS `lastIcyVerificationFingerprintAt`, `archiveSongSamples` AS `archiveSongSamples`, `lastPollAt` AS `lastPollAt`, `lastPollStatus` AS `lastPollStatus`, `lastPollError` AS `lastPollError`, `monitorState` AS `monitorState`, `monitorStateReason` AS `monitorStateReason`, `contentClassification` AS `contentClassification`, `lastValidationAt` AS `lastValidationAt`, `lastValidationReason` AS `lastValidationReason`, `lastResolvedStreamUrl` AS `lastResolvedStreamUrl`, `lastStreamContentType` AS `lastStreamContentType`, `lastStreamCodec` AS `lastStreamCodec`, `lastStreamBitrate` AS `lastStreamBitrate`, `lastHealthyAt` AS `lastHealthyAt`, `lastGoodAudioAt` AS `lastGoodAudioAt`, `lastMetadataAt` AS `lastMetadataAt`, `lastSongDetectedAt` AS `lastSongDetectedAt`, `consecutivePollFailures` AS `consecutivePollFailures`, `consecutiveHealthyPolls` AS `consecutiveHealthyPolls`, `deepValidationIntervalSeconds` AS `deepValidationIntervalSeconds`, `failureThreshold` AS `failureThreshold`, `recoveryThreshold` AS `recoveryThreshold`, `visibilityEnabled` AS `visibilityEnabled`, `detectionLagMsAvg` AS `detectionLagMsAvg`, `detectionLagSamples` AS `detectionLagSamples`, `streamRefreshedAt` AS `streamRefreshedAt`, `streamSourceType` AS `streamSourceType`, `streamSourceQualityScore` AS `streamSourceQualityScore`, `streamSourceLastEvaluatedAt` AS `streamSourceLastEvaluatedAt`, `decodeHealthEma` AS `decodeHealthEma`, `fingerprintHitEma` AS `fingerprintHitEma`, `metadataPresentEma` AS `metadataPresentEma`, `streamOnlineLast` AS `streamOnlineLast`, `audioDetectedLast` AS `audioDetectedLast`, `metadataAvailableLast` AS `metadataAvailableLast`, `songIdentifiedLast` AS `songIdentifiedLast`, `metadataTrustTightness` AS `metadataTrustTightness`, `fingerprintRetries` AS `fingerprintRetries`, `fingerprintRetryDelayMs` AS `fingerprintRetryDelayMs`, `catalogConfidenceFloor` AS `catalogConfidenceFloor`, `createdAt` AS `createdAt`, `updatedAt` AS `updatedAt`
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`StationStreamEndpoint`.`id`, `main`.`StationStreamEndpoint`.`consecutiveFailures`, `main`.`StationStreamEndpoint`.`fingerprintHits`, `main`.`StationStreamEndpoint`.`fingerprintAttempts`, `main`.`StationStreamEndpoint`.`decodeHits`, `main`.`StationStreamEndpoint`.`decodeAttempts`, `main`.`StationStreamEndpoint`.`metadataFreshHits`, `main`.`StationStreamEndpoint`.`metadataPolls` FROM `main`.`StationStreamEndpoint` WHERE (`main`.`StationStreamEndpoint`.`stationId` = ? AND `main`.`StationStreamEndpoint`.`streamUrl` = ?) LIMIT ? OFFSET ?
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query UPDATE `main`.`StationStreamEndpoint` SET `source` = ?, `sourceDetail` = ?, `resolvedUrl` = ?, `isCurrent` = ?, `isSuppressed` = ?, `lastValidatedAt` = ?, `lastValidationStatus` = ?, `lastFailureReason` = ?, `lastHealthyAt` = ?, `consecutiveFailures` = ?, `codec` = ?, `bitrate` = ?, `sourceTier` = ?, `qualityScore` = ?, `fingerprintHits` = ?, `fingerprintAttempts` = ?, `decodeHits` = ?, `decodeAttempts` = ?, `metadataFreshHits` = ?, `metadataPolls` = ?, `updatedAt` = ? WHERE (`main`.`StationStreamEndpoint`.`id` = ? AND 1=1) RETURNING `id` AS `id`, `stationId` AS `stationId`, `source` AS `source`, `sourceDetail` AS `sourceDetail`, `streamUrl` AS `streamUrl`, `resolvedUrl` AS `resolvedUrl`, `isCurrent` AS `isCurrent`, `isSuppressed` AS `isSuppressed`, `sourceTier` AS `sourceTier`, `qualityScore` AS `qualityScore`, `fingerprintHits` AS `fingerprintHits`, `fingerprintAttempts` AS `fingerprintAttempts`, `decodeHits` AS `decodeHits`, `decodeAttempts` AS `decodeAttempts`, `metadataFreshHits` AS `metadataFreshHits`, `metadataPolls` AS `metadataPolls`, `lastValidatedAt` AS `lastValidatedAt`, `lastValidationStatus` AS `lastValidationStatus`, `lastFailureReason` AS `lastFailureReason`, `lastHealthyAt` AS `lastHealthyAt`, `consecutiveFailures` AS `consecutiveFailures`, `codec` AS `codec`, `bitrate` AS `bitrate`, `createdAt` AS `createdAt`, `updatedAt` AS `updatedAt`
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query BEGIN
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query UPDATE `main`.`StationStreamEndpoint` SET `isCurrent` = ?, `updatedAt` = ? WHERE (`main`.`StationStreamEndpoint`.`stationId` = ? AND `main`.`StationStreamEndpoint`.`streamUrl` <> ? AND `main`.`StationStreamEndpoint`.`isCurrent` = ?)
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query COMMIT
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query BEGIN
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query UPDATE `main`.`StationStreamEndpoint` SET `isSuppressed` = ?, `updatedAt` = ? WHERE (`main`.`StationStreamEndpoint`.`stationId` = ? AND `main`.`StationStreamEndpoint`.`source` = ? AND `main`.`StationStreamEndpoint`.`consecutiveFailures` >= ?)
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query COMMIT
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query INSERT INTO `main`.`StationHealthEvent` (`id`, `stationId`, `observedAt`, `monitorState`, `reason`, `reachable`, `audioFlowing`, `decoderOk`, `contentClassification`, `resolvedUrl`, `contentTypeHeader`, `codec`, `bitrate`, `latencyMs`, `consecutiveFailures`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING `id` AS `id`, `stationId` AS `stationId`, `observedAt` AS `observedAt`, `monitorState` AS `monitorState`, `reason` AS `reason`, `reachable` AS `reachable`, `audioFlowing` AS `audioFlowing`, `decoderOk` AS `decoderOk`, `contentClassification` AS `contentClassification`, `resolvedUrl` AS `resolvedUrl`, `contentTypeHeader` AS `contentTypeHeader`, `codec` AS `codec`, `bitrate` AS `bitrate`, `latencyMs` AS `latencyMs`, `consecutiveFailures` AS `consecutiveFailures`
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`Station`.`id`, `main`.`Station`.`name`, `main`.`Station`.`country`, `main`.`Station`.`district`, `main`.`Station`.`province`, `main`.`Station`.`frequencyMhz`, `main`.`Station`.`streamUrl`, `main`.`Station`.`preferredStreamUrl`, `main`.`Station`.`streamFormatHint`, `main`.`Station`.`sourceIdsJson`, `main`.`Station`.`icyQualification`, `main`.`Station`.`icySampleTitle`, `main`.`Station`.`isActive`, `main`.`Station`.`metadataPriorityEnabled`, `main`.`Station`.`fingerprintFallbackEnabled`, `main`.`Station`.`metadataStaleSeconds`, `main`.`Station`.`sampleSeconds`, `main`.`Station`.`pollIntervalSeconds`, `main`.`Station`.`audioFingerprintIntervalSeconds`, `main`.`Station`.`icyVerificationIntervalSeconds`, `main`.`Station`.`lastAudioFingerprintAt`, `main`.`Station`.`lastIcyVerificationFingerprintAt`, `main`.`Station`.`archiveSongSamples`, `main`.`Station`.`lastPollAt`, `main`.`Station`.`lastPollStatus`, `main`.`Station`.`lastPollError`, `main`.`Station`.`monitorState`, `main`.`Station`.`monitorStateReason`, `main`.`Station`.`contentClassification`, `main`.`Station`.`lastValidationAt`, `main`.`Station`.`lastValidationReason`, `main`.`Station`.`lastResolvedStreamUrl`, `main`.`Station`.`lastStreamContentType`, `main`.`Station`.`lastStreamCodec`, `main`.`Station`.`lastStreamBitrate`, `main`.`Station`.`lastHealthyAt`, `main`.`Station`.`lastGoodAudioAt`, `main`.`Station`.`lastMetadataAt`, `main`.`Station`.`lastSongDetectedAt`, `main`.`Station`.`consecutivePollFailures`, `main`.`Station`.`consecutiveHealthyPolls`, `main`.`Station`.`deepValidationIntervalSeconds`, `main`.`Station`.`failureThreshold`, `main`.`Station`.`recoveryThreshold`, `main`.`Station`.`visibilityEnabled`, `main`.`Station`.`detectionLagMsAvg`, `main`.`Station`.`detectionLagSamples`, `main`.`Station`.`streamRefreshedAt`, `main`.`Station`.`streamSourceType`, `main`.`Station`.`streamSourceQualityScore`, `main`.`Station`.`streamSourceLastEvaluatedAt`, `main`.`Station`.`decodeHealthEma`, `main`.`Station`.`fingerprintHitEma`, `main`.`Station`.`metadataPresentEma`, `main`.`Station`.`streamOnlineLast`, `main`.`Station`.`audioDetectedLast`, `main`.`Station`.`metadataAvailableLast`, `main`.`Station`.`songIdentifiedLast`, `main`.`Station`.`metadataTrustTightness`, `main`.`Station`.`fingerprintRetries`, `main`.`Station`.`fingerprintRetryDelayMs`, `main`.`Station`.`catalogConfidenceFloor`, `main`.`Station`.`createdAt`, `main`.`Station`.`updatedAt` FROM `main`.`Station` WHERE (`main`.`Station`.`id` = ? AND 1=1) LIMIT ? OFFSET ?
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:11:41.170] INFO (641927): Polling station
+May 08 17:11:41 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     station: "CHIKUNI RADIO"
+May 08 17:12:00 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT 1
+May 08 17:12:00 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT 1
+May 08 17:12:00 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query BEGIN
+May 08 17:12:00 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`Station`.`id`, `main`.`Station`.`name`, `main`.`Station`.`country`, `main`.`Station`.`district`, `main`.`Station`.`province`, `main`.`Station`.`frequencyMhz`, `main`.`Station`.`streamUrl`, `main`.`Station`.`preferredStreamUrl`, `main`.`Station`.`streamFormatHint`, `main`.`Station`.`sourceIdsJson`, `main`.`Station`.`icyQualification`, `main`.`Station`.`icySampleTitle`, `main`.`Station`.`isActive`, `main`.`Station`.`metadataPriorityEnabled`, `main`.`Station`.`fingerprintFallbackEnabled`, `main`.`Station`.`metadataStaleSeconds`, `main`.`Station`.`sampleSeconds`, `main`.`Station`.`pollIntervalSeconds`, `main`.`Station`.`audioFingerprintIntervalSeconds`, `main`.`Station`.`icyVerificationIntervalSeconds`, `main`.`Station`.`lastAudioFingerprintAt`, `main`.`Station`.`lastIcyVerificationFingerprintAt`, `main`.`Station`.`archiveSongSamples`, `main`.`Station`.`lastPollAt`, `main`.`Station`.`lastPollStatus`, `main`.`Station`.`lastPollError`, `main`.`Station`.`monitorState`, `main`.`Station`.`monitorStateReason`, `main`.`Station`.`contentClassification`, `main`.`Station`.`lastValidationAt`, `main`.`Station`.`lastValidationReason`, `main`.`Station`.`lastResolvedStreamUrl`, `main`.`Station`.`lastStreamContentType`, `main`.`Station`.`lastStreamCodec`, `main`.`Station`.`lastStreamBitrate`, `main`.`Station`.`lastHealthyAt`, `main`.`Station`.`lastGoodAudioAt`, `main`.`Station`.`lastMetadataAt`, `main`.`Station`.`lastSongDetectedAt`, `main`.`Station`.`consecutivePollFailures`, `main`.`Station`.`consecutiveHealthyPolls`, `main`.`Station`.`deepValidationIntervalSeconds`, `main`.`Station`.`failureThreshold`, `main`.`Station`.`recoveryThreshold`, `main`.`Station`.`visibilityEnabled`, `main`.`Station`.`detectionLagMsAvg`, `main`.`Station`.`detectionLagSamples`, `main`.`Station`.`streamRefreshedAt`, `main`.`Station`.`streamSourceType`, `main`.`Station`.`streamSourceQualityScore`, `main`.`Station`.`streamSourceLastEvaluatedAt`, `main`.`Station`.`decodeHealthEma`, `main`.`Station`.`fingerprintHitEma`, `main`.`Station`.`metadataPresentEma`, `main`.`Station`.`streamOnlineLast`, `main`.`Station`.`audioDetectedLast`, `main`.`Station`.`metadataAvailableLast`, `main`.`Station`.`songIdentifiedLast`, `main`.`Station`.`metadataTrustTightness`, `main`.`Station`.`fingerprintRetries`, `main`.`Station`.`fingerprintRetryDelayMs`, `main`.`Station`.`catalogConfidenceFloor`, `main`.`Station`.`createdAt`, `main`.`Station`.`updatedAt` FROM `main`.`Station` WHERE `main`.`Station`.`isActive` = ? LIMIT ? OFFSET ?
+May 08 17:12:00 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query UPDATE `main`.`UnresolvedSample` SET `recoveryStatus` = ?, `recoveryAttempts` = ?, `lastRecoveryError` = ? WHERE (`main`.`UnresolvedSample`.`recoveryStatus` = ? AND `main`.`UnresolvedSample`.`lastRecoveryAt` < ?)
+May 08 17:12:00 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query COMMIT
+May 08 17:12:00 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`UnresolvedSample`.`id`, `main`.`UnresolvedSample`.`stationId`, `main`.`UnresolvedSample`.`detectionLogId`, `main`.`UnresolvedSample`.`filePath`, `main`.`UnresolvedSample`.`createdAt`, `main`.`UnresolvedSample`.`recoveryStatus`, `main`.`UnresolvedSample`.`recoveryAttempts`, `main`.`UnresolvedSample`.`lastRecoveryAt`, `main`.`UnresolvedSample`.`recoveredAt`, `main`.`UnresolvedSample`.`lastRecoveryError` FROM `main`.`UnresolvedSample` WHERE (`main`.`UnresolvedSample`.`recoveryStatus` IN (?,?,?) AND `main`.`UnresolvedSample`.`recoveryAttempts` < ?) ORDER BY `main`.`UnresolvedSample`.`createdAt` ASC LIMIT ? OFFSET ?
+May 08 17:12:00 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`CurrentNowPlaying`.`stationId`, `main`.`CurrentNowPlaying`.`title`, `main`.`CurrentNowPlaying`.`artist`, `main`.`CurrentNowPlaying`.`album`, `main`.`CurrentNowPlaying`.`genre`, `main`.`CurrentNowPlaying`.`sourceProvider`, `main`.`CurrentNowPlaying`.`streamText`, `main`.`CurrentNowPlaying`.`updatedAt` FROM `main`.`CurrentNowPlaying` WHERE (`main`.`CurrentNowPlaying`.`stationId` = ? AND 1=1) LIMIT ? OFFSET ?
+May 08 17:12:00 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`CurrentNowPlaying`.`stationId`, `main`.`CurrentNowPlaying`.`title`, `main`.`CurrentNowPlaying`.`artist`, `main`.`CurrentNowPlaying`.`album`, `main`.`CurrentNowPlaying`.`genre`, `main`.`CurrentNowPlaying`.`sourceProvider`, `main`.`CurrentNowPlaying`.`streamText`, `main`.`CurrentNowPlaying`.`updatedAt` FROM `main`.`CurrentNowPlaying` WHERE (`main`.`CurrentNowPlaying`.`stationId` = ? AND 1=1) LIMIT ? OFFSET ?
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:12:00.697] INFO (641927): Audio fingerprint sample (ICY change, interval, verification, suspicious metadata, or retry)
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     station: "CHIKUNI RADIO"
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     attempt: 1
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     maxRetries: 1
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     reason: "metadata_missing"
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     icyChanged: false
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     intervalElapsed: true
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     icyCrossCheckAudio: false
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     legacyFingerprint: true
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     legacyFingerprintDue: true
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     icyChangedAudioDue: false
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     badMetadataAudioFallback: false
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     fingerprintEveryPoll: false
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     forceFingerprintAggressive: false
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     doAudioId: true
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     metaQualityReasons: [
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "no_metadata"
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     ]
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     fpSec: 15
+May 08 17:12:01 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     delaySec: 0
+May 08 17:12:06 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`LocalFingerprint`.`id`, `main`.`LocalFingerprint`.`fingerprint`, `main`.`LocalFingerprint`.`fingerprintSha1`, `main`.`LocalFingerprint`.`fingerprintPrefix`, `main`.`LocalFingerprint`.`durationSec`, `main`.`LocalFingerprint`.`title`, `main`.`LocalFingerprint`.`artist`, `main`.`LocalFingerprint`.`releaseTitle`, `main`.`LocalFingerprint`.`releaseDate`, `main`.`LocalFingerprint`.`genre`, `main`.`LocalFingerprint`.`displayArtist`, `main`.`LocalFingerprint`.`titleWithoutFeat`, `main`.`LocalFingerprint`.`featuredArtistsJson`, `main`.`LocalFingerprint`.`labelName`, `main`.`LocalFingerprint`.`countryCode`, `main`.`LocalFingerprint`.`durationMs`, `main`.`LocalFingerprint`.`playCountTotal`, `main`.`LocalFingerprint`.`acoustidTrackId`, `main`.`LocalFingerprint`.`recordingMbid`, `main`.`LocalFingerprint`.`isrcsJson`, `main`.`LocalFingerprint`.`source`, `main`.`LocalFingerprint`.`confidence`, `main`.`LocalFingerprint`.`timesMatched`, `main`.`LocalFingerprint`.`firstLearnedAt`, `main`.`LocalFingerprint`.`lastMatchedAt`, `main`.`LocalFingerprint`.`updatedAt` FROM `main`.`LocalFingerprint` WHERE (`main`.`LocalFingerprint`.`fingerprintSha1` = ? AND 1=1) LIMIT ? OFFSET ?
+May 08 17:12:06 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`LocalFingerprint`.`id`, `main`.`LocalFingerprint`.`fingerprint`, `main`.`LocalFingerprint`.`fingerprintSha1`, `main`.`LocalFingerprint`.`fingerprintPrefix`, `main`.`LocalFingerprint`.`durationSec`, `main`.`LocalFingerprint`.`title`, `main`.`LocalFingerprint`.`artist`, `main`.`LocalFingerprint`.`releaseTitle`, `main`.`LocalFingerprint`.`releaseDate`, `main`.`LocalFingerprint`.`genre`, `main`.`LocalFingerprint`.`displayArtist`, `main`.`LocalFingerprint`.`titleWithoutFeat`, `main`.`LocalFingerprint`.`featuredArtistsJson`, `main`.`LocalFingerprint`.`labelName`, `main`.`LocalFingerprint`.`countryCode`, `main`.`LocalFingerprint`.`durationMs`, `main`.`LocalFingerprint`.`playCountTotal`, `main`.`LocalFingerprint`.`acoustidTrackId`, `main`.`LocalFingerprint`.`recordingMbid`, `main`.`LocalFingerprint`.`isrcsJson`, `main`.`LocalFingerprint`.`source`, `main`.`LocalFingerprint`.`confidence`, `main`.`LocalFingerprint`.`timesMatched`, `main`.`LocalFingerprint`.`firstLearnedAt`, `main`.`LocalFingerprint`.`lastMatchedAt`, `main`.`LocalFingerprint`.`updatedAt` FROM `main`.`LocalFingerprint` WHERE (`main`.`LocalFingerprint`.`fingerprintPrefix` = ? AND `main`.`LocalFingerprint`.`durationSec` >= ? AND `main`.`LocalFingerprint`.`durationSec` <= ?) ORDER BY `main`.`LocalFingerprint`.`id` ASC LIMIT ? OFFSET ?
+May 08 17:12:06 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`LocalFingerprint`.`id`, `main`.`LocalFingerprint`.`fingerprint`, `main`.`LocalFingerprint`.`fingerprintSha1`, `main`.`LocalFingerprint`.`fingerprintPrefix`, `main`.`LocalFingerprint`.`durationSec`, `main`.`LocalFingerprint`.`title`, `main`.`LocalFingerprint`.`artist`, `main`.`LocalFingerprint`.`releaseTitle`, `main`.`LocalFingerprint`.`releaseDate`, `main`.`LocalFingerprint`.`genre`, `main`.`LocalFingerprint`.`displayArtist`, `main`.`LocalFingerprint`.`titleWithoutFeat`, `main`.`LocalFingerprint`.`featuredArtistsJson`, `main`.`LocalFingerprint`.`labelName`, `main`.`LocalFingerprint`.`countryCode`, `main`.`LocalFingerprint`.`durationMs`, `main`.`LocalFingerprint`.`playCountTotal`, `main`.`LocalFingerprint`.`acoustidTrackId`, `main`.`LocalFingerprint`.`recordingMbid`, `main`.`LocalFingerprint`.`isrcsJson`, `main`.`LocalFingerprint`.`source`, `main`.`LocalFingerprint`.`confidence`, `main`.`LocalFingerprint`.`timesMatched`, `main`.`LocalFingerprint`.`firstLearnedAt`, `main`.`LocalFingerprint`.`lastMatchedAt`, `main`.`LocalFingerprint`.`updatedAt` FROM `main`.`LocalFingerprint` WHERE (`main`.`LocalFingerprint`.`fingerprintSha1` = ? AND 1=1) LIMIT ? OFFSET ?
+May 08 17:12:06 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`LocalFingerprint`.`id`, `main`.`LocalFingerprint`.`fingerprint`, `main`.`LocalFingerprint`.`fingerprintSha1`, `main`.`LocalFingerprint`.`fingerprintPrefix`, `main`.`LocalFingerprint`.`durationSec`, `main`.`LocalFingerprint`.`title`, `main`.`LocalFingerprint`.`artist`, `main`.`LocalFingerprint`.`releaseTitle`, `main`.`LocalFingerprint`.`releaseDate`, `main`.`LocalFingerprint`.`genre`, `main`.`LocalFingerprint`.`displayArtist`, `main`.`LocalFingerprint`.`titleWithoutFeat`, `main`.`LocalFingerprint`.`featuredArtistsJson`, `main`.`LocalFingerprint`.`labelName`, `main`.`LocalFingerprint`.`countryCode`, `main`.`LocalFingerprint`.`durationMs`, `main`.`LocalFingerprint`.`playCountTotal`, `main`.`LocalFingerprint`.`acoustidTrackId`, `main`.`LocalFingerprint`.`recordingMbid`, `main`.`LocalFingerprint`.`isrcsJson`, `main`.`LocalFingerprint`.`source`, `main`.`LocalFingerprint`.`confidence`, `main`.`LocalFingerprint`.`timesMatched`, `main`.`LocalFingerprint`.`firstLearnedAt`, `main`.`LocalFingerprint`.`lastMatchedAt`, `main`.`LocalFingerprint`.`updatedAt` FROM `main`.`LocalFingerprint` WHERE (`main`.`LocalFingerprint`.`fingerprintPrefix` = ? AND `main`.`LocalFingerprint`.`durationSec` >= ? AND `main`.`LocalFingerprint`.`durationSec` <= ?) ORDER BY `main`.`LocalFingerprint`.`id` ASC LIMIT ? OFFSET ?
+May 08 17:12:06 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`LocalFingerprint`.`id`, `main`.`LocalFingerprint`.`fingerprint`, `main`.`LocalFingerprint`.`fingerprintSha1`, `main`.`LocalFingerprint`.`fingerprintPrefix`, `main`.`LocalFingerprint`.`durationSec`, `main`.`LocalFingerprint`.`title`, `main`.`LocalFingerprint`.`artist`, `main`.`LocalFingerprint`.`releaseTitle`, `main`.`LocalFingerprint`.`releaseDate`, `main`.`LocalFingerprint`.`genre`, `main`.`LocalFingerprint`.`displayArtist`, `main`.`LocalFingerprint`.`titleWithoutFeat`, `main`.`LocalFingerprint`.`featuredArtistsJson`, `main`.`LocalFingerprint`.`labelName`, `main`.`LocalFingerprint`.`countryCode`, `main`.`LocalFingerprint`.`durationMs`, `main`.`LocalFingerprint`.`playCountTotal`, `main`.`LocalFingerprint`.`acoustidTrackId`, `main`.`LocalFingerprint`.`recordingMbid`, `main`.`LocalFingerprint`.`isrcsJson`, `main`.`LocalFingerprint`.`source`, `main`.`LocalFingerprint`.`confidence`, `main`.`LocalFingerprint`.`timesMatched`, `main`.`LocalFingerprint`.`firstLearnedAt`, `main`.`LocalFingerprint`.`lastMatchedAt`, `main`.`LocalFingerprint`.`updatedAt` FROM `main`.`LocalFingerprint` WHERE (`main`.`LocalFingerprint`.`durationSec` >= ? AND `main`.`LocalFingerprint`.`durationSec` <= ?) ORDER BY `main`.`LocalFingerprint`.`lastMatchedAt` DESC LIMIT ? OFFSET ?
+May 08 17:12:06 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query SELECT `main`.`LocalFingerprint`.`id`, `main`.`LocalFingerprint`.`fingerprint`, `main`.`LocalFingerprint`.`fingerprintSha1`, `main`.`LocalFingerprint`.`fingerprintPrefix`, `main`.`LocalFingerprint`.`durationSec`, `main`.`LocalFingerprint`.`title`, `main`.`LocalFingerprint`.`artist`, `main`.`LocalFingerprint`.`releaseTitle`, `main`.`LocalFingerprint`.`releaseDate`, `main`.`LocalFingerprint`.`genre`, `main`.`LocalFingerprint`.`displayArtist`, `main`.`LocalFingerprint`.`titleWithoutFeat`, `main`.`LocalFingerprint`.`featuredArtistsJson`, `main`.`LocalFingerprint`.`labelName`, `main`.`LocalFingerprint`.`countryCode`, `main`.`LocalFingerprint`.`durationMs`, `main`.`LocalFingerprint`.`playCountTotal`, `main`.`LocalFingerprint`.`acoustidTrackId`, `main`.`LocalFingerprint`.`recordingMbid`, `main`.`LocalFingerprint`.`isrcsJson`, `main`.`LocalFingerprint`.`source`, `main`.`LocalFingerprint`.`confidence`, `main`.`LocalFingerprint`.`timesMatched`, `main`.`LocalFingerprint`.`firstLearnedAt`, `main`.`LocalFingerprint`.`lastMatchedAt`, `main`.`LocalFingerprint`.`updatedAt` FROM `main`.`LocalFingerprint` WHERE (`main`.`LocalFingerprint`.`durationSec` >= ? AND `main`.`LocalFingerprint`.`durationSec` <= ?) ORDER BY `main`.`LocalFingerprint`.`lastMatchedAt` DESC LIMIT ? OFFSET ?
+May 08 17:12:07 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:12:06.767] INFO (641927): Sample captured successfully
+May 08 17:12:07 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     outputPath: "/tmp/radio_monitor/sample_1778260298913_h0gpe.wav"
+May 08 17:12:07 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:12:06.970] INFO (641927): Querying AcoustID API
+May 08 17:12:07 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     duration: 35
+May 08 17:12:07 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:12:07.470] INFO (641927): Querying AcoustID API
+May 08 17:12:07 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     duration: 30
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:12:08.321] INFO (641927): Audio fingerprint sample (ICY change, interval, verification, suspicious metadata, or retry)
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     station: "Mphangwe FM Radio 88.9"
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     attempt: 2
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     maxRetries: 2
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     reason: null
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     icyChanged: false
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     intervalElapsed: true
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     icyCrossCheckAudio: true
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     legacyFingerprint: false
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     legacyFingerprintDue: false
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     icyChangedAudioDue: false
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     badMetadataAudioFallback: false
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     fingerprintEveryPoll: false
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     forceFingerprintAggressive: false
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     doAudioId: true
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     metaQualityReasons: []
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     fpSec: 47
+May 08 17:12:08 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     delaySec: 2.5
+May 08 17:12:09 ubuntu-s-2vcpu-4gb-syd1 node[641927]: prisma:query UPDATE `main`.`UnresolvedSample` SET `recoveryAttempts` = (`main`.`UnresolvedSample`.`recoveryAttempts` + ?), `lastRecoveryAt` = ?, `recoveryStatus` = ?, `lastRecoveryError` = ? WHERE (`main`.`UnresolvedSample`.`id` = ? AND 1=1) RETURNING `id` AS `id`, `stationId` AS `stationId`, `detectionLogId` AS `detectionLogId`, `filePath` AS `filePath`, `createdAt` AS `createdAt`, `recoveryStatus` AS `recoveryStatus`, `recoveryAttempts` AS `recoveryAttempts`, `lastRecoveryAt` AS `lastRecoveryAt`, `recoveredAt` AS `recoveredAt`, `lastRecoveryError` AS `lastRecoveryError`
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]: [17:12:10.285] INFO (641927): Capturing audio sample
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     url: "https://chikunir.radioca.st/live"
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     durationSeconds: 15
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     delaySeconds: 0
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     outputPath: "/tmp/radio_monitor/sample_1778260330285_idcu9r.wav"
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     pipelineStatus: {
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "active": 1,
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "maxConcurrent": 1,
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:       "minGapMs": 3500
+May 08 17:12:10 ubuntu-s-2vcpu-4gb-syd1 node[641927]:     }
+
+### 7. AUDIO FILE COUNTS
+All files in data:
+49425
+Audio files in data:
+49345
+Unresolved samples:
+43888
+Song samples:
+5453
+
+### 8. AVAILABLE SCRIPTS
+-rwxr-xr-x  1 root root 6.3K May  8 08:39 audit_station_music_health.py
+-rwxr-xr-x  1 root root  12K May  7 21:07 auto_clean_fingerprint_metadata.py
+-rwxr-xr-x  1 root root 8.5K May  7 21:02 auto_clean_fingerprint_metadata.py.bak.article_style.20260507_210211
+-rwxr-xr-x  1 root root  11K May  7 21:07 auto_clean_fingerprint_metadata.py.bak.fix_article_drops.20260507_210724
+-rwxr-xr-x  1 root root 8.5K May  7 21:03 auto_clean_fingerprint_metadata.py.bak.full_replace.20260507_210338
+-rwxr-xr-x  1 root root 8.5K May  7 21:04 auto_clean_fingerprint_metadata.py.bak.full_replace.20260507_210435
+-rwxr-xr-x  1 root root 4.6K May  7 20:02 bootstrap_zambian_frontier.py
+-rwxr-xr-x  1 root root  910 May  7 21:57 export_fingerprint_index_for_app.py
+drwxr-xr-x  3 root root 4.0K May  6 06:56 external-playlists
+-rwxr-xr-x  1 root root 4.1K May  7 21:40 fingerprint_only_indexer.py
+-rwxr-xr-x  1 root root 4.1K May  7 21:40 fingerprint_only_indexer.py.bak.shorter_timeouts.20260507_214007
+-rwxr-xr-x  1 root root 4.8K May  7 22:22 fingerprint_only_indexer_fast.py
+-rwxr-xr-x  1 root root 4.7K May  7 22:22 fingerprint_only_indexer_fast.py.bak.env_input_wal.20260507_222229
+-rwxr-xr-x  1 root root 3.1K Apr 29 13:02 fix_unknown_audio_safe.py.broken.20260429_131238
+-rwxr-xr-x  1 root root 8.4K May  7 19:32 fix_unknown_metadata.py
+-rwxr-xr-x  1 root root 2.8K May  8 06:29 normalize_fingerprint_sources.py
+-rwxr-xr-x  1 root root 9.3K Apr 27 14:37 orb_playlist_backfill.py
+-rwxr-xr-x  1 root root 3.1K May  7 20:46 rank_zambian_frontier.py
+-rwxr-xr-x  1 root root  794 Apr 29 09:45 run-radiobox-weekly-playlist-recovery.sh
+-rwxr-xr-x  1 root root 3.9K Apr 29 09:43 run-radiobox-weekly-playlist-recovery.sh.bak.20260429_094337
+-rwxr-xr-x  1 root root 5.9K May  7 19:38 safe_fix_unknown_metadata.py
+-rwxr-xr-x  1 root root 8.7K Apr 30 09:20 safe_fp_candidate_probe.py
+-rwxr-xr-x  1 root root 4.8K Apr 30 08:11 safe_fp_candidate_probe.py.broken.20260430_083946
+-rwxr-xr-x  1 root root 2.7K Apr 30 08:48 safe_fp_exact_probe.py
+-rwxr-xr-x  1 root root 3.8K Apr 27 14:58 sync_detections_to_spins.mjs
+-rw-r--r--  1 root root 2.4K Apr 23 16:38 sync_zambia_catalog.mjs
+-rwxr-xr-x  1 root root 9.5K May  8 07:52 sync_zambian_trusted_local_fingerprints.py
+-rwxr-xr-x  1 root root 1.3K May  7 22:19 turbo_fingerprint_batch.sh
+-rwxr-xr-x  1 root root 3.5K May  7 22:24 turbo_fingerprint_new_only.sh
+-rwxr-xr-x  1 root root 4.0K May  8 06:31 zambian_fingerprint_autopilot.sh
+-rwxr-xr-x  1 root root 5.7K May  8 02:49 zambian_fingerprint_pipeline.sh
+-rwxr-xr-x  1 root root 5.6K May  8 02:49 zambian_fingerprint_pipeline.sh.bak.clean_temp.20260508_024928
+-rwxr-xr-x  1 root root 4.1K May  7 21:35 zambian_fingerprint_pipeline.sh.bak.limit_new_audio.20260507_213540
+-rwxr-xr-x  1 root root 4.1K May  7 21:36 zambian_fingerprint_pipeline.sh.bak.limit_new_audio.20260507_213611
+-rwxr-xr-x  1 root root 4.1K May  7 21:37 zambian_fingerprint_pipeline.sh.bak.limit_new_audio.20260507_213717
+-rwxr-xr-x  1 root root 4.1K May  7 21:38 zambian_fingerprint_pipeline.sh.bak.rebuild_small_batch.20260507_213849
+-rwxr-xr-x  1 root root 4.1K May  7 21:39 zambian_fingerprint_pipeline.sh.bak.rebuild_small_batch.20260507_213938
+-rwxr-xr-x  1 root root 5.6K May  7 21:51 zambian_fingerprint_pipeline.sh.bak.use_fast_indexer.20260507_215137
+-rwxr-xr-x  1 root root 6.9K May  7 18:16 zambian_music_url_discovery.py
+-rwxr-xr-x  1 root root  16K May  7 20:41 zambian_music_url_discovery_persistent.py
+-rwxr-xr-x  1 root root 9.1K May  7 19:58 zambian_music_url_discovery_persistent.py.bak.frontier.20260507_195826
+-rwxr-xr-x  1 root root 9.1K May  7 19:59 zambian_music_url_discovery_persistent.py.bak.frontier.20260507_195942
+-rwxr-xr-x  1 root root 9.1K May  7 20:00 zambian_music_url_discovery_persistent.py.bak.frontier.20260507_200052
+-rwxr-xr-x  1 root root  15K May  7 20:41 zambian_music_url_discovery_persistent.py.bak.score_filter.20260507_204132
+-rwxr-xr-x  1 root root  13K May  7 20:39 zambian_music_url_discovery_persistent.py.bak.strict_music_filter.20260507_203949
+total 72K
+drwxr-xr-x 3 root root 4.0K May  6 06:56 .
+drwxr-xr-x 5 root root 4.0K May  8 10:48 ..
+drwxr-xr-x 2 root root 4.0K May  6 07:26 __pycache__
+-rw-r--r-- 1 root root 5.0K Apr 27 13:40 chikuni_backfill.py
+-rwxr-xr-x 1 root root  825 Apr 27 13:37 chikuni_debug.py
+-rw-r--r-- 1 root root  17K May  6 07:26 laka_orb_group_sync.py
+-rwxr-xr-x 1 root root  12K May  5 15:04 mano_orb_sync.py
+-rwxr-xr-x 1 root root  15K May  5 16:57 mano_orb_weekly_sync.py
+
+### 9. DATABASE TABLE + STATUS INSPECTION
+DB: prisma/dev_runtime.db
+TABLE COUNT: 22
+
+---- TABLE ROW COUNTS ----
+BadMetadataPattern: 9
+CorrectedTrackIdentity: 0
+LocalAudioCluster: 0
+LocalAudioClusterMember: 0
+LocalAudioMetadataCandidate: 0
+LocalAudioReference: 0
+LocalFingerprint: 8804
+MetadataConflictReview: 5
+MetadataParseCandidate: 1222
+SafeFingerprintRecoveryCandidate: 0
+SongSampleArchive: 5450
+Station: 96
+StationHealthEvent: 83685
+StationSongSpin: 11638
+StationStreamEndpoint: 143
+UnknownAudioReview: 17301
+UnresolvedSample: 41738
+
+---- RELEVANT TABLE SCHEMAS ----
+
+[BadMetadataPattern]
+id, pattern, reason, createdAt
+
+[CorrectedTrackIdentity]
+id, artistCanonical, titleCanonical, artistNorm, titleNorm, fingerprint, rawAliases, confidence, createdAt, updatedAt
+
+[LocalAudioCluster]
+id, clusterKey, artistCanonical, titleCanonical, approvalStatus, confidence, evidenceCount, createdAt, updatedAt
+
+[LocalAudioClusterMember]
+id, clusterId, referenceId, matchScore, createdAt
+
+[LocalAudioMetadataCandidate]
+id, clusterId, artist, title, source, evidenceCount, confidence, createdAt
+
+[LocalAudioReference]
+id, sourceType, filePath, stationId, detectionLogId, sha256, durationSeconds, fingerprint, fingerprintDuration, artistRaw, titleRaw, artistCanonical, titleCanonical, metadataStatus, confidence, createdAt, updatedAt
+
+[LocalFingerprint]
+id, fingerprint, fingerprintSha1, fingerprintPrefix, durationSec, title, artist, releaseTitle, releaseDate, genre, acoustidTrackId, recordingMbid, isrcsJson, source, confidence, timesMatched, firstLearnedAt, lastMatchedAt, updatedAt, displayArtist, titleWithoutFeat, featuredArtistsJson, labelName, countryCode, durationMs, playCountTotal
+
+[MetadataConflictReview]
+id, conflictType, titleNorm, artistNorm, rawText, stationId, detectionLogId, unknownReviewId, sourceProvider, reasonCode, status, createdAt, updatedAt
+
+[MetadataParseCandidate]
+id, unknownReviewId, rawText, rawArtistCandidate, rawTitleCandidate, parsedArtist, parsedTitle, mismatchType, status, createdAt, updatedAt
+
+[SafeFingerprintRecoveryCandidate]
+id, unresolvedSampleId, detectionLogId, stationId, filePath, localFingerprintId, candidateArtist, candidateTitle, candidateDurationSec, sampleDurationSec, matchType, similarity, status, createdAt, updatedAt
+
+[SongSampleArchive]
+id, detectionLogId, stationId, filePath, durationSec, chromaprint, createdAt
+
+[Station]
+id, name, country, district, province, frequencyMhz, streamUrl, preferredStreamUrl, streamFormatHint, sourceIdsJson, icyQualification, icySampleTitle, isActive, metadataPriorityEnabled, fingerprintFallbackEnabled, metadataStaleSeconds, sampleSeconds, pollIntervalSeconds, audioFingerprintIntervalSeconds, icyVerificationIntervalSeconds, lastAudioFingerprintAt, lastIcyVerificationFingerprintAt, archiveSongSamples, lastPollAt, lastPollStatus, lastPollError, monitorState, monitorStateReason, contentClassification, lastValidationAt, lastValidationReason, lastResolvedStreamUrl, lastStreamContentType, lastStreamCodec, lastStreamBitrate, lastHealthyAt, lastGoodAudioAt, lastMetadataAt, lastSongDetectedAt, consecutivePollFailures, consecutiveHealthyPolls, deepValidationIntervalSeconds, failureThreshold, recoveryThreshold, visibilityEnabled, detectionLagMsAvg, detectionLagSamples, streamRefreshedAt, streamSourceType, streamSourceQualityScore, streamSourceLastEvaluatedAt, decodeHealthEma, fingerprintHitEma, metadataPresentEma, streamOnlineLast, audioDetectedLast, metadataAvailableLast, songIdentifiedLast, metadataTrustTightness, fingerprintRetries, fingerprintRetryDelayMs, catalogConfidenceFloor, createdAt, updatedAt
+
+[StationHealthEvent]
+id, stationId, observedAt, monitorState, reason, reachable, audioFlowing, decoderOk, contentClassification, resolvedUrl, contentTypeHeader, codec, bitrate, latencyMs, consecutiveFailures
+
+[StationSongSpin]
+id, stationId, artistNorm, titleNorm, albumNorm, mixRuleApplied, mixSplitConfidence, originalCombinedRaw, artistLast, titleLast, albumLast, playCount, firstPlayedAt, lastPlayedAt, lastDetectionLogId, manuallyTagged
+
+[StationStreamEndpoint]
+id, stationId, source, sourceDetail, streamUrl, resolvedUrl, isCurrent, isSuppressed, lastValidatedAt, lastValidationStatus, lastFailureReason, lastHealthyAt, consecutiveFailures, codec, bitrate, createdAt, updatedAt, sourceTier, qualityScore, fingerprintHits, fingerprintAttempts, decodeHits, decodeAttempts, metadataFreshHits, metadataPolls
+
+[UnknownAudioReview]
+id, stationId, detectionLogId, rawStreamText, parsedArtist, parsedTitle, reasonCode, sourceProvider, fingerprint, samplePath, status, reviewedArtist, reviewedTitle, reviewedBy, reviewedAt, createdAt, updatedAt
+
+[UnresolvedSample]
+id, stationId, filePath, createdAt, detectionLogId, recoveryStatus, recoveryAttempts, lastRecoveryAt, recoveredAt, lastRecoveryError
+
+---- STATUS / REASON / SOURCE BREAKDOWNS ----
+
+BadMetadataPattern.reason
+  garbled symbol metadata: 5
+  generic file metadata: 2
+  generic unknown metadata: 1
+  decorative garbage metadata: 1
+
+DetectionLog.status
+  matched: 54082
+  unresolved: 38796
+
+DetectionLog.reasonCode
+  None: 26562
+  icy_changed_audio: 24483
+  metadata_missing: 14161
+  audio_interval: 6118
+  metadata_stale: 4955
+  metadata_junk: 4060
+  metadata_false_match_cleanup: 3344
+  metadata_disabled: 2029
+  branding: 1557
+  talk_or_program_content: 1311
+  catalog_only_low_trust: 1148
+  metadata_repeated_same_text: 723
+  catalog_repair_backfill: 710
+  icy_no_artist_title_pair: 638
+  tunein_stub_metadata: 484
+  onlineradiobox_weekly_backfill: 234
+  safe_parse_repair_artist_title_reversed: 160
+  metadata-priority-online-radiobox-icy: 78
+  onlineradiobox_weekly_playlist: 44
+  metadata_junk_symbol_loop: 41
+
+JobRun.status
+  success: 68784
+  failure: 3343
+
+LocalFingerprint.source
+  stream_metadata: 5620
+  zambian_trusted_35s: 3153
+  acoustid: 31
+
+MetadataConflictReview.reasonCode
+  metadata_stale: 2
+  icy_changed_audio: 2
+  audio_interval: 1
+
+MetadataConflictReview.status
+  ignored_artifact_conflict: 5
+
+MetadataParseCandidate.status
+  needs_review: 1062
+  parse_repaired: 160
+
+StationHealthEvent.reason
+  healthy_with_match: 45066
+  healthy_non_music_content_window: 18071
+  healthy_without_match: 14358
+  request_exception: 2259
+  http_401: 2070
+  http_404: 987
+  http_503: 743
+  healthy_talk_content: 61
+  ffprobe_timeout: 32
+  byte_timeout: 15
+  http_403: 10
+  stream_empty_end: 5
+  decoder_404: 4
+  decoder_nonzero_exit: 3
+  decoder_timeout: 1
+
+StationStreamEndpoint.source
+  radio_garden: 68
+  mytuner: 22
+  onlineradiobox: 16
+  streema: 15
+  tunein: 12
+  radio_zambia: 2
+  radio_browser: 2
+  manual: 2
+  direct: 2
+  zeno: 1
+  onlineRadioBoxUrl: 1
+
+UnknownAudioReview.reasonCode
+  metadata_missing: 10568
+  metadata_disabled: 2030
+  icy_changed_audio: 1694
+  metadata_junk: 1117
+  metadata_stale: 851
+  branding: 455
+  talk_or_program_content: 274
+  audio_interval: 92
+  None: 84
+  tunein_stub_metadata: 62
+  metadata_repeated_same_text: 42
+  no_reliable_match: 29
+  metadata-priority-online-radiobox-icy: 2
+  icy_no_artist_title_pair: 1
+
+UnknownAudioReview.status
+  needs_audio_fingerprint: 10598
+  ignored_noise: 4604
+  metadata_parse_verified_needs_validation: 859
+  needs_metadata_review: 824
+  parse_repaired: 160
+  pending: 83
+  needs_title_cleanup_before_repair: 75
+  needs_parse_repair_manual_review: 72
+  needs_human_review: 26
+
+---- DATE RANGES ----
+BadMetadataPattern.createdAt: min=2026-04-29 12:14:39 max=2026-04-29 12:14:39 count=9
+CurrentNowPlaying.updatedAt: min=1777449329008 max=1778260301148 count=85
+JobRun.startedAt: min=1776875867239 max=1778260270916 count=72127
+LocalFingerprint.updatedAt: min=1776947950464 max=2026-05-08T17:03:54.329031+00:00 count=8804
+MetadataConflictReview.createdAt: min=2026-04-29 14:13:33 max=2026-04-29 14:13:33 count=5
+MetadataConflictReview.updatedAt: min=2026-04-29 14:17:22 max=2026-04-29 14:17:22 count=5
+MetadataParseCandidate.createdAt: min=2026-04-29 13:47:39 max=2026-04-29 13:47:39 count=1222
+MetadataParseCandidate.updatedAt: min=2026-04-29 13:47:39 max=2026-04-29 14:50:29 count=1222
+SongSampleArchive.createdAt: min=1776875938084 max=1778260215182 count=5450
+Station.createdAt: min=1776875824033 max=1776956643651 count=96
+Station.updatedAt: min=1777448941343 max=1778260301154 count=96
+StationStreamEndpoint.createdAt: min=1776875867251 max=1777294779327 count=143
+StationStreamEndpoint.updatedAt: min=1776876734184 max=1778260301160 count=143
+UnknownAudioReview.createdAt: min=2026-04-29 12:25:39 max=2026-04-29 12:40:45 count=17301
+UnknownAudioReview.updatedAt: min=2026-04-29 12:25:39 max=2026-04-29 15:31:32 count=17301
+UnresolvedSample.createdAt: min=1776875867208 max=1777980993994 count=41738
+
+==============================
+AUDIT FINISHED
+Report saved at: ops_reports/fingerprint_audit_2026-05-08_171215.txt
+==============================

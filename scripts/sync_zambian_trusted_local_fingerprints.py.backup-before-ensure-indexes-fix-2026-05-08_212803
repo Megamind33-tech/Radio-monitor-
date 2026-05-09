@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+import csv
+import fcntl
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlparse
+
+BASE = "/opt/radio-monitor"
+ZMB_DB = f"{BASE}/data/fingerprint-index/zambian_fingerprint_index.db"
+APP_DB = f"{BASE}/prisma/dev_runtime.db"
+STATE_DB = f"{BASE}/data/fingerprint-index/trusted_localfp_sync_state.db"
+TMP_DIR = f"{BASE}/data/tmp-localfp-sync"
+SERVICE_JS = f"{BASE}/dist/server/services/local-fingerprint.service.js"
+
+SOURCE = os.environ.get("TRUSTED_LOCALFP_SOURCE", "zambian_trusted_35s")
+COUNTRY_CODE = os.environ.get("TRUSTED_LOCALFP_COUNTRY", "ZM")
+SAMPLE_SECONDS = int(os.environ.get("SAMPLE_SECONDS", "35"))
+LIMIT_SEGMENTS = int(os.environ.get("LIMIT_SEGMENTS", "80"))
+OFFSETS = [int(x.strip()) for x in os.environ.get("OFFSETS", "0,45").split(",") if x.strip()]
+FFMPEG_TIMEOUT = int(os.environ.get("FFMPEG_TIMEOUT", "120"))
+FPCALC_TIMEOUT = int(os.environ.get("FPCALC_TIMEOUT", "60"))
+
+Path(TMP_DIR).mkdir(parents=True, exist_ok=True)
+Path(os.path.dirname(STATE_DB)).mkdir(parents=True, exist_ok=True)
+
+def now():
+    return datetime.now(timezone.utc).isoformat()
+
+def sha1_text(s: str) -> str:
+    return hashlib.sha1((s or "").encode("utf-8")).hexdigest()
+
+def clean_url(u: str) -> str:
+    u = (u or "").split("?")[0].strip()
+    changed = True
+    while changed:
+        old = u
+        u = u.replace("https://https://", "https://")
+        u = u.replace("http://https://", "https://")
+        u = u.replace("https://http://", "http://")
+        u = u.replace("http://http://", "http://")
+        changed = old != u
+    return u
+
+def clean_text(s: str) -> str:
+    s = (s or "").strip()
+    s = re.sub(r"\s+", " ", s)
+    return s.strip(" -–—_|:•.")
+
+def safe_id(track_id, offset_sec, fp_hash):
+    raw = f"zmb:{track_id}:{offset_sec}:{fp_hash}"
+    return "zmb_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:24]
+
+def detect_prefix_len():
+    try:
+        js = Path(SERVICE_JS).read_text(encoding="utf-8", errors="ignore")
+        m = re.search(r"function\s+prefix\s*\([^)]*\)\s*\{.*?slice\s*\(\s*0\s*,\s*(\d+)\s*\)", js, re.S)
+        if m:
+            return int(m.group(1))
+        m = re.search(r"function\s+prefix\s*\([^)]*\)\s*\{.*?substring\s*\(\s*0\s*,\s*(\d+)\s*\)", js, re.S)
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return int(os.environ.get("LOCAL_FP_PREFIX_CHARS", "32"))
+
+PREFIX_LEN = detect_prefix_len()
+
+def fingerprint_prefix(fp: str) -> str:
+    return (fp or "")[:PREFIX_LEN]
+
+def init_state():
+    con = sqlite3.connect(STATE_DB)
+    con.execute("""
+    CREATE TABLE IF NOT EXISTS imported_segments (
+      track_id INTEGER NOT NULL,
+      offset_sec INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      fingerprint_sha1 TEXT,
+      error TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(track_id, offset_sec)
+    )
+    """)
+    con.commit()
+    return con
+
+def state_done(con, track_id, offset_sec):
+    row = con.execute("""
+    SELECT status FROM imported_segments
+    WHERE track_id=? AND offset_sec=?
+    """, (track_id, offset_sec)).fetchone()
+    return row and row[0] == "imported"
+
+def mark_state(con, track_id, offset_sec, status, fp_hash=None, error=None):
+    con.execute("""
+    INSERT INTO imported_segments(track_id, offset_sec, status, fingerprint_sha1, error, updated_at)
+    VALUES(?,?,?,?,?,?)
+    ON CONFLICT(track_id, offset_sec) DO UPDATE SET
+      status=excluded.status,
+      fingerprint_sha1=excluded.fingerprint_sha1,
+      error=excluded.error,
+      updated_at=excluded.updated_at
+    """, (track_id, offset_sec, status, fp_hash, (error or "")[:1000], now()))
+    con.commit()
+
+
+def make_wav(audio_url, offset, wav_path):
+    """
+    Create a fingerprintable WAV sample from a remote audio URL.
+    Uses robust reconnect + browser user-agent because some hosts return usable
+    audio only when ffmpeg behaves like a normal client.
+    """
+    wav_path = str(wav_path)
+    Path(wav_path).parent.mkdir(parents=True, exist_ok=True)
+
+    # Remove any old/broken partial file.
+    try:
+        Path(wav_path).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-rw_timeout", "30000000",
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_at_eof", "1",
+        "-reconnect_delay_max", "5",
+        "-user_agent", "Mozilla/5.0",
+    ]
+
+    if offset is not None:
+        cmd += ["-ss", str(offset)]
+
+    cmd += [
+        "-t", str(SAMPLE_SECONDS),
+        "-i", audio_url,
+        "-vn",
+        "-ac", "1",
+        "-ar", "16000",
+        "-y",
+        wav_path,
+    ]
+
+    subprocess.run(cmd, check=True, timeout=90)
+
+    # Validate output before fpcalc.
+    fp = Path(wav_path)
+    if not fp.exists():
+        raise RuntimeError("ffmpeg produced no wav file")
+    if fp.stat().st_size < 100000:
+        raise RuntimeError(f"ffmpeg produced tiny wav file: {fp.stat().st_size} bytes")
+
+    return wav_path
+
+
+def fpcalc(wav_path):
+    """
+    Run Chromaprint fpcalc and return duration + fingerprint.
+    """
+    cmd = ["fpcalc", "-json", str(wav_path)]
+    out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=45, text=True)
+
+    import json
+    data = json.loads(out)
+
+    duration = float(data.get("duration") or 0)
+    fingerprint = data.get("fingerprint") or ""
+
+    if duration <= 0 or not fingerprint:
+        raise RuntimeError("fpcalc returned empty duration/fingerprint")
+
+    return duration, fingerprint
+
+
+def insert_localfp(con, track, offset_sec, sample_duration, fp):
+    fp_hash = sha1_text(fp)
+    fp_prefix = fingerprint_prefix(fp)
+
+    artist = clean_text(track["artist"])
+    title = clean_text(track["title"])
+    album = clean_text(track["album"] or "")
+    full_duration = float(track["duration"] or 0)
+
+    local_id = safe_id(track["id"], offset_sec, fp_hash)
+    ts = now()
+
+    con.execute("""
+    INSERT INTO LocalFingerprint (
+      id,
+      fingerprint,
+      fingerprintSha1,
+      fingerprintPrefix,
+      durationSec,
+      title,
+      artist,
+      releaseTitle,
+      releaseDate,
+      genre,
+      acoustidTrackId,
+      recordingMbid,
+      isrcsJson,
+      source,
+      confidence,
+      timesMatched,
+      firstLearnedAt,
+      lastMatchedAt,
+      updatedAt,
+      displayArtist,
+      titleWithoutFeat,
+      featuredArtistsJson,
+      labelName,
+      countryCode,
+      durationMs,
+      playCountTotal
+    )
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(fingerprintSha1) DO UPDATE SET
+      title=excluded.title,
+      artist=excluded.artist,
+      releaseTitle=excluded.releaseTitle,
+      source=excluded.source,
+      confidence=MAX(LocalFingerprint.confidence, excluded.confidence),
+      updatedAt=excluded.updatedAt,
+      displayArtist=excluded.displayArtist,
+      titleWithoutFeat=excluded.titleWithoutFeat,
+      countryCode=excluded.countryCode,
+      durationMs=excluded.durationMs
+    """, (
+        local_id,
+        fp,
+        fp_hash,
+        fp_prefix,
+        sample_duration,
+        title,
+        artist,
+        album or None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        SOURCE,
+        0.98,
+        0,
+        ts,
+        ts,
+        ts,
+        artist or None,
+        title or None,
+        None,
+        None,
+        COUNTRY_CODE,
+        int(full_duration * 1000) if full_duration > 0 else None,
+        0,
+    ))
+    con.commit()
+    return fp_hash
+
+def main():
+    lock_path = f"{BASE}/data/fingerprint-index/trusted_localfp_sync.lock"
+    with open(lock_path, "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("Another trusted local fingerprint sync is already running.")
+            return
+
+        state = init_state()
+
+        zcon = sqlite3.connect(ZMB_DB)
+        zcon.row_factory = sqlite3.Row
+
+        app = sqlite3.connect(APP_DB, timeout=60)
+        ensure_indexes(app)
+
+        rows = zcon.execute("""
+        SELECT id, artist, title, album, duration, audio_url
+        FROM tracks
+        WHERE status='indexed'
+          AND fingerprint IS NOT NULL
+          AND audio_url IS NOT NULL
+          AND artist IS NOT NULL
+          AND artist != ''
+          AND artist != 'UNKNOWN'
+          AND title IS NOT NULL
+          AND title != ''
+        ORDER BY id ASC
+        """).fetchall()
+
+        imported = 0
+        failed = 0
+        skipped = 0
+
+        print(f"Trusted source: {SOURCE}")
+        print(f"Prefix chars: {PREFIX_LEN}")
+        print(f"Sample seconds: {SAMPLE_SECONDS}")
+        print(f"Offsets: {OFFSETS}")
+        print(f"Limit segments: {LIMIT_SEGMENTS}")
+        print(f"Candidate tracks: {len(rows)}")
+
+        for r in rows:
+            if imported >= LIMIT_SEGMENTS:
+                break
+
+            track = dict(r)
+            audio_url = clean_url(track["audio_url"])
+
+            for offset in OFFSETS:
+                if imported >= LIMIT_SEGMENTS:
+                    break
+
+                if state_done(state, track["id"], offset):
+                    skipped += 1
+                    continue
+
+                print("")
+                print(f"SYNC track={track['id']} offset={offset}s {track['artist']} - {track['title']}")
+                print(audio_url)
+
+                try:
+                    with tempfile.TemporaryDirectory(prefix="localfp-", dir=TMP_DIR) as td:
+                        wav = str(Path(td) / "sample.wav")
+                        make_wav(audio_url, offset, wav)
+                        dur, fp = fpcalc(wav)
+
+                    fp_hash = insert_localfp(app, track, offset, dur, fp)
+                    mark_state(state, track["id"], offset, "imported", fp_hash, None)
+                    imported += 1
+                    print(f"IMPORTED duration={dur}s sha1={fp_hash}")
+
+                except Exception as e:
+                    failed += 1
+                    mark_state(state, track["id"], offset, "failed", None, str(e))
+                    print(f"FAILED: {e}")
+
+        app.close()
+        zcon.close()
+        state.close()
+
+        print("")
+        print(f"Imported segments: {imported}")
+        print(f"Skipped already imported: {skipped}")
+        print(f"Failed segments: {failed}")
+        print(f"Source: {SOURCE}")
+
+if __name__ == "__main__":
+    main()

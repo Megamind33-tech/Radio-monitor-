@@ -663,7 +663,7 @@ export class MonitorService {
       }
 
       // Second-pass: combined-line catalog whenever still unmatched (even if quality heuristics flagged forceFingerprint).
-      if (!match && (metadata || isForceAudioFingerprintStation(station)) && (station.fingerprintFallbackEnabled || isForceAudioFingerprintStation(station)) && !isJunkIcyMetadata(metadata)) {
+      if (!match && metadata && station.fingerprintFallbackEnabled && !isJunkIcyMetadata(metadata)) {
         const viaCombined = await CatalogLookupService.lookupFromMetadata({
           ...metadata,
           rawArtist: metadata.rawArtist || "",

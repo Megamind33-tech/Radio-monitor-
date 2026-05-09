@@ -117,30 +117,6 @@ function stationUpdateWithPreservedDates(
 }
 
 /** ICY text too weak to drive MusicBrainz/iTunes (avoids garbage catalog hits). */
-
-function isForceAudioFingerprintStation(station: any): boolean {
-  const tokens = String(
-    process.env.FORCE_AUDIO_FINGERPRINT_STATIONS ||
-      "hot,hot fm,hone,horn,power,power fm,phoenix,qfm"
-  )
-    .split(",")
-    .map((x) => x.trim().toLowerCase())
-    .filter(Boolean);
-
-  const haystack = [
-    station?.name,
-    station?.displayName,
-    station?.slug,
-    station?.stationName,
-    station?.id,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  return tokens.some((token) => haystack.includes(token));
-}
-
 function isJunkIcyMetadata(metadata: NormalizedMetadata | null): boolean {
   if (!metadata) return true;
   const raw = (metadata.combinedRaw ?? "").trim();
@@ -663,7 +639,7 @@ export class MonitorService {
       }
 
       // Second-pass: combined-line catalog whenever still unmatched (even if quality heuristics flagged forceFingerprint).
-      if (!match && (metadata || isForceAudioFingerprintStation(station)) && (station.fingerprintFallbackEnabled || isForceAudioFingerprintStation(station)) && !isJunkIcyMetadata(metadata)) {
+      if (!match && metadata && station.fingerprintFallbackEnabled && !isJunkIcyMetadata(metadata)) {
         const viaCombined = await CatalogLookupService.lookupFromMetadata({
           ...metadata,
           rawArtist: metadata.rawArtist || "",
