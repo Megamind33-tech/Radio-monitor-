@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { FingerprintResult, MatchResult, NormalizedMetadata } from "../types.js";
 import { parseFeaturedFromArtist, titleWithoutFeaturing } from "../lib/track-credits.js";
+import { RematchService } from "./rematch.service.js";
 
 /**
  * Self-learned Chromaprint fingerprint library.

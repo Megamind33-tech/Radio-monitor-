@@ -5,6 +5,7 @@ import { MonitorService } from "./monitor.service.js";
 import { UnresolvedRecoveryService } from "./unresolved-recovery.service.js";
 import { SpinRefreshService } from "./spin-refresh.service.js";
 import { CatalogRepairService } from "./catalog-repair.service.js";
+import { RematchService } from "./rematch.service.js";
 
 type ScheduledStation = {
   id: string;
@@ -24,6 +25,7 @@ export class SchedulerService {
   private static unresolvedRecoveryJob: cron.ScheduledTask | null = null;
   private static spinRefreshJob: cron.ScheduledTask | null = null;
   private static catalogRepairJob: cron.ScheduledTask | null = null;
+  private static rematchJob: cron.ScheduledTask | null = null;
 
   static async init() {
     logger.info("Initializing station scheduler");
@@ -47,9 +49,24 @@ export class SchedulerService {
     this.catalogRepairJob = cron.schedule("20 */3 * * * *", () => {
       void this.runCatalogRepairTick();
     });
+    this.rematchJob = cron.schedule("40 */4 * * * *", () => {
+      void this.runRematchTick();
+    });
 
     await this.resyncStations();
     await this.dispatchDuePolls();
+  }
+
+
+  private static async runRematchTick() {
+    if (String(process.env.REMATCH_ENABLED || "true").toLowerCase() === "false") return;
+    try {
+      await RematchService.createRematchJobsForNewFingerprint({ maxRematchJobsPerFingerprint: Math.min(200, parseInt(process.env.REMATCH_CREATE_LIMIT || "100", 10) || 100) });
+      const out = await RematchService.runRematchBatch({ limit: Math.min(100, parseInt(process.env.REMATCH_RUN_LIMIT || "40", 10) || 40), dryRun: String(process.env.REMATCH_DRY_RUN || "true").toLowerCase() !== "false" });
+      if (out.processed > 0) logger.info({ out }, "Rematch scheduler tick");
+    } catch (error) {
+      logger.warn({ error }, "Rematch scheduler tick failed");
+    }
   }
 
   private static async runCatalogRepairTick() {
@@ -199,6 +216,7 @@ export class SchedulerService {
     this.unresolvedRecoveryJob?.stop();
     this.spinRefreshJob?.stop();
     this.catalogRepairJob?.stop();
+    this.rematchJob?.stop();
     this.scheduledStations.clear();
     this.pollIntervals.clear();
     this.pollRunning.clear();

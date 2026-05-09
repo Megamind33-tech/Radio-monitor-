@@ -34,6 +34,10 @@ import { SpinRefreshService } from "./services/spin-refresh.service.js";
 import { FingerprintService } from "./services/fingerprint.service.js";
 import { AcoustidService } from "./services/acoustid.service.js";
 import { MusicbrainzService } from "./services/musicbrainz.service.js";
+import { SampleStorageService } from "./services/sample-storage.service.js";
+import { CatalogCrawlerService } from "./services/catalog-crawler.service.js";
+import { RematchService } from "./services/rematch.service.js";
+import { ExternalRecognitionService } from "./services/external-recognition.service.js";
 import * as XLSX from "xlsx";
 
 function envBoolTrue(key: string, defaultTrue = true): boolean {
@@ -1778,6 +1782,139 @@ async function startServer() {
     }
   });
 
+  /**
+   * List unknown/unmatched samples for a station dashboard review pane.
+   * This is a Phase-1 read adapter over existing UnresolvedSample + DetectionLog.
+   */
+  app.get("/api/stations/:stationId/unknown-samples", async (req, res) => {
+    try {
+      const stationId = String(req.params.stationId || "").trim();
+      if (!stationId) {
+        res.status(400).json({ error: "station_id_required" });
+        return;
+      }
+      const takeRaw = typeof req.query.take === "string" ? Number(req.query.take) : 200;
+      const take = Number.isFinite(takeRaw) ? Math.min(Math.max(Math.trunc(takeRaw), 1), 500) : 200;
+      const rows = await prisma.unresolvedSample.findMany({
+        where: { stationId },
+        orderBy: { createdAt: "desc" },
+        take,
+        select: {
+          id: true,
+          stationId: true,
+          detectionLogId: true,
+          filePath: true,
+          createdAt: true,
+          recoveryStatus: true,
+          recoveredAt: true,
+          fingerprintStatus: true,
+          verifiedTrackId: true,
+        },
+      });
+      const station = await prisma.station.findUnique({
+        where: { id: stationId },
+        select: { id: true, name: true },
+      });
+      const logIds = rows.map((r) => r.detectionLogId).filter((id): id is string => !!id);
+      const logs = logIds.length
+        ? await prisma.detectionLog.findMany({
+            where: { id: { in: logIds } },
+            select: {
+              id: true,
+              observedAt: true,
+              rawStreamText: true,
+              sourceProvider: true,
+              status: true,
+              reasonCode: true,
+              confidence: true,
+              parsedArtist: true,
+              parsedTitle: true,
+              artistFinal: true,
+              titleFinal: true,
+            },
+          })
+        : [];
+      const logById = new Map(logs.map((l) => [l.id, l]));
+      const items = rows.map((row) => {
+        const log = row.detectionLogId ? logById.get(row.detectionLogId) : undefined;
+        const fileAvailable = !!row.filePath && fs.existsSync(row.filePath);
+        const reviewStatus = row.recoveryStatus === "human_verified" || row.recoveryStatus === "recovered"
+          ? "human_verified"
+          : "unreviewed";
+        return {
+          id: row.id,
+          stationId: row.stationId,
+          stationName: station?.name ?? null,
+          capturedAt: log?.observedAt ?? row.createdAt,
+          playedAt: log?.observedAt ?? null,
+          createdAt: row.createdAt,
+          duration: null,
+          hasAudio: fileAvailable,
+          fileAvailable,
+          matchStatus: log?.status ?? "unmatched",
+          reviewStatus,
+          fingerprintStatus: row.fingerprintStatus ?? "not_started",
+          linkedTrackId: row.verifiedTrackId ?? null,
+          metadataSource: log?.sourceProvider ?? null,
+          rawMetadataText: log?.rawStreamText ?? null,
+          suggestedArtist: log?.artistFinal ?? log?.parsedArtist ?? null,
+          suggestedTitle: log?.titleFinal ?? log?.parsedTitle ?? null,
+          confidence: log?.confidence ?? null,
+          reasonCode: log?.reasonCode ?? null,
+          audioUrl: `/api/unknown-samples/${encodeURIComponent(row.id)}/audio`,
+        };
+      });
+      res.json({
+        stationId,
+        stationName: station?.name ?? null,
+        total: items.length,
+        items,
+      });
+    } catch (error) {
+      logger.error({ error, stationId: req.params.stationId }, "unknown samples list failed");
+      res.status(500).json({ error: "unknown_samples_list_failed" });
+    }
+  });
+
+  function streamAudioFileWithRange(req: express.Request, res: express.Response, filePath: string) {
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType =
+      ext === ".mp3" ? "audio/mpeg" :
+      ext === ".ogg" ? "audio/ogg" :
+      ext === ".aac" ? "audio/aac" :
+      ext === ".flac" ? "audio/flac" :
+      ext === ".m4a" ? "audio/mp4" :
+      "audio/wav";
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Accept-Ranges", "bytes");
+
+    if (!range) {
+      res.setHeader("Content-Length", fileSize);
+      fs.createReadStream(filePath).pipe(res);
+      return;
+    }
+
+    const match = /bytes=(\d*)-(\d*)/.exec(range);
+    if (!match) {
+      res.status(416).setHeader("Content-Range", `bytes */${fileSize}`).end();
+      return;
+    }
+    const start = match[1] ? Number(match[1]) : 0;
+    const end = match[2] ? Number(match[2]) : fileSize - 1;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || end >= fileSize) {
+      res.status(416).setHeader("Content-Range", `bytes */${fileSize}`).end();
+      return;
+    }
+    const chunkSize = end - start + 1;
+    res.status(206);
+    res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+    res.setHeader("Content-Length", chunkSize);
+    fs.createReadStream(filePath, { start, end }).pipe(res);
+  }
+
   /** Stream the raw audio file for in-browser playback (supports Range requests). */
   app.get("/api/audio-editor/samples/:id/audio", async (req, res) => {
     try {
@@ -1793,21 +1930,421 @@ async function startServer() {
         res.status(404).json({ error: "audio_file_not_on_disk" });
         return;
       }
-      const ext = path.extname(sample.filePath).toLowerCase();
-      const contentType =
-        ext === ".mp3" ? "audio/mpeg" :
-        ext === ".ogg" ? "audio/ogg" :
-        ext === ".aac" ? "audio/aac" :
-        "audio/wav";
-      res.setHeader("Content-Type", contentType);
-      res.setHeader("Accept-Ranges", "bytes");
-      res.sendFile(path.resolve(sample.filePath));
+      streamAudioFileWithRange(req, res, path.resolve(sample.filePath));
     } catch (error) {
       logger.error({ error, id: req.params.id }, "audio-editor stream failed");
       res.status(500).json({ error: "audio_stream_failed" });
     }
   });
 
+  app.get("/api/unknown-samples/:id/audio", async (req, res) => {
+    try {
+      const sample = await prisma.unresolvedSample.findUnique({
+        where: { id: req.params.id },
+        select: { filePath: true },
+      });
+      if (!sample) {
+        res.status(404).json({ error: "sample_not_found" });
+        return;
+      }
+      if (!sample.filePath || !fs.existsSync(sample.filePath)) {
+        res.status(404).json({ error: "audio_file_not_on_disk" });
+        return;
+      }
+      streamAudioFileWithRange(req, res, path.resolve(sample.filePath));
+    } catch (error) {
+      logger.error({ error, id: req.params.id }, "unknown-sample stream failed");
+      res.status(500).json({ error: "unknown_sample_audio_stream_failed" });
+    }
+  });
+
+  app.get("/api/unknown-samples/:id", async (req, res) => {
+    try {
+      const sample = await prisma.unresolvedSample.findUnique({
+        where: { id: req.params.id },
+      });
+      if (!sample) {
+        res.status(404).json({ error: "sample_not_found" });
+        return;
+      }
+      const station = await prisma.station.findUnique({
+        where: { id: sample.stationId },
+        select: { id: true, name: true, country: true, province: true, district: true },
+      });
+      const log = sample.detectionLogId
+        ? await prisma.detectionLog.findUnique({ where: { id: sample.detectionLogId } })
+        : null;
+      const track = sample.verifiedTrackId
+        ? await prisma.verifiedTrack.findUnique({ where: { id: sample.verifiedTrackId } })
+        : null;
+      const fileAvailable = !!sample.filePath && fs.existsSync(sample.filePath);
+      res.json({
+        id: sample.id,
+        station,
+        capturedAt: log?.observedAt ?? sample.createdAt,
+        createdAt: sample.createdAt,
+        rawStreamMetadata: log?.rawStreamText ?? null,
+        parsedArtist: log?.parsedArtist ?? null,
+        parsedTitle: log?.parsedTitle ?? null,
+        matchStatus: log?.status ?? "unmatched",
+        reviewStatus: sample.recoveryStatus,
+        fingerprintStatus: sample.fingerprintStatus,
+        hasAudio: fileAvailable,
+        fileAvailable,
+        linkedTrack: track,
+        detectionLogId: sample.detectionLogId ?? null,
+      });
+    } catch (error) {
+      logger.error({ error, id: req.params.id }, "unknown sample detail failed");
+      res.status(500).json({ error: "unknown_sample_detail_failed" });
+    }
+  });
+
+  const unknownSampleReviewSchema = z.object({
+    artist: z.string().min(1).max(500),
+    title: z.string().min(1).max(500),
+    album: z.string().max(500).optional(),
+    label: z.string().max(300).optional(),
+    isrc: z.string().max(40).optional(),
+    iswc: z.string().max(40).optional(),
+    composerWriter: z.string().max(500).optional(),
+    publisher: z.string().max(500).optional(),
+    country: z.string().max(120).optional(),
+    sourceSociety: z.string().max(120).optional(),
+    notes: z.string().max(2000).optional(),
+    verificationStatus: z.literal("human_verified").default("human_verified"),
+  }).strict();
+
+  app.post("/api/unknown-samples/:id/review", async (req, res) => {
+    try {
+      const parsed = unknownSampleReviewSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
+        return;
+      }
+      const sample = await prisma.unresolvedSample.findUnique({ where: { id: req.params.id } });
+      if (!sample) {
+        res.status(404).json({ error: "sample_not_found" });
+        return;
+      }
+      const now = new Date();
+      const data = parsed.data;
+      const track = await prisma.verifiedTrack.upsert({
+        where: { id: sample.verifiedTrackId ?? "__new__" },
+        update: {
+          artist: data.artist,
+          title: data.title,
+          album: data.album || null,
+          label: data.label || null,
+          isrc: data.isrc || null,
+          iswc: data.iswc || null,
+          composerWriter: data.composerWriter || null,
+          publisher: data.publisher || null,
+          country: data.country || null,
+          sourceSociety: data.sourceSociety || null,
+          notes: data.notes || null,
+          verificationStatus: data.verificationStatus,
+        },
+        create: {
+          artist: data.artist,
+          title: data.title,
+          album: data.album || null,
+          label: data.label || null,
+          isrc: data.isrc || null,
+          iswc: data.iswc || null,
+          composerWriter: data.composerWriter || null,
+          publisher: data.publisher || null,
+          country: data.country || null,
+          sourceSociety: data.sourceSociety || null,
+          notes: data.notes || null,
+          verificationStatus: data.verificationStatus,
+        },
+      });
+      await prisma.unresolvedSample.update({
+        where: { id: sample.id },
+        data: {
+          verifiedTrackId: track.id,
+          recoveryStatus: "human_verified",
+          reviewedAt: now,
+          reviewNotes: data.notes || null,
+        },
+      });
+      if (sample.detectionLogId) {
+        await prisma.detectionLog.update({
+          where: { id: sample.detectionLogId },
+          data: {
+            titleFinal: data.title,
+            artistFinal: data.artist,
+            releaseFinal: data.album || null,
+            status: "matched",
+            sourceProvider: "human_review",
+            manuallyTagged: true,
+            manualTaggedAt: now,
+            verifiedTrackId: track.id,
+          },
+        });
+      }
+      res.json({ ok: true, sampleId: sample.id, trackId: track.id, reviewStatus: "human_verified" });
+    } catch (error) {
+      logger.error({ error, id: req.params.id }, "unknown sample review save failed");
+      res.status(500).json({ error: "unknown_sample_review_save_failed" });
+    }
+  });
+
+  app.post("/api/unknown-samples/:id/save-fingerprint", async (req, res) => {
+    try {
+      const sample = await prisma.unresolvedSample.findUnique({ where: { id: req.params.id } });
+      if (!sample) {
+        res.status(404).json({ error: "sample_not_found" });
+        return;
+      }
+      if (!sample.filePath || !fs.existsSync(sample.filePath)) {
+        await prisma.unresolvedSample.update({
+          where: { id: sample.id },
+          data: { fingerprintStatus: "failed" },
+        });
+        res.status(404).json({ error: "audio_file_not_on_disk" });
+        return;
+      }
+      const track = sample.verifiedTrackId
+        ? await prisma.verifiedTrack.findUnique({ where: { id: sample.verifiedTrackId } })
+        : null;
+      if (!track) {
+        res.status(400).json({ error: "review_required_before_fingerprint" });
+        return;
+      }
+      const fp = await FingerprintService.generateFingerprint(path.resolve(sample.filePath));
+      if (!fp) {
+        await prisma.unresolvedSample.update({
+          where: { id: sample.id },
+          data: { fingerprintStatus: "failed" },
+        });
+        res.status(500).json({ error: "fingerprint_generation_failed" });
+        return;
+      }
+      await LocalFingerprintService.learn({
+        fp,
+        source: "manual",
+        match: {
+          title: track.title,
+          artist: track.artist,
+          releaseTitle: track.album ?? undefined,
+          labelName: track.label ?? undefined,
+          isrcs: track.isrc ? [track.isrc] : undefined,
+          countryCode: track.country ?? undefined,
+          confidence: 1,
+          score: 1,
+          sourceProvider: "local_fingerprint",
+          reasonCode: "manual_review_fingerprint",
+        },
+      });
+      await prisma.unresolvedSample.update({
+        where: { id: sample.id },
+        data: { fingerprintStatus: "fingerprinted", fingerprintedAt: new Date() },
+      });
+      res.json({ ok: true, sampleId: sample.id, fingerprintStatus: "fingerprinted" });
+    } catch (error) {
+      logger.error({ error, id: req.params.id }, "unknown sample save fingerprint failed");
+      res.status(500).json({ error: "unknown_sample_save_fingerprint_failed" });
+    }
+  });
+
+  app.get("/api/admin/storage/unknown-samples", async (_req, res) => {
+    try {
+      const summary = await SampleStorageService.storageSummary();
+      res.json(summary);
+    } catch (error) {
+      logger.error({ error }, "unknown sample storage summary failed");
+      res.status(500).json({ error: "unknown_sample_storage_summary_failed" });
+    }
+  });
+
+  app.post("/api/admin/storage/unknown-samples/purge-dry-run", async (_req, res) => {
+    try {
+      const rows = await prisma.unresolvedSample.findMany({
+        orderBy: { createdAt: "desc" },
+      });
+      const stationIds = [...new Set(rows.map((r) => r.stationId))];
+      const stations = stationIds.length
+        ? await prisma.station.findMany({ where: { id: { in: stationIds } }, select: { id: true, name: true } })
+        : [];
+      const stationById = new Map(stations.map((s) => [s.id, s]));
+      const logIds = rows.map((r) => r.detectionLogId).filter((id): id is string => !!id);
+      const logs = logIds.length
+        ? await prisma.detectionLog.findMany({
+            where: { id: { in: logIds } },
+            select: { id: true, manuallyTagged: true, verifiedTrackId: true },
+          })
+        : [];
+      const logById = new Map(logs.map((l) => [l.id, l]));
+      const blockedReasons: Record<string, number> = {};
+      let eligibleCount = 0;
+      let blockedCount = 0;
+      let reclaimableBytes = 0;
+      const items = rows.map((row) => {
+        const linkedLog = row.detectionLogId ? logById.get(row.detectionLogId) ?? null : null;
+        const check = SampleStorageService.checkEligibility(row as any, linkedLog as any);
+        if (check.eligible) {
+          eligibleCount += 1;
+          reclaimableBytes += check.fileSize;
+        } else {
+          blockedCount += 1;
+          blockedReasons[check.reason] = (blockedReasons[check.reason] || 0) + 1;
+        }
+        return {
+          sampleId: row.id,
+          stationId: row.stationId,
+          stationName: stationById.get(row.stationId)?.name ?? null,
+          fileAvailable: check.fileAvailable,
+          fileSize: check.fileSize,
+          reviewStatus: row.recoveryStatus,
+          fingerprintStatus: row.fingerprintStatus,
+          verifiedTrackId: row.verifiedTrackId,
+          reason: check.reason,
+          wouldDelete: check.eligible,
+          dryRunOnly: true,
+        };
+      });
+      res.json({
+        dryRunOnly: true,
+        eligibleCount,
+        blockedCount,
+        reclaimableBytes,
+        blockedReasonsSummary: blockedReasons,
+        items,
+      });
+    } catch (error) {
+      logger.error({ error }, "unknown sample purge dry run failed");
+      res.status(500).json({ error: "unknown_sample_purge_dry_run_failed" });
+    }
+  });
+
+  app.post("/api/admin/storage/unknown-samples/hash-backfill-preview", async (req, res) => {
+    try {
+      const limit = Number(req.body?.limit ?? 100);
+      const stationId = typeof req.body?.stationId === "string" ? req.body.stationId : undefined;
+      const onlyVerified = req.body?.onlyVerified === true;
+      const force = req.body?.force === true;
+      const out = await SampleStorageService.previewHashBackfill({ limit, stationId, onlyVerified, force });
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "hash backfill preview failed");
+      res.status(500).json({ error: "hash_backfill_preview_failed" });
+    }
+  });
+
+  app.post("/api/admin/storage/unknown-samples/hash-backfill-run", async (req, res) => {
+    try {
+      const limit = Number(req.body?.limit ?? 100);
+      const stationId = typeof req.body?.stationId === "string" ? req.body.stationId : undefined;
+      const onlyVerified = req.body?.onlyVerified === true;
+      const force = req.body?.force === true;
+      const dryRun = req.body?.dryRun !== false;
+      const out = await SampleStorageService.runHashBackfill({ limit, stationId, onlyVerified, force, dryRun });
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "hash backfill run failed");
+      res.status(500).json({ error: "hash_backfill_run_failed" });
+    }
+  });
+
+  app.get("/api/admin/crawler/status", async (_req, res) => {
+    try {
+      const summary = await CatalogCrawlerService.statusSummary();
+      res.json(summary);
+    } catch (error) {
+      logger.error({ error }, "crawler status failed");
+      res.status(500).json({ error: "crawler_status_failed" });
+    }
+  });
+
+  app.post("/api/admin/crawler/discover", async (req, res) => {
+    try {
+      const urls = Array.isArray(req.body?.urls) ? req.body.urls.filter((u: unknown) => typeof u === "string") : [];
+      if (!urls.length) {
+        res.status(400).json({ error: "urls_required" });
+        return;
+      }
+      const out = await CatalogCrawlerService.discoverAndUpsert({
+        urls,
+        sourceType: typeof req.body?.sourceType === "string" ? req.body.sourceType : "manual_seed",
+        discoveredFrom: typeof req.body?.discoveredFrom === "string" ? req.body.discoveredFrom : undefined,
+      });
+      res.json({ discovered: out.length, rows: out });
+    } catch (error) {
+      logger.error({ error }, "crawler discover failed");
+      res.status(500).json({ error: "crawler_discover_failed" });
+    }
+  });
+
+
+  app.post("/api/admin/crawler/run-priority", async (req, res) => {
+    try {
+      const out = await CatalogCrawlerService.runPriorityBatch({
+        maxUrlsPerRun: Number(req.body?.maxUrlsPerRun ?? 25),
+        maxFingerprintsPerRun: Number(req.body?.maxFingerprintsPerRun ?? 10),
+        minDurationSeconds: Number(req.body?.minDurationSeconds ?? 30),
+        maxDurationSeconds: Number(req.body?.maxDurationSeconds ?? 540),
+        skipIfTrackAlreadyHasFingerprint: req.body?.skipIfTrackAlreadyHasFingerprint !== false,
+      });
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "crawler run priority failed");
+      res.status(500).json({ error: "crawler_run_priority_failed" });
+    }
+  });
+
+
+  app.get("/api/admin/crawler/duplicate-reviews", async (_req, res) => {
+    try {
+      const rows = await prisma.catalogDuplicateReview.findMany({ where: { status: "pending" }, orderBy: { createdAt: "desc" }, take: 100 });
+      res.json({ total: rows.length, rows });
+    } catch (error) {
+      logger.error({ error }, "crawler duplicate reviews failed");
+      res.status(500).json({ error: "crawler_duplicate_reviews_failed" });
+    }
+  });
+
+
+  app.get("/api/admin/rematch/summary", async (_req, res) => {
+    try { res.json(await RematchService.summary()); } catch (error) { logger.error({ error }, "rematch summary failed"); res.status(500).json({ error: "rematch_summary_failed" }); }
+  });
+
+  app.post("/api/admin/rematch/preview", async (req, res) => {
+    try {
+      const out = await RematchService.previewRematchCandidates({ stationId: typeof req.body?.stationId==="string"?req.body.stationId:undefined, onlyUnknowns: req.body?.onlyUnknowns===true, onlyWeakMatches: req.body?.onlyWeakMatches===true, limit: Number(req.body?.limit ?? 100) });
+      res.json(out);
+    } catch (error) { logger.error({ error }, "rematch preview failed"); res.status(500).json({ error: "rematch_preview_failed" }); }
+  });
+
+  app.post("/api/admin/rematch/run", async (req, res) => {
+    try { const out = await RematchService.runRematchBatch({ limit: Number(req.body?.limit ?? 50), dryRun: req.body?.dryRun !== false, minConfidenceToApply: Number(req.body?.minConfidenceToApply ?? 0.9) }); res.json(out); }
+    catch (error) { logger.error({ error }, "rematch run failed"); res.status(500).json({ error: "rematch_run_failed" }); }
+  });
+
+  app.post("/api/admin/rematch/create-for-new-fingerprints", async (req, res) => {
+    try { const out = await RematchService.createRematchJobsForNewFingerprint({ maxRematchJobsPerFingerprint: Number(req.body?.maxRematchJobsPerFingerprint ?? 200), stationId: typeof req.body?.stationId==="string"?req.body.stationId:undefined, onlyRecentDays: req.body?.onlyRecentDays ? Number(req.body.onlyRecentDays) : undefined }); res.json(out); }
+    catch (error) { logger.error({ error }, "rematch create failed"); res.status(500).json({ error: "rematch_create_failed" }); }
+  });
+
+  app.post("/api/admin/external-recognition/test", async (req, res) => {
+    try {
+      const out = await ExternalRecognitionService.testUnknownSample({
+        unknownSampleId: String(req.body?.unknownSampleId || ""),
+        provider: (req.body?.provider || "shazam_api_experimental") as any,
+        dryRun: req.body?.dryRun !== false,
+      });
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "external recognition test failed");
+      res.status(500).json({ error: "external_recognition_test_failed" });
+    }
+  });
+
+  app.get("/api/admin/external-recognition/summary", async (_req, res) => {
+    try { res.json(await ExternalRecognitionService.summary()); }
+    catch (error) { logger.error({ error }, "external recognition summary failed"); res.status(500).json({ error: "external_recognition_summary_failed" }); }
+  });
   const audioEditorPatchSchema = z.object({
     title: z.string().max(500).optional(),
     artist: z.string().max(500).optional(),

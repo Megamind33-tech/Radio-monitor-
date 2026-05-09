@@ -3,6 +3,7 @@ import { logger } from "../lib/logger.js";
 import { CatalogLookupService } from "./catalog-lookup.service.js";
 import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
 import { monitorEvents } from "../lib/monitor-events.js";
+import { buildSafeDetectionLogUpdate, isHumanVerifiedDetectionLog } from "../lib/human-verified-guard.js";
 import type { NormalizedMetadata } from "../types.js";
 
 function isRepairableMetadataText(combined: string, title: string, artist: string): boolean {
@@ -74,6 +75,11 @@ export class CatalogRepairService {
           parsedTitle: true,
           parsedArtist: true,
           titleFinal: true,
+          artistFinal: true,
+          sourceProvider: true,
+          manuallyTagged: true,
+          manualTaggedAt: true,
+          verifiedTrackId: true,
         },
       });
 
@@ -106,24 +112,29 @@ export class CatalogRepairService {
 
           const hadNoFinal = !row.titleFinal || !String(row.titleFinal).trim();
 
+          const incomingUpdate = {
+            titleFinal: hit.title,
+            artistFinal: hit.artist ?? null,
+            releaseFinal: hit.releaseTitle ?? null,
+            releaseDate: hit.releaseDate ?? null,
+            genreFinal: hit.genre ?? null,
+            recordingMbid: hit.recordingId ?? null,
+            acoustidId: hit.acoustidTrackId ?? null,
+            isrcList: hit.isrcs?.length ? JSON.stringify(hit.isrcs) : null,
+            confidence: hit.confidence,
+            acoustidScore: hit.score,
+            sourceProvider: hit.sourceProvider ?? "catalog_lookup",
+            status: "matched",
+            reasonCode: "catalog_repair_backfill",
+            trackDurationMs: hit.durationMs ?? null,
+          };
+          const safeUpdate = buildSafeDetectionLogUpdate(row, incomingUpdate, false);
+          if (isHumanVerifiedDetectionLog(row) && (incomingUpdate.titleFinal !== row.titleFinal || incomingUpdate.artistFinal !== row.artistFinal)) {
+            logger.info({ detectionLogId: row.id }, "Skipping overwrite of human-verified metadata; storing diagnostics only");
+          }
           await prisma.detectionLog.update({
             where: { id: row.id },
-            data: {
-              titleFinal: hit.title,
-              artistFinal: hit.artist ?? null,
-              releaseFinal: hit.releaseTitle ?? null,
-              releaseDate: hit.releaseDate ?? null,
-              genreFinal: hit.genre ?? null,
-              recordingMbid: hit.recordingId ?? null,
-              acoustidId: hit.acoustidTrackId ?? null,
-              isrcList: hit.isrcs?.length ? JSON.stringify(hit.isrcs) : null,
-              confidence: hit.confidence,
-              acoustidScore: hit.score,
-              sourceProvider: hit.sourceProvider ?? "catalog_lookup",
-              status: "matched",
-              reasonCode: "catalog_repair_backfill",
-              trackDurationMs: hit.durationMs ?? null,
-            },
+            data: safeUpdate,
           });
 
           let spinPlayCount = 0;
