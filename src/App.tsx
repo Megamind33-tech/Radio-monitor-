@@ -154,6 +154,28 @@ interface DependencyStatus {
   };
   integrationNotes?: string[];
 }
+interface UnknownStorageStationRow {
+  stationId: string;
+  stationName: string;
+  sampleCount: number;
+  audioBytes: number;
+  purgeEligibleCount: number;
+  reclaimableBytes: number;
+}
+interface UnknownStorageSummary {
+  totalUnknownSampleCount: number;
+  countWithAudioFile: number;
+  countMissingAudioFile: number;
+  totalAudioBytes: number;
+  reviewedCount: number;
+  humanVerifiedCount: number;
+  fingerprintedCount: number;
+  fingerprintFailedCount: number;
+  eligibleForPurgeCount: number;
+  notEligibleForPurgeCount: number;
+  estimatedBytesReclaimable: number;
+  byStation: UnknownStorageStationRow[];
+}
 
 type StationListFilter = 'all' | 'running' | 'degraded' | 'inactive' | 'unknown';
 
@@ -182,6 +204,28 @@ interface AudioEditorSample {
   genreFinal: string | null;
   manuallyTagged: boolean;
   manualTaggedAt: string | null;
+}
+
+interface StationUnknownSample {
+  id: string;
+  stationId: string;
+  stationName: string | null;
+  capturedAt: string;
+  playedAt: string | null;
+  createdAt: string;
+  duration: number | null;
+  hasAudio: boolean;
+  fileAvailable: boolean;
+  matchStatus: string;
+  reviewStatus: string;
+  metadataSource: string | null;
+  rawMetadataText: string | null;
+  suggestedArtist: string | null;
+  suggestedTitle: string | null;
+  confidence: number | null;
+  audioUrl: string;
+  fingerprintStatus?: string;
+  linkedTrackId?: string | null;
 }
 
 const REQUESTED_STATION_PRIORITY: string[] = [
@@ -283,6 +327,13 @@ export default function App() {
   const [audioEditorLoading, setAudioEditorLoading] = useState(false);
   const [audioEditorFilter, setAudioEditorFilter] = useState<'untagged' | 'tagged' | 'all'>('untagged');
   const [audioEditorStationFilter, setAudioEditorStationFilter] = useState<string>('all');
+  const [unknownStorage, setUnknownStorage] = useState<UnknownStorageSummary | null>(null);
+  const [storageLoading, setStorageLoading] = useState(false);
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const [storageDryRun, setStorageDryRun] = useState<any | null>(null);
+  const [hashBackfillResult, setHashBackfillResult] = useState<any | null>(null);
+  const [crawlerStatus, setCrawlerStatus] = useState<any | null>(null);
+  const [rematchSummary, setRematchSummary] = useState<any | null>(null);
 
   const fetchData = React.useCallback(async () => {
     try {
@@ -356,6 +407,41 @@ export default function App() {
       setAudioEditorLoading(false);
     }
   }, [audioEditorFilter, audioEditorStationFilter]);
+  const fetchUnknownStorage = React.useCallback(async () => {
+    setStorageLoading(true);
+    setStorageError(null);
+    try {
+      const res = await fetch('/api/admin/storage/unknown-samples');
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error || `Storage summary failed (${res.status})`);
+      setUnknownStorage(body);
+    } catch (e) {
+      setStorageError(e instanceof Error ? e.message : 'Storage summary failed');
+    } finally {
+      setStorageLoading(false);
+    }
+  }, []);
+  const fetchCrawlerStatus = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/crawler/status');
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error || `Crawler status failed (${res.status})`);
+      setCrawlerStatus(body);
+    } catch (e) {
+      setStorageError(e instanceof Error ? e.message : 'Crawler status failed');
+    }
+  }, []);
+
+  const fetchRematchSummary = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/rematch/summary');
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error || `Rematch summary failed (${res.status})`);
+      setRematchSummary(body);
+    } catch (e) {
+      setStorageError(e instanceof Error ? e.message : 'Rematch summary failed');
+    }
+  }, []);
 
   const fetchStationPageData = React.useCallback(async (stationId: string) => {
     setStationPageLoading(true);
@@ -411,7 +497,11 @@ export default function App() {
     if (activeTab === 'audioeditor') {
       fetchAudioEditorSamples();
     }
-  }, [activeTab, fetchAudioEditorSamples]);
+    if (activeTab === 'settings') {
+      fetchUnknownStorage();
+      fetchCrawlerStatus();
+    }
+  }, [activeTab, fetchAudioEditorSamples, fetchUnknownStorage, fetchCrawlerStatus]);
 
   useEffect(() => {
     if (!stationPageId || activeTab !== 'stations') return;
@@ -576,6 +666,12 @@ export default function App() {
   }, [orderedStations, stationFilter, stationSearch]);
 
   const activeStation = stationPageId ? stationById.get(stationPageId) || null : null;
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.title = 'Radio Monitor — Royalty Logs & Fingerprint Intelligence';
+    }
+  }, []);
+
 
   return (
     <div className="min-h-screen bg-brand-bg text-gray-100 selection:bg-brand-cyan/30">
@@ -610,18 +706,18 @@ export default function App() {
         <header className="mb-8 flex flex-wrap justify-between items-end gap-6">
           <div>
             <h1 className="text-4xl font-bold tracking-tight mb-2 flex items-center gap-3">
-              Radio Pulse <span className="text-brand-cyan">Monitor</span>
+              Radio Monitoring <span className="text-brand-cyan">Operations</span>
             </h1>
             <p className="text-gray-400">
               {activeTab === 'stations' && stationPageId
                 ? 'Station profile, logs, and per-station export.'
                 : activeTab === 'learning'
                   ? 'Self-learned Chromaprint library, pipeline load, and recognition stack status.'
-                  : 'Table-driven station operations and reliable song detection.'}
+                  : 'Fingerprint matching, unknown review, catalog growth, and royalty-ready logs.'}
             </p>
           </div>
           
-          <div className="flex gap-4">
+          <div className="flex gap-4 flex-wrap">
             <MetricCard 
               label="Song match rate" 
               value={
@@ -644,6 +740,11 @@ export default function App() {
               value={monitoredCount.toString()} 
               sub="Active Zambia stations"
             />
+            <MetricCard label="Unknown Queue" value={(unknownStorage?.totalUnknownSampleCount ?? 0).toString()} sub="Samples awaiting review" />
+            <MetricCard label="Fingerprints Added" value={(metrics?.music_matched_24h ?? metrics?.music_matched ?? 0).toString()} sub="Local library size" />
+            <MetricCard label="Catalog Sources" value={(crawlerStatus?.total ?? 0).toString()} sub="Discovered media sources" />
+            <MetricCard label="Storage Reclaimable" value={`${Math.round(((unknownStorage?.estimatedBytesReclaimable ?? 0)/(1024*1024)))} MB`} sub="Dry-run estimate" />
+
           </div>
           {metrics?.matched_by_detection_method_24h && (
             <p className="text-[11px] text-gray-600 max-w-3xl -mt-4 mb-2">
@@ -923,6 +1024,37 @@ export default function App() {
 
               <div className="bg-black/30 border border-white/10 rounded-2xl p-5 space-y-4">
                 <div className="flex items-center justify-between">
+                  <span className="font-semibold">Crawler / Catalog Status</span>
+                  <button onClick={fetchCrawlerStatus} className="px-2 py-1 text-xs border border-white/10 rounded">Refresh</button>
+                </div>
+                {crawlerStatus ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
+                      <div>Total discovered URLs: {crawlerStatus.total}</div>
+                      <div>Fingerprinted rows: {(crawlerStatus.byFp || []).find((x: any) => x.fingerprintStatus === 'fingerprinted')?._count?._all ?? 0}</div>
+                      <div>Failed fingerprints: {(crawlerStatus.byFp || []).find((x: any) => x.fingerprintStatus === 'failed')?._count?._all ?? 0}</div>
+                      <div>Rejected non-media: {(crawlerStatus.byClass || []).filter((x: any) => ['news','sports','generic_html','non_media','unsupported'].includes(x.classification)).reduce((a: number, b: any) => a + (b._count?._all || 0), 0)}</div>
+                      <div>Alternate sources linked: {crawlerStatus.altSources ?? 0}</div>
+                      <div>Possible duplicates (review): {crawlerStatus.possibleDupes ?? 0}</div>
+                    </div>
+                    <p className="text-xs text-gray-400">Top failing reasons: {(crawlerStatus.failures || []).slice(0, 5).map((x: any) => `${x.failureReason}:${x._count?._all || 0}`).join(', ') || 'none'}</p>
+                  </>
+                ) : (
+                  <p className="text-xs text-gray-500">No crawler status loaded yet.</p>
+                )}
+              </div>
+
+
+              <div className="bg-black/30 border border-white/10 rounded-2xl p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold">Self-Healing Rematch</span>
+                  <button onClick={fetchRematchSummary} className="px-2 py-1 text-xs border border-white/10 rounded">Refresh</button>
+                </div>
+                <p className="text-xs text-gray-400">Human-verified logs are protected. Dry-run does not change logs. Strong fingerprint evidence required for automatic correction.</p>
+                {rematchSummary ? <div className="grid grid-cols-2 gap-2 text-xs text-gray-300"><div>Pending: {rematchSummary.pending ?? 0}</div><div>Matched: {rematchSummary.matched ?? 0}</div><div>Needs review: {rematchSummary.needs_review ?? 0}</div><div>Failed: {rematchSummary.failed ?? 0}</div></div> : <p className="text-xs text-gray-500">No rematch summary loaded.</p>}
+              </div>
+              <div className="bg-black/30 border border-white/10 rounded-2xl p-5 space-y-4">
+                <div className="flex items-center justify-between">
                   <span className="font-semibold">Paid audio fallbacks (AudD / ACRCloud)</span>
                   <span
                     className={`px-2 py-1 rounded-lg text-xs font-bold ${
@@ -979,6 +1111,135 @@ export default function App() {
                       <li key={i}>{note}</li>
                     ))}
                   </ul>
+                )}
+              </div>
+
+              <div className="bg-black/30 border border-white/10 rounded-2xl p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold">Unknown Sample Storage</span>
+                  <span className="px-2 py-1 rounded-lg text-[11px] font-bold bg-amber-500/20 text-amber-200">
+                    Dry Run Only — No files deleted
+                  </span>
+                </div>
+                {storageError ? <p className="text-xs text-red-300">{storageError}</p> : null}
+                {storageLoading ? <p className="text-xs text-gray-500">Loading storage summary…</p> : null}
+                {unknownStorage && (
+                  <>
+                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
+                      <div>Total unknown: {unknownStorage.totalUnknownSampleCount}</div>
+                      <div>With audio: {unknownStorage.countWithAudioFile}</div>
+                      <div>Missing audio: {unknownStorage.countMissingAudioFile}</div>
+                      <div>Audio bytes: {unknownStorage.totalAudioBytes.toLocaleString()}</div>
+                      <div>Human verified: {unknownStorage.humanVerifiedCount}</div>
+                      <div>Fingerprinted: {unknownStorage.fingerprintedCount}</div>
+                      <div>Fingerprint failed: {unknownStorage.fingerprintFailedCount}</div>
+                      <div>Eligible: {unknownStorage.eligibleForPurgeCount}</div>
+                      <div>Blocked missing hash: {(storageDryRun?.blockedReasonsSummary?.missing_file_hash as number | undefined) ?? '—'}</div>
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      Estimated reclaimable: {unknownStorage.estimatedBytesReclaimable.toLocaleString()} bytes
+                    </p>
+                    <p className="text-xs text-amber-200">
+                      No files deleted. This only records sha256 and file size for audit safety.
+                    </p>
+                    <div className="overflow-x-auto border border-white/10 rounded-xl">
+                      <table className="w-full text-xs min-w-[680px]">
+                        <thead className="bg-black/40 text-gray-400">
+                          <tr>
+                            <th className="p-2 text-left">Station</th>
+                            <th className="p-2 text-left">Samples</th>
+                            <th className="p-2 text-left">Audio bytes</th>
+                            <th className="p-2 text-left">Eligible</th>
+                            <th className="p-2 text-left">Reclaimable</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {unknownStorage.byStation.map((row) => (
+                            <tr key={row.stationId} className="border-t border-white/10">
+                              <td className="p-2">{row.stationName}</td>
+                              <td className="p-2">{row.sampleCount}</td>
+                              <td className="p-2">{row.audioBytes.toLocaleString()}</td>
+                              <td className="p-2">{row.purgeEligibleCount}</td>
+                              <td className="p-2">{row.reclaimableBytes.toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          const res = await fetch('/api/admin/storage/unknown-samples/hash-backfill-preview', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ limit: 100, dryRun: true }),
+                          });
+                          const body = await res.json();
+                          if (!res.ok) {
+                            setStorageError(body?.error || `Hash preview failed (${res.status})`);
+                            return;
+                          }
+                          setHashBackfillResult(body);
+                        }}
+                        className="px-3 py-2 rounded-lg border border-white/10 bg-black/30 text-xs hover:bg-black/50"
+                      >
+                        Preview Hash Backfill
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const res = await fetch('/api/admin/storage/unknown-samples/hash-backfill-run', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ limit: 100, dryRun: false }),
+                          });
+                          const body = await res.json();
+                          if (!res.ok) {
+                            setStorageError(body?.error || `Hash backfill run failed (${res.status})`);
+                            return;
+                          }
+                          setHashBackfillResult(body);
+                          await fetchUnknownStorage();
+                        }}
+                        className="px-3 py-2 rounded-lg border border-white/10 bg-black/30 text-xs hover:bg-black/50"
+                      >
+                        Run Hash Backfill Batch
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const res = await fetch('/api/admin/storage/unknown-samples/purge-dry-run', { method: 'POST' });
+                          const body = await res.json();
+                          if (!res.ok) {
+                            setStorageError(body?.error || `Dry run failed (${res.status})`);
+                            return;
+                          }
+                          setStorageDryRun(body);
+                        }}
+                        className="px-3 py-2 rounded-lg border border-white/10 bg-black/30 text-xs hover:bg-black/50"
+                      >
+                        Run Purge Dry-Run
+                      </button>
+                      <button disabled className="px-3 py-2 rounded-lg border border-white/10 text-xs opacity-50">
+                        Purge (Disabled until Phase 4/5)
+                      </button>
+                    </div>
+                    {storageDryRun && (
+                      <div className="text-xs text-gray-300 border border-white/10 rounded-xl p-3">
+                        Eligible: {storageDryRun.eligibleCount} · Blocked: {storageDryRun.blockedCount} · Reclaimable:{' '}
+                        {Number(storageDryRun.reclaimableBytes || 0).toLocaleString()} bytes
+                        <div className="text-gray-500 mt-1">
+                          Blocked reasons: {Object.entries(storageDryRun.blockedReasonsSummary || {}).map(([k, v]) => `${k}:${v}`).join(', ') || 'none'}
+                        </div>
+                      </div>
+                    )}
+                    {hashBackfillResult && (
+                      <div className="text-xs text-gray-300 border border-white/10 rounded-xl p-3">
+                        Hash backfill ({hashBackfillResult.dryRunOnly ? 'preview' : 'run'}): scanned {hashBackfillResult.totalScanned}, wouldUpdate {hashBackfillResult.wouldUpdateCount}, updated {hashBackfillResult.updatedCount || 0}
+                        <div className="text-gray-500 mt-1">
+                          Missing file: {hashBackfillResult.missingFile} · No file path: {hashBackfillResult.noFilePath} · Missing hash: {hashBackfillResult.missingHash}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -1432,11 +1693,68 @@ function StationDetailPage({
     serversTried: string[];
     errors: string[];
   } | null>(null);
+  const [unknownSamples, setUnknownSamples] = useState<StationUnknownSample[]>([]);
+  const [unknownLoading, setUnknownLoading] = useState(false);
+  const [unknownError, setUnknownError] = useState<string | null>(null);
+  const [editingSample, setEditingSample] = useState<StationUnknownSample | null>(null);
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [reviewForm, setReviewForm] = useState({
+    artist: '',
+    title: '',
+    album: '',
+    label: '',
+    isrc: '',
+    iswc: '',
+    composerWriter: '',
+    publisher: '',
+    country: '',
+    sourceSociety: '',
+    notes: '',
+  });
 
   useEffect(() => {
     setStreamEdit(station.streamUrl);
     setPreferredEdit(station.preferredStreamUrl || '');
   }, [station.id, station.streamUrl, station.preferredStreamUrl]);
+
+  const fetchUnknownSamples = React.useCallback(async () => {
+    setUnknownLoading(true);
+    setUnknownError(null);
+    try {
+      const res = await fetch(`/api/stations/${station.id}/unknown-samples`);
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body?.error || `Unknown samples request failed (${res.status})`);
+      }
+      setUnknownSamples(Array.isArray(body?.items) ? body.items : []);
+    } catch (e) {
+      setUnknownError(e instanceof Error ? e.message : 'Failed to load unknown samples');
+      setUnknownSamples([]);
+    } finally {
+      setUnknownLoading(false);
+    }
+  }, [station.id]);
+
+  useEffect(() => {
+    fetchUnknownSamples();
+  }, [fetchUnknownSamples]);
+
+  const openReviewEditor = (item: StationUnknownSample) => {
+    setEditingSample(item);
+    setReviewForm({
+      artist: item.suggestedArtist || '',
+      title: item.suggestedTitle || '',
+      album: '',
+      label: '',
+      isrc: '',
+      iswc: '',
+      composerWriter: '',
+      publisher: '',
+      country: '',
+      sourceSociety: '',
+      notes: '',
+    });
+  };
 
   const lastPoll = station.lastPollAt ? new Date(station.lastPollAt) : null;
   const pollOk = station.lastPollStatus === 'ok';
@@ -1901,6 +2219,192 @@ function StationDetailPage({
             </button>
           </div>
         </div>
+
+        <div className="bg-black/30 rounded-2xl p-5 border border-white/10 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-semibold">Unknown Review</h3>
+              <p className="text-xs text-gray-500">Unmatched/unresolved samples for this station.</p>
+            </div>
+            <button
+              type="button"
+              onClick={fetchUnknownSamples}
+              disabled={unknownLoading}
+              className="px-3 py-2 rounded-xl border border-white/10 bg-black/30 text-xs hover:bg-black/50 disabled:opacity-50"
+            >
+              {unknownLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+              <div className="text-[11px] text-gray-500 uppercase">Total unknowns</div>
+              <div className="text-xl font-semibold mt-1">{unknownSamples.length}</div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+              <div className="text-[11px] text-gray-500 uppercase">With audio</div>
+              <div className="text-xl font-semibold mt-1">{unknownSamples.filter((s) => s.hasAudio).length}</div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+              <div className="text-[11px] text-gray-500 uppercase">Missing audio</div>
+              <div className="text-xl font-semibold mt-1">{unknownSamples.filter((s) => !s.hasAudio).length}</div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+              <div className="text-[11px] text-gray-500 uppercase">Latest unknown</div>
+              <div className="text-xs text-gray-300 mt-2">
+                {unknownSamples[0]?.capturedAt ? new Date(unknownSamples[0].capturedAt).toLocaleString() : '—'}
+              </div>
+            </div>
+          </div>
+
+          {unknownError ? <div className="text-sm text-red-300">{unknownError}</div> : null}
+          {unknownLoading ? <div className="text-sm text-gray-400">Loading unknown samples…</div> : null}
+          {!unknownLoading && !unknownError && unknownSamples.length === 0 ? (
+            <div className="text-sm text-gray-400 border border-dashed border-white/10 rounded-xl p-4">No unknown samples found for this station.</div>
+          ) : null}
+
+          {!unknownLoading && !unknownError && unknownSamples.length > 0 ? (
+            <div className="overflow-x-auto border border-white/10 rounded-xl">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead className="bg-black/30 text-gray-400">
+                  <tr>
+                    <th className="text-left p-3">Captured</th>
+                    <th className="text-left p-3">Metadata</th>
+                    <th className="text-left p-3">Status</th>
+                    <th className="text-left p-3">Audio</th>
+                    <th className="text-left p-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unknownSamples.map((item) => (
+                    <tr key={item.id} className="border-t border-white/10 align-top">
+                      <td className="p-3 whitespace-nowrap text-xs text-gray-300">{new Date(item.capturedAt).toLocaleString()}</td>
+                      <td className="p-3">
+                        <div className="font-medium text-gray-100">
+                          {item.suggestedArtist || 'Unknown artist'} {item.suggestedTitle ? `— ${item.suggestedTitle}` : ''}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1 line-clamp-2">{item.rawMetadataText || 'No ICY/metadata text captured.'}</div>
+                      </td>
+                      <td className="p-3">
+                        <div className="flex flex-col gap-1 text-xs">
+                          <span className="px-2 py-1 rounded-lg border border-white/15 bg-black/30 w-fit">{item.matchStatus || 'unmatched'}</span>
+                          <span className="px-2 py-1 rounded-lg border border-white/15 bg-black/30 w-fit">{item.reviewStatus || 'unreviewed'}</span>
+                          <span className="px-2 py-1 rounded-lg border border-white/15 bg-black/30 w-fit">
+                            {item.fingerprintStatus || 'not_started'}
+                          </span>
+                          {item.linkedTrackId ? <span className="text-[11px] text-brand-cyan">Track: {item.linkedTrackId.slice(0, 8)}</span> : null}
+                        </div>
+                      </td>
+                      <td className="p-3 text-xs">
+                        {item.fileAvailable ? (
+                          <audio controls preload="none" className="w-56">
+                            <source src={item.audioUrl} />
+                          </audio>
+                        ) : (
+                          <span className="text-amber-300">Missing audio</span>
+                        )}
+                      </td>
+                      <td className="p-3">
+                        <div className="flex flex-col gap-1">
+                          <button type="button" onClick={() => openReviewEditor(item)} className="text-xs px-2 py-1 rounded border border-white/10 text-left hover:bg-black/30">Edit Metadata</button>
+                          <button type="button" disabled className="text-xs px-2 py-1 rounded border border-white/10 opacity-50 text-left">Auto Identify (Phase 4)</button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              openReviewEditor(item);
+                            }}
+                            className="text-xs px-2 py-1 rounded border border-white/10 text-left hover:bg-black/30"
+                          >
+                            Save + Fingerprint
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+        {editingSample && (
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-3xl rounded-2xl border border-white/10 bg-slate-950 p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-lg font-semibold">Review Unknown Sample</h4>
+                <button type="button" onClick={() => setEditingSample(null)} className="text-sm text-gray-400">Close</button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                {Object.entries(reviewForm).map(([key, value]) => (
+                  <label key={key} className="space-y-1">
+                    <span className="text-xs text-gray-400">{key}</span>
+                    <input
+                      value={value}
+                      onChange={(e) => setReviewForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                      className="w-full px-3 py-2 rounded-lg border border-white/10 bg-black/30"
+                    />
+                  </label>
+                ))}
+              </div>
+              {editingSample.fileAvailable ? (
+                <audio controls preload="none" className="w-full">
+                  <source src={editingSample.audioUrl} />
+                </audio>
+              ) : <div className="text-amber-300 text-sm">Audio file is missing for this sample.</div>}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={reviewSaving}
+                  onClick={async () => {
+                    setReviewSaving(true);
+                    try {
+                      const res = await fetch(`/api/unknown-samples/${editingSample.id}/review`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ...reviewForm, verificationStatus: 'human_verified' }),
+                      });
+                      if (!res.ok) throw new Error(`Review save failed (${res.status})`);
+                      await fetchUnknownSamples();
+                      setEditingSample(null);
+                    } catch (e) {
+                      setUnknownError(e instanceof Error ? e.message : 'Review save failed');
+                    } finally {
+                      setReviewSaving(false);
+                    }
+                  }}
+                  className="px-3 py-2 rounded-lg bg-brand-cyan text-black text-sm font-semibold"
+                >
+                  Save Review
+                </button>
+                <button
+                  type="button"
+                  disabled={reviewSaving}
+                  onClick={async () => {
+                    setReviewSaving(true);
+                    try {
+                      const saveRes = await fetch(`/api/unknown-samples/${editingSample.id}/review`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ...reviewForm, verificationStatus: 'human_verified' }),
+                      });
+                      if (!saveRes.ok) throw new Error(`Review save failed (${saveRes.status})`);
+                      const fpRes = await fetch(`/api/unknown-samples/${editingSample.id}/save-fingerprint`, { method: 'POST' });
+                      if (!fpRes.ok) throw new Error(`Fingerprint save failed (${fpRes.status})`);
+                      await fetchUnknownSamples();
+                      setEditingSample(null);
+                    } catch (e) {
+                      setUnknownError(e instanceof Error ? e.message : 'Save + fingerprint failed');
+                    } finally {
+                      setReviewSaving(false);
+                    }
+                  }}
+                  className="px-3 py-2 rounded-lg border border-white/10 bg-black/30 text-sm"
+                >
+                  Save + Fingerprint
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {(pageError || error || station.monitorStateReason || station.lastPollError) && (
           <div className="space-y-1 text-sm">

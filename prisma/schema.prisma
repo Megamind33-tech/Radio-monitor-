@@ -129,6 +129,7 @@ model Station {
   songSpins         StationSongSpin[]
   streamEndpoints   StationStreamEndpoint[]
   healthEvents      StationHealthEvent[]
+  unresolvedSamples UnresolvedSample[]
 }
 
 model StationStreamEndpoint {
@@ -221,9 +222,12 @@ model DetectionLog {
   /// True when a human manually set titleFinal/artistFinal via the audio editor
   manuallyTagged  Boolean  @default(false)
   manualTaggedAt  DateTime?
+  verifiedTrackId String?
 
   station Station @relation(fields: [stationId], references: [id])
   songSample SongSampleArchive?
+  verifiedTrack VerifiedTrack? @relation(fields: [verifiedTrackId], references: [id])
+  unresolvedSample UnresolvedSample?
 }
 
 /// Aggregated play counts per station + normalized song key (one row per song; increments on each new play)
@@ -295,8 +299,153 @@ model UnresolvedSample {
   lastRecoveryAt   DateTime?
   recoveredAt      DateTime?
   lastRecoveryError String?
+  verifiedTrackId  String?
+  fingerprintStatus String   @default("not_started")
+  fingerprintedAt  DateTime?
+  reviewNotes      String?
+  reviewedAt       DateTime?
+  originalSha256   String?
+  audioBytes       Int?
+  purgeStatus      String?   @default("not_started")
+  purgeReadyAt     DateTime?
+  purgeReason      String?
+  purgeDryRunAt    DateTime?
+  station          Station  @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  detectionLog     DetectionLog? @relation(fields: [detectionLogId], references: [id], onDelete: SetNull)
 
   @@index([stationId, recoveryStatus, createdAt])
+}
+
+model VerifiedTrack {
+  id             String   @id @default(cuid())
+  artist         String
+  title          String
+  album          String?
+  label          String?
+  isrc           String?
+  iswc           String?
+  composerWriter String?
+  publisher      String?
+  country        String?
+  sourceSociety  String?
+  notes          String?
+  verificationStatus String @default("human_verified")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  detectionLogs  DetectionLog[]
+  catalogSources CatalogSource[]
+}
+
+
+
+model CatalogSource {
+  id                String   @id @default(cuid())
+  verifiedTrackId   String?
+  sourceUrl         String
+  canonicalUrl      String?
+  finalUrl          String?
+  sourceType        String?
+  sourceName        String?
+  countryHint       String?
+  countryConfidence Float?
+  sha256            String?
+  audioBytes        Int?
+  durationSeconds   Float?
+  metadataJson      String?
+  duplicateReason   String?
+  confidence        Float?
+  fingerprintStatus String?
+  discoveredAt      DateTime @default(now())
+  lastCheckedAt     DateTime?
+  notes             String?
+
+  verifiedTrack VerifiedTrack? @relation(fields: [verifiedTrackId], references: [id])
+
+  @@index([verifiedTrackId])
+  @@index([sourceUrl])
+  @@index([finalUrl])
+  @@index([sha256])
+  @@index([sourceType])
+  @@index([duplicateReason])
+}
+
+
+model CatalogDuplicateReview {
+  id                     String   @id @default(cuid())
+  candidateSourceId      String?
+  existingVerifiedTrackId String?
+  candidateArtist        String?
+  candidateTitle         String?
+  existingArtist         String?
+  existingTitle          String?
+  candidateDurationSeconds Float?
+  existingDurationSeconds  Float?
+  confidence             Float
+  reason                 String
+  evidenceJson           String?
+  status                 String   @default("pending")
+  createdAt              DateTime @default(now())
+  reviewedAt             DateTime?
+  reviewedBy             String?
+  decision               String?
+
+  @@index([status])
+  @@index([existingVerifiedTrackId])
+  @@index([reason])
+  @@index([confidence])
+}
+
+
+
+model RecognitionSuggestion {
+  id               String   @id @default(cuid())
+  unknownSampleId  String
+  provider         String
+  suggestedArtist  String?
+  suggestedTitle   String?
+  suggestedAlbum   String?
+  externalUrl      String?
+  rawResponseJson  String?
+  confidence       Float?
+  status           String   @default("pending")
+  createdAt        DateTime @default(now())
+  reviewedAt       DateTime?
+
+  @@unique([unknownSampleId, provider])
+  @@index([provider, status])
+}
+
+model RematchJob {
+  id               String   @id @default(cuid())
+  targetType       String
+  targetId         String
+  stationId        String?
+  triggerReason    String
+  status           String   @default("pending")
+  priority         Int      @default(50)
+  attempts         Int      @default(0)
+  maxAttempts      Int      @default(3)
+  lockedAt         DateTime?
+  completedAt      DateTime?
+  failedAt         DateTime?
+  error            String?
+  oldArtist        String?
+  oldTitle         String?
+  oldStatus        String?
+  newArtist        String?
+  newTitle         String?
+  newVerifiedTrackId String?
+  newConfidence    Float?
+  evidenceJson     String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([status])
+  @@index([stationId])
+  @@index([targetType, targetId])
+  @@index([triggerReason])
+  @@index([priority])
 }
 
 model CacheEntry {
@@ -366,4 +515,37 @@ model JobRun {
   error     String?
   durationMs Int
   startedAt DateTime @default(now())
+}
+
+model CatalogCrawlSource {
+  id               String   @id @default(cuid())
+  canonicalUrl     String
+  normalizedUrl    String
+  finalUrl         String?
+  contentType      String?
+  contentHash      String?
+  mediaSha256      String?
+  lastCheckedAt    DateTime?
+  lastStatus       String?
+  failureReason    String?
+  failureCount     Int      @default(0)
+  nextRetryAt      DateTime?
+  sourceType       String?
+  discoveredFrom   String?
+  classification   String
+  fingerprintStatus String  @default("not_started")
+  metadataStatus   String   @default("unknown")
+  qualityScore     Int      @default(0)
+  titleRaw         String?
+  artistRaw        String?
+  albumRaw         String?
+  isrc             String?
+  country          String?
+  sourceSociety    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([normalizedUrl])
+  @@index([classification, lastStatus])
+  @@index([fingerprintStatus, updatedAt])
 }
