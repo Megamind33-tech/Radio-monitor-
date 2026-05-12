@@ -73,11 +73,13 @@ function sourceLabel(s: string): string {
 function ServicePill({ ok, label }: { ok: boolean; label: string }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border ${
-        ok ? 'border-green-500/40 bg-green-500/10 text-green-300' : 'border-white/10 bg-black/30 text-gray-500'
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+        ok
+          ? 'border-green-500/25 bg-green-500/8 text-green-300'
+          : 'border-white/[0.08] bg-black/20 text-gray-500'
       }`}
     >
-      {ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
+      {ok ? <CheckCircle2 className="w-3 h-3 shrink-0" /> : <XCircle className="w-3 h-3 shrink-0" />}
       {label}
     </span>
   );
@@ -133,33 +135,33 @@ export function LearningLibraryTab() {
   const bySourceEntries = lib?.bySource ? Object.entries(lib.bySource).sort((a, b) => b[1] - a[1]) : [];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-7">
       <div className="flex flex-wrap justify-between items-start gap-4">
         <div>
-          <h2 className="text-xl font-semibold flex items-center gap-2">
-            <Brain className="w-6 h-6 text-brand-purple" />
-            Learning library
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Brain className="w-5 h-5 text-brand-purple" />
+            Learning Library
           </h2>
           <p className="text-sm text-gray-500 mt-1 max-w-2xl">
             Chromaprint fingerprints learned from successful matches. Local hits skip AcoustID on repeat plays.
-            Pipeline load shows how many stations are capturing audio right now (global gate).
+            Pipeline load shows how many stations are capturing audio right now.
           </p>
         </div>
         <div className="flex gap-2">
           <a
             href="/api/fingerprints/local/export?format=csv"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-white/10 bg-black/20 text-sm hover:bg-black/40 text-gray-300 transition-all"
             download
           >
-            <Download className="w-4 h-4" />
-            Export quality CSV
+            <Download className="w-3.5 h-3.5" />
+            Export CSV
           </a>
           <button
             type="button"
             onClick={() => void fetchAll()}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-white/10 bg-black/20 text-sm hover:bg-black/40 text-gray-300 transition-all"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className="w-3.5 h-3.5" />
             Refresh
           </button>
         </div>
@@ -169,14 +171,14 @@ export function LearningLibraryTab() {
         <div className="rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white/5 border border-white/10 rounded-3xl p-6 space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="lg:col-span-2 bg-white/[0.03] border border-white/[0.07] rounded-3xl p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
               <Activity className="w-4 h-4 text-brand-cyan" />
               Fingerprint pipeline (live)
             </h3>
-            <span className="text-[10px] text-gray-600 uppercase">Polls every {POLL_MS / 1000}s</span>
+            <span className="text-[10px] text-gray-600 uppercase tracking-wider">Polls every {POLL_MS / 1000}s</span>
           </div>
           <div className="flex items-end gap-4">
             <div className="flex-1">
@@ -210,7 +212,7 @@ export function LearningLibraryTab() {
           </div>
         </div>
 
-        <div className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-4">
+        <div className="bg-white/[0.03] border border-white/[0.07] rounded-3xl p-6 space-y-4">
           <h3 className="text-sm font-semibold text-gray-300">How it learns</h3>
           <ol className="text-xs text-gray-400 space-y-2 list-decimal list-inside leading-relaxed">
             <li>Match from AcoustID, catalog, or paid fallback after audio capture.</li>
@@ -237,7 +239,7 @@ export function LearningLibraryTab() {
         </div>
       </div>
 
-      <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+      <div className="bg-white/[0.03] border border-white/[0.07] rounded-3xl p-6">
         <h3 className="text-sm font-semibold text-gray-300 mb-4">Recognition stack (env)</h3>
         <div className="flex flex-wrap gap-2">
           <ServicePill ok={dash?.services.acoustid ?? false} label="AcoustID key" />
@@ -249,7 +251,7 @@ export function LearningLibraryTab() {
         </div>
       </div>
 
-      <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+      <div className="bg-white/[0.03] border border-white/[0.07] rounded-3xl p-6">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
             <Radio className="w-4 h-4 text-brand-cyan" />
@@ -346,10 +348,10 @@ export function LearningLibraryTab() {
 
 function StatBox({ label, value, sub }: { label: string; value: string | number; sub: string }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-3">
-      <div className="text-[10px] uppercase text-gray-600 font-bold">{label}</div>
-      <div className="text-xl font-bold text-white mt-0.5">{value}</div>
-      <div className="text-[10px] text-gray-600 mt-1">{sub}</div>
+    <div className="rounded-2xl border border-white/[0.08] bg-black/25 px-3 py-3">
+      <div className="text-[10px] uppercase text-gray-600 font-semibold tracking-wider">{label}</div>
+      <div className="text-xl font-bold text-brand-cyan mt-1 leading-none">{value}</div>
+      <div className="text-[10px] text-gray-600 mt-1.5">{sub}</div>
     </div>
   );
 }

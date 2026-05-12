@@ -676,96 +676,147 @@ export default function App() {
   return (
     <div className="min-h-screen bg-brand-bg text-gray-100 selection:bg-brand-cyan/30">
       {/* Sidebar / Nav */}
-      <nav className="fixed left-0 top-0 h-full w-20 border-r border-white/5 bg-black/40 backdrop-blur-xl flex flex-col items-center py-8 gap-10 z-50">
-        <div className="p-3 bg-brand-cyan/20 rounded-2xl border border-brand-cyan/30 shadow-[0_0_20px_rgba(0,242,255,0.2)]">
-          <Radio className="w-8 h-8 text-brand-cyan" />
-        </div>
-        
-        <div className="flex flex-col gap-6 flex-1">
-          <NavIcon icon={<Activity className="w-6 h-6" />} active={activeTab === 'stations'} onClick={() => setActiveTab('stations')} label="Monitor" />
-          <NavIcon icon={<History className="w-6 h-6" />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="History" />
-          <NavIcon icon={<LineChart className="w-6 h-6" />} active={activeTab === 'analytics'} onClick={() => setActiveTab('analytics')} label="Song spins" />
-          <NavIcon icon={<Brain className="w-6 h-6" />} active={activeTab === 'learning'} onClick={() => setActiveTab('learning')} label="Learning library" />
-          <NavIcon icon={<Headphones className="w-6 h-6" />} active={activeTab === 'audioeditor'} onClick={() => setActiveTab('audioeditor')} label="Audio Editor" />
-          <NavIcon icon={<Settings className="w-6 h-6" />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Settings" />
+      <nav className="fixed left-0 top-0 h-full w-60 border-r border-white/[0.06] bg-black/60 backdrop-blur-xl flex flex-col z-50">
+        {/* Brand */}
+        <div className="px-5 py-6 border-b border-white/[0.06]">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-brand-cyan/15 rounded-xl border border-brand-cyan/20 shadow-[0_0_16px_rgba(0,242,255,0.18)] pulse-cyan">
+              <Radio className="w-5 h-5 text-brand-cyan" />
+            </div>
+            <div>
+              <div className="font-bold text-white text-sm tracking-wide leading-none">Airwave</div>
+              <div className="text-[10px] text-gray-500 uppercase tracking-widest mt-0.5">Monitor</div>
+            </div>
+          </div>
         </div>
 
-        <button
-          type="button"
-          className="p-3 text-gray-500 hover:text-white transition-colors"
-          onClick={() => setIsAddingStation(true)}
-          aria-label="Add station"
-        >
-          <Plus className="w-6 h-6" />
-        </button>
+        {/* Nav items */}
+        <div className="flex flex-col gap-0.5 px-3 pt-4 flex-1 overflow-y-auto">
+          <div className="rm-section-label px-3 mb-2">Operations</div>
+          <NavIcon icon={<Activity className="w-4 h-4 shrink-0" />} active={activeTab === 'stations'} onClick={() => setActiveTab('stations')} label="Monitor" />
+          <NavIcon icon={<History className="w-4 h-4 shrink-0" />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="History" />
+          <NavIcon icon={<LineChart className="w-4 h-4 shrink-0" />} active={activeTab === 'analytics'} onClick={() => setActiveTab('analytics')} label="Song Spins" />
+          <div className="rm-section-label px-3 mt-5 mb-2">Intelligence</div>
+          <NavIcon icon={<Brain className="w-4 h-4 shrink-0" />} active={activeTab === 'learning'} onClick={() => setActiveTab('learning')} label="Learning Library" />
+          <NavIcon icon={<Headphones className="w-4 h-4 shrink-0" />} active={activeTab === 'audioeditor'} onClick={() => setActiveTab('audioeditor')} label="Audio Editor" />
+          <div className="rm-section-label px-3 mt-5 mb-2">System</div>
+          <NavIcon icon={<Settings className="w-4 h-4 shrink-0" />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="Settings" />
+        </div>
+
+        {/* Add station */}
+        <div className="px-3 py-4 border-t border-white/[0.06]">
+          <button
+            type="button"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-dashed border-white/15 text-gray-400 hover:text-brand-cyan hover:border-brand-cyan/40 hover:bg-brand-cyan/5 transition-all text-sm font-medium"
+            onClick={() => setIsAddingStation(true)}
+          >
+            <Plus className="w-4 h-4 shrink-0" />
+            Add Station
+          </button>
+        </div>
       </nav>
 
       {/* Main Content */}
-      <main className="pl-28 pr-6 py-10 max-w-[1650px] mx-auto">
+      <main className="pl-64 pr-6 py-8 max-w-[1700px] mx-auto">
         {/* Header */}
-        <header className="mb-8 flex flex-wrap justify-between items-end gap-6">
-          <div>
-            <h1 className="text-4xl font-bold tracking-tight mb-2 flex items-center gap-3">
-              Radio Monitoring <span className="text-brand-cyan">Operations</span>
-            </h1>
-            <p className="text-gray-400">
-              {activeTab === 'stations' && stationPageId
-                ? 'Station profile, logs, and per-station export.'
-                : activeTab === 'learning'
-                  ? 'Self-learned Chromaprint library, pipeline load, and recognition stack status.'
-                  : 'Fingerprint matching, unknown review, catalog growth, and royalty-ready logs.'}
-            </p>
+        <header className="mb-8">
+          {/* Page title row */}
+          <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-1.5 h-5 rounded-full bg-brand-cyan shadow-[0_0_8px_rgba(0,242,255,0.6)]" />
+                <h1 className="text-2xl font-bold tracking-tight text-white">
+                  {activeTab === 'stations' && stationPageId
+                    ? 'Station Profile'
+                    : activeTab === 'history'
+                      ? 'Airplay History'
+                      : activeTab === 'analytics'
+                        ? 'Song Spins'
+                        : activeTab === 'learning'
+                          ? 'Learning Library'
+                          : activeTab === 'audioeditor'
+                            ? 'Audio Editor'
+                            : activeTab === 'settings'
+                              ? 'Settings'
+                              : 'Radio Monitoring'}
+                </h1>
+              </div>
+              <p className="text-sm text-gray-500 ml-3.5">
+                {activeTab === 'stations' && stationPageId
+                  ? 'Station profile, logs, and per-station export.'
+                  : activeTab === 'learning'
+                    ? 'Self-learned Chromaprint library, pipeline load, and recognition stack status.'
+                    : 'Fingerprint matching, unknown review, catalog growth, and royalty-ready logs.'}
+              </p>
+            </div>
+            {/* Live indicator */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-green-500/20 bg-green-500/5 text-green-400 text-xs font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-400 pulse-live" />
+              Live
+            </div>
           </div>
-          
-          <div className="flex gap-4 flex-wrap">
-            <MetricCard 
-              label="Song match rate" 
+
+          {/* Metric cards row */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+            <MetricCard
+              label="Match Rate"
               value={
                 metrics
-                  ? `${(
-                      (metrics.music_match_rate_24h ?? metrics.music_match_rate ?? metrics.match_rate_24h ?? metrics.match_rate) * 100
-                    ).toFixed(1)}%`
+                  ? `${((metrics.music_match_rate_24h ?? metrics.music_match_rate ?? metrics.match_rate_24h ?? metrics.match_rate) * 100).toFixed(1)}%`
                   : '--'
-              } 
+              }
               sub={
                 metrics?.music_detections_24h != null && metrics.music_matched_24h != null
-                  ? `Last 24h: ${metrics.music_matched_24h} matched / ${metrics.music_detections_24h} song attempts (talk/program ICY excluded)`
-                  : metrics?.detections_24h
-                    ? `Last 24h all logs: ${((metrics.match_rate_24h ?? metrics.match_rate) * 100).toFixed(1)}% (${metrics.detections_24h} rows)`
-                    : 'Last 24h'
+                  ? `${metrics.music_matched_24h}/${metrics.music_detections_24h} songs 24h`
+                  : 'Last 24h · songs only'
               }
+              accent="cyan"
             />
-            <MetricCard 
-              label="Monitoring" 
-              value={monitoredCount.toString()} 
-              sub="Active Zambia stations"
+            <MetricCard
+              label="Monitoring"
+              value={monitoredCount.toString()}
+              sub="Active stations"
+              accent="green"
             />
-            <MetricCard label="Unknown Queue" value={(unknownStorage?.totalUnknownSampleCount ?? 0).toString()} sub="Samples awaiting review" />
-            <MetricCard label="Fingerprints Added" value={(metrics?.music_matched_24h ?? metrics?.music_matched ?? 0).toString()} sub="Local library size" />
-            <MetricCard label="Catalog Sources" value={(crawlerStatus?.total ?? 0).toString()} sub="Discovered media sources" />
-            <MetricCard label="Storage Reclaimable" value={`${Math.round(((unknownStorage?.estimatedBytesReclaimable ?? 0)/(1024*1024)))} MB`} sub="Dry-run estimate" />
-
+            <MetricCard
+              label="Unknown Queue"
+              value={(unknownStorage?.totalUnknownSampleCount ?? 0).toString()}
+              sub="Awaiting review"
+              accent="amber"
+            />
+            <MetricCard
+              label="Matched 24h"
+              value={(metrics?.music_matched_24h ?? metrics?.music_matched ?? 0).toString()}
+              sub="Song identifications"
+              accent="purple"
+            />
+            <MetricCard
+              label="Catalog Sources"
+              value={(crawlerStatus?.total ?? 0).toString()}
+              sub="Discovered media"
+              accent="sky"
+            />
+            <MetricCard
+              label="Reclaimable"
+              value={`${Math.round((unknownStorage?.estimatedBytesReclaimable ?? 0) / (1024 * 1024))} MB`}
+              sub="Storage dry-run"
+              accent="orange"
+            />
           </div>
+
           {metrics?.matched_by_detection_method_24h && (
-            <p className="text-[11px] text-gray-600 max-w-3xl -mt-4 mb-2">
-              Last 24h matched by method: AcoustID{' '}
-              <span className="text-gray-400 font-mono">
-                {metrics.matched_by_detection_method_24h.fingerprint_acoustid ?? 0}
-              </span>
-              {' · '}local{' '}
-              <span className="text-gray-400 font-mono">
-                {metrics.matched_by_detection_method_24h.fingerprint_local ?? 0}
-              </span>
-              {' · '}catalog{' '}
-              <span className="text-gray-400 font-mono">
-                {metrics.matched_by_detection_method_24h.catalog_lookup ?? 0}
-              </span>
-              {' · '}AudD/ACR{' '}
+            <p className="text-[11px] text-gray-600 mt-3">
+              24h by method — AcoustID:{' '}
+              <span className="text-gray-400 font-mono">{metrics.matched_by_detection_method_24h.fingerprint_acoustid ?? 0}</span>
+              {' · '}Local:{' '}
+              <span className="text-gray-400 font-mono">{metrics.matched_by_detection_method_24h.fingerprint_local ?? 0}</span>
+              {' · '}Catalog:{' '}
+              <span className="text-gray-400 font-mono">{metrics.matched_by_detection_method_24h.catalog_lookup ?? 0}</span>
+              {' · '}AudD/ACR:{' '}
               <span className="text-gray-400 font-mono">
                 {(metrics.matched_by_detection_method_24h.fingerprint_audd ?? 0) +
                   (metrics.matched_by_detection_method_24h.fingerprint_acrcloud ?? 0)}
               </span>
-              . Use Song match rate above for song-oriented view.
             </p>
           )}
         </header>
@@ -785,13 +836,16 @@ export default function App() {
         )}
 
         {activeTab === 'stations' && stationPageId && !activeStation && (
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-10 text-center">
-            <h2 className="text-xl font-semibold">Station page not found</h2>
-            <p className="text-sm text-gray-400 mt-2">This station may have been removed or hidden.</p>
+          <div className="rm-card p-12 text-center">
+            <div className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mx-auto mb-4">
+              <Radio className="w-6 h-6 text-gray-600" />
+            </div>
+            <h2 className="text-lg font-semibold text-gray-200">Station not found</h2>
+            <p className="text-sm text-gray-500 mt-2">This station may have been removed or hidden.</p>
             <button
               type="button"
               onClick={() => setStationHash()}
-              className="mt-5 px-4 py-2 rounded-xl border border-white/10 bg-black/30 hover:bg-black/50"
+              className="btn-ghost mt-5 px-4 py-2 text-sm text-gray-300"
             >
               Back to station list
             </button>
@@ -814,71 +868,70 @@ export default function App() {
         )}
 
         {activeTab === 'learning' && (
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-sm">
+          <div className="rm-card p-6 lg:p-8">
             <LearningLibraryTab />
           </div>
         )}
 
         {activeTab === 'analytics' && (
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-sm space-y-6">
+          <div className="rm-card p-6 lg:p-8 space-y-5">
             <div className="flex flex-wrap justify-between items-center gap-4">
               <div>
-                <h2 className="text-xl font-semibold flex items-center gap-2">
+                <h2 className="text-lg font-semibold flex items-center gap-2">
                   <BarChart3 className="w-5 h-5 text-brand-cyan" />
-                  Song spins (all stations)
+                  Song Spins — All Stations
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">
-                  Per-station CSV exports now live on each station page so song extraction is not one massive file.
+                  Per-station CSV exports are on each station page.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => fetchSongAnalytics()}
-                className="px-4 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50"
+                className="btn-ghost px-3 py-2 text-sm text-gray-400 flex items-center gap-1.5"
               >
+                <RefreshCw className="w-3.5 h-3.5" />
                 Refresh
               </button>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm table-fixed min-w-[980px]">
+            <div className="overflow-x-auto rounded-2xl border border-white/[0.06]">
+              <table className="w-full text-left text-sm table-fixed min-w-[960px]">
                 <thead>
-                  <tr className="border-b border-white/5 text-gray-500">
-                    <th className="pb-3 font-medium w-[20%]">Station</th>
-                    <th className="pb-3 font-medium w-[13%]">Province</th>
-                    <th className="pb-3 font-medium w-[13%]">District</th>
-                    <th className="pb-3 font-medium w-[20%]">Title</th>
-                    <th className="pb-3 font-medium w-[16%]">Artist</th>
-                    <th className="pb-3 font-medium w-[12%]">Album</th>
-                    <th className="pb-3 font-medium text-right w-[6%]">Plays</th>
+                  <tr className="border-b border-white/[0.07] bg-white/[0.02]">
+                    <th className="py-3 px-4 rm-section-label w-[20%]">Station</th>
+                    <th className="py-3 px-4 rm-section-label w-[12%]">Province</th>
+                    <th className="py-3 px-4 rm-section-label w-[12%]">District</th>
+                    <th className="py-3 px-4 rm-section-label w-[22%]">Title</th>
+                    <th className="py-3 px-4 rm-section-label w-[16%]">Artist</th>
+                    <th className="py-3 px-4 rm-section-label w-[12%]">Album</th>
+                    <th className="py-3 px-4 rm-section-label text-right w-[6%]">Plays</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-white/[0.04]">
                   {analyticsLoading && songSpins.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-gray-500">
-                        Loading analytics…
-                      </td>
+                      <td colSpan={7} className="py-10 text-center text-gray-500">Loading analytics…</td>
                     </tr>
                   ) : (
                     songSpins.map((row, i) => {
                       const st = stations.find((s) => s.id === row.stationId);
                       return (
-                        <tr key={`${row.stationId}-${row.title}-${i}`} className="border-b border-white/5 hover:bg-white/5">
-                          <td className="py-3 font-medium truncate pr-2" title={st?.name ?? row.stationId}>{st?.name ?? row.stationId}</td>
-                          <td className="py-3 text-gray-400 truncate pr-2" title={st?.province || '—'}>{st?.province || '—'}</td>
-                          <td className="py-3 text-gray-400 truncate pr-2" title={st?.district || '—'}>{st?.district || '—'}</td>
-                          <td className="py-3 truncate pr-2" title={row.title || '—'}>{row.title || '—'}</td>
-                          <td className="py-3 text-gray-400 truncate pr-2" title={row.artist || '—'}>{row.artist || '—'}</td>
-                          <td className="py-3 text-gray-500 truncate pr-2" title={row.album || '—'}>{row.album || '—'}</td>
-                          <td className="py-3 text-right font-mono">{row.playCount}</td>
+                        <tr key={`${row.stationId}-${row.title}-${i}`} className="hover:bg-white/[0.025] transition-colors">
+                          <td className="py-3 px-4 font-medium text-gray-200 truncate pr-2" title={st?.name ?? row.stationId}>{st?.name ?? row.stationId}</td>
+                          <td className="py-3 px-4 text-gray-500 truncate pr-2" title={st?.province || '—'}>{st?.province || '—'}</td>
+                          <td className="py-3 px-4 text-gray-500 truncate pr-2" title={st?.district || '—'}>{st?.district || '—'}</td>
+                          <td className="py-3 px-4 text-gray-200 truncate pr-2" title={row.title || '—'}>{row.title || '—'}</td>
+                          <td className="py-3 px-4 text-gray-400 truncate pr-2" title={row.artist || '—'}>{row.artist || '—'}</td>
+                          <td className="py-3 px-4 text-gray-500 truncate pr-2" title={row.album || '—'}>{row.album || '—'}</td>
+                          <td className="py-3 px-4 text-right font-mono text-gray-300">{row.playCount}</td>
                         </tr>
                       );
                     })
                   )}
                   {!analyticsLoading && songSpins.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-gray-500">
+                      <td colSpan={7} className="py-12 text-center text-gray-500 text-sm">
                         No matched detections yet. Leave the monitor running — spins appear as tracks are logged.
                       </td>
                     </tr>
@@ -890,74 +943,82 @@ export default function App() {
         )}
 
         {activeTab === 'history' && (
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-sm">
-             <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-semibold flex items-center gap-2">
-                  <History className="w-5 h-5 text-brand-purple" />
-                  Station Airplay Timeline
-                </h2>
-                <div className="flex gap-2">
-                   <select
-                      value={selectedStationId}
-                      onChange={(event) => setSelectedStationId(event.target.value)}
-                      className="bg-black/40 border border-white/10 rounded-lg px-3 py-1 text-sm outline-none"
-                    >
-                      <option value="all">All Stations</option>
-                      {orderedStations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
-                   </select>
-                   <button
-                    onClick={() => fetchLogs(selectedStationId)}
-                    className="px-3 py-1 text-xs rounded-lg border border-white/10 bg-black/30 hover:bg-black/50 transition-colors"
-                   >
-                    Refresh
-                   </button>
-                </div>
-             </div>
-             
-             <div className="overflow-x-auto">
-                <table className="w-full text-left table-fixed min-w-[980px]">
-                  <thead>
-                    <tr className="border-b border-white/5 text-gray-500 text-sm">
-                      <th className="pb-4 font-medium w-[18%]">Time</th>
-                      <th className="pb-4 font-medium w-[20%]">Station</th>
-                      <th className="pb-4 font-medium w-[42%]">Track Info</th>
-                      <th className="pb-4 font-medium w-[12%]">Method</th>
-                      <th className="pb-4 font-medium w-[8%]">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="text-sm">
-                    {logs.map((log) => (
-                      <tr key={log.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
-                        <td className="py-4 text-gray-400 whitespace-nowrap">{new Date(log.observedAt).toLocaleString()}</td>
-                        <td className="py-4 font-medium truncate pr-2" title={log.station?.name || stationNameById.get(log.stationId) || "Unknown station"}>{log.station?.name || stationNameById.get(log.stationId) || "Unknown station"}</td>
-                        <td className="py-4">
-                          <div className="flex flex-col min-w-0">
-                            <span className="font-semibold group-hover:text-brand-cyan transition-colors truncate" title={log.titleFinal || "Unknown track"}>{log.titleFinal || "Unknown track"}</span>
-                            <span className="text-xs text-gray-500 truncate" title={log.artistFinal || "Unknown artist"}>{log.artistFinal || "Unknown artist"}</span>
-                            <span className="text-xs text-gray-600 truncate">
-                              {log.genreFinal ? `Genre: ${log.genreFinal}` : ''}
-                              {log.sourceProvider ? `${log.genreFinal ? ' • ' : ''}Source: ${log.sourceProvider}` : ''}
-                            </span>
+          <div className="rm-card p-6 lg:p-8 space-y-5">
+            <div className="flex flex-wrap justify-between items-center gap-4">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <History className="w-5 h-5 text-brand-cyan" />
+                Station Airplay Timeline
+              </h2>
+              <div className="flex gap-2">
+                <select
+                  value={selectedStationId}
+                  onChange={(event) => setSelectedStationId(event.target.value)}
+                  className="rm-input bg-black/40 px-3 py-1.5 text-sm"
+                >
+                  <option value="all">All Stations</option>
+                  {orderedStations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
+                </select>
+                <button
+                  onClick={() => fetchLogs(selectedStationId)}
+                  className="btn-ghost-sm px-3 py-1.5 text-gray-400 flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-2xl border border-white/[0.06]">
+              <table className="w-full text-left table-fixed min-w-[960px] text-sm">
+                <thead>
+                  <tr className="border-b border-white/[0.07] bg-white/[0.02]">
+                    <th className="py-3 px-4 rm-section-label w-[18%]">Time</th>
+                    <th className="py-3 px-4 rm-section-label w-[18%]">Station</th>
+                    <th className="py-3 px-4 rm-section-label w-[42%]">Track</th>
+                    <th className="py-3 px-4 rm-section-label w-[13%]">Method</th>
+                    <th className="py-3 px-4 rm-section-label w-[9%]">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.04]">
+                  {logs.map((log) => (
+                    <tr key={log.id} className="hover:bg-white/[0.025] transition-colors group">
+                      <td className="py-3.5 px-4 text-gray-500 text-xs whitespace-nowrap">{new Date(log.observedAt).toLocaleString()}</td>
+                      <td className="py-3.5 px-4 font-medium text-gray-200 truncate pr-2" title={log.station?.name || stationNameById.get(log.stationId) || 'Unknown'}>
+                        {log.station?.name || stationNameById.get(log.stationId) || 'Unknown'}
+                      </td>
+                      <td className="py-3.5 px-4 min-w-0">
+                        <div className="font-medium text-gray-100 truncate group-hover:text-brand-cyan transition-colors" title={log.titleFinal || 'Unknown track'}>
+                          {log.titleFinal || 'Unknown track'}
+                        </div>
+                        <div className="text-xs text-gray-500 truncate" title={log.artistFinal || ''}>{log.artistFinal || ''}</div>
+                        {(log.genreFinal || log.sourceProvider) && (
+                          <div className="text-[10px] text-gray-600">
+                            {log.genreFinal}{log.genreFinal && log.sourceProvider ? ' · ' : ''}{log.sourceProvider ? `via ${log.sourceProvider}` : ''}
                           </div>
-                        </td>
-                        <td className="py-4">
-                          <span className="px-2 py-0.5 bg-brand-cyan/10 text-brand-cyan rounded-full text-[10px] uppercase font-bold">{formatMethod(log.detectionMethod)}</span>
-                        </td>
-                        <td className="py-4">
-                          {log.status === 'matched' ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <AlertCircle className="w-4 h-4 text-yellow-500" />}
-                        </td>
-                      </tr>
-                    ))}
-                    {!historyLoading && logs.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="py-8 text-center text-gray-500">
-                          No airplay detections yet. Probe a station to create logs.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-             </div>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <span className="px-2 py-0.5 bg-brand-cyan/10 text-brand-cyan rounded-md text-[10px] uppercase font-bold tracking-wide">
+                          {formatMethod(log.detectionMethod)}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        {log.status === 'matched'
+                          ? <CheckCircle2 className="w-4 h-4 text-green-500" />
+                          : <AlertCircle className="w-4 h-4 text-amber-400" />}
+                      </td>
+                    </tr>
+                  ))}
+                  {!historyLoading && logs.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-12 text-center text-gray-500 text-sm">
+                        No airplay detections yet. Probe a station to create logs.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -986,17 +1047,17 @@ export default function App() {
         )}
 
         {activeTab === 'settings' && (
-          <div className="max-w-2xl bg-white/5 border border-white/10 rounded-3xl p-10">
-            <h2 className="text-xl font-semibold mb-8 flex items-center gap-2">
-              <Settings className="w-5 h-5 text-gray-400" />
+          <div className="max-w-2xl rm-card p-8">
+            <h2 className="text-lg font-semibold mb-6 flex items-center gap-2 text-gray-100">
+              <Settings className="w-5 h-5 text-brand-cyan" />
               Environment & Fingerprint Readiness
             </h2>
             
             <div className="space-y-6">
-              <div className="bg-black/30 border border-white/10 rounded-2xl p-5 space-y-4">
+              <div className="rm-card-inner p-5 space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold">Fingerprint pipeline</span>
-                  <span className={`px-2 py-1 rounded-lg text-xs font-bold ${dependencies?.fingerprintReady ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-300'}`}>
+                  <span className="font-semibold text-gray-200">Fingerprint pipeline</span>
+                  <span className={`px-2.5 py-1 rounded-lg text-xs font-bold ${dependencies?.fingerprintReady ? 'bg-green-500/15 text-green-400 border border-green-500/20' : 'bg-amber-500/15 text-amber-300 border border-amber-500/20'}`}>
                     {dependencies?.fingerprintReady ? 'READY' : 'NEEDS SETUP'}
                   </span>
                 </div>
@@ -1022,10 +1083,10 @@ export default function App() {
                 )}
               </div>
 
-              <div className="bg-black/30 border border-white/10 rounded-2xl p-5 space-y-4">
+              <div className="rm-card-inner p-5 space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold">Crawler / Catalog Status</span>
-                  <button onClick={fetchCrawlerStatus} className="px-2 py-1 text-xs border border-white/10 rounded">Refresh</button>
+                  <span className="font-semibold text-gray-200">Crawler / Catalog Status</span>
+                  <button onClick={fetchCrawlerStatus} className="btn-ghost-sm px-2.5 py-1 text-gray-400">Refresh</button>
                 </div>
                 {crawlerStatus ? (
                   <>
@@ -1045,17 +1106,17 @@ export default function App() {
               </div>
 
 
-              <div className="bg-black/30 border border-white/10 rounded-2xl p-5 space-y-4">
+              <div className="rm-card-inner p-5 space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold">Self-Healing Rematch</span>
-                  <button onClick={fetchRematchSummary} className="px-2 py-1 text-xs border border-white/10 rounded">Refresh</button>
+                  <span className="font-semibold text-gray-200">Self-Healing Rematch</span>
+                  <button onClick={fetchRematchSummary} className="btn-ghost-sm px-2.5 py-1 text-gray-400">Refresh</button>
                 </div>
                 <p className="text-xs text-gray-400">Human-verified logs are protected. Dry-run does not change logs. Strong fingerprint evidence required for automatic correction.</p>
                 {rematchSummary ? <div className="grid grid-cols-2 gap-2 text-xs text-gray-300"><div>Pending: {rematchSummary.pending ?? 0}</div><div>Matched: {rematchSummary.matched ?? 0}</div><div>Needs review: {rematchSummary.needs_review ?? 0}</div><div>Failed: {rematchSummary.failed ?? 0}</div></div> : <p className="text-xs text-gray-500">No rematch summary loaded.</p>}
               </div>
-              <div className="bg-black/30 border border-white/10 rounded-2xl p-5 space-y-4">
+              <div className="rm-card-inner p-5 space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold">Paid audio fallbacks (AudD / ACRCloud)</span>
+                  <span className="font-semibold text-gray-200">Paid audio fallbacks (AudD / ACRCloud)</span>
                   <span
                     className={`px-2 py-1 rounded-lg text-xs font-bold ${
                       !dependencies?.paidApis
@@ -1114,10 +1175,10 @@ export default function App() {
                 )}
               </div>
 
-              <div className="bg-black/30 border border-white/10 rounded-2xl p-5 space-y-4">
+              <div className="rm-card-inner p-5 space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold">Unknown Sample Storage</span>
-                  <span className="px-2 py-1 rounded-lg text-[11px] font-bold bg-amber-500/20 text-amber-200">
+                  <span className="font-semibold text-gray-200">Unknown Sample Storage</span>
+                  <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20">
                     Dry Run Only — No files deleted
                   </span>
                 </div>
@@ -1259,16 +1320,16 @@ export default function App() {
                 </span>
               </label>
 
-              <div className="pt-4 border-t border-white/5 flex gap-4">
+              <div className="pt-4 border-t border-white/[0.06] flex gap-3">
                 <button
                   onClick={fetchDependencies}
-                  className="flex-1 bg-brand-purple hover:bg-brand-purple/80 text-white font-semibold py-3 rounded-xl transition-all"
+                  className="flex-1 bg-brand-purple/80 hover:bg-brand-purple text-white font-semibold py-2.5 rounded-xl transition-all text-sm"
                 >
                   Re-check Dependencies
                 </button>
                 <button
                   onClick={fetchData}
-                  className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-semibold py-3 rounded-xl transition-all"
+                  className="flex-1 btn-ghost text-white font-semibold py-2.5 text-sm"
                 >
                   Refresh Station Status
                 </button>
@@ -1281,19 +1342,24 @@ export default function App() {
       {/* Modals */}
       <AnimatePresence>
         {isAddingStation && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/75 backdrop-blur-lg">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-[2rem] overflow-hidden shadow-2xl"
+              exit={{ opacity: 0, scale: 0.96, y: 16 }}
+              className="bg-brand-surface border border-white/10 w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl"
             >
-              <div className="px-8 py-10">
-                <h3 className="text-2xl font-bold mb-2">Register Station</h3>
-                <p className="text-gray-400 mb-8 text-sm">Add a new radio stream to monitor.</p>
-                
+              <div className="px-8 py-8">
+                <div className="flex items-center gap-3 mb-1">
+                  <div className="p-1.5 rounded-lg bg-brand-cyan/15 border border-brand-cyan/20">
+                    <Plus className="w-4 h-4 text-brand-cyan" />
+                  </div>
+                  <h3 className="text-xl font-bold text-white">Register Station</h3>
+                </div>
+                <p className="text-gray-500 mb-6 text-sm ml-10">Add a new radio stream to monitor.</p>
+
                 <form
-                  className="space-y-6"
+                  className="space-y-5"
                   onSubmit={async (e) => {
                     e.preventDefault();
                     setAddError(null);
@@ -1339,28 +1405,28 @@ export default function App() {
                     }
                   }}
                 >
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-500">Station Name</label>
-                    <input required name="name" type="text" placeholder="e.g. Worldwide FM" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-brand-cyan transition-colors" />
+                  <div className="space-y-1.5">
+                    <label className="rm-section-label">Station Name</label>
+                    <input required name="name" type="text" placeholder="e.g. Radio Phoenix" className="rm-input w-full px-4 py-2.5 text-sm" />
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-500">Stream URL (Direct MP3/AAC/M3U)</label>
-                    <input required name="streamUrl" type="url" placeholder="https://icecast.example.com/stream" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-brand-cyan transition-colors" />
+                  <div className="space-y-1.5">
+                    <label className="rm-section-label">Stream URL (MP3 / AAC / M3U)</label>
+                    <input required name="streamUrl" type="url" placeholder="https://icecast.example.com/stream" className="rm-input w-full px-4 py-2.5 text-sm" />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-gray-500">Country</label>
-                      <input required name="country" type="text" placeholder="USA" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none" />
+                    <div className="space-y-1.5">
+                      <label className="rm-section-label">Country</label>
+                      <input required name="country" type="text" placeholder="Zambia" className="rm-input w-full px-4 py-2.5 text-sm" />
                     </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-gray-500">Poll (secs)</label>
-                      <input required name="pollIntervalSeconds" type="number" defaultValue="60" min={5} max={3600} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none" />
+                    <div className="space-y-1.5">
+                      <label className="rm-section-label">Poll Interval (sec)</label>
+                      <input required name="pollIntervalSeconds" type="number" defaultValue="60" min={5} max={3600} className="rm-input w-full px-4 py-2.5 text-sm" />
                     </div>
                   </div>
-                  {addError ? <p className="text-sm text-amber-300">{addError}</p> : null}
-                  <div className="flex gap-4 pt-4">
-                    <button type="button" onClick={() => { setAddError(null); setIsAddingStation(false); }} className="flex-1 py-4 text-gray-400 font-medium hover:text-white">Cancel</button>
-                    <button type="submit" disabled={addSubmitting} className="flex-1 bg-brand-cyan text-black font-bold py-4 rounded-2xl hover:brightness-110 shadow-[0_0_20px_rgba(0,242,255,0.3)] disabled:opacity-50">
+                  {addError ? <p className="text-sm text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">{addError}</p> : null}
+                  <div className="flex gap-3 pt-2">
+                    <button type="button" onClick={() => { setAddError(null); setIsAddingStation(false); }} className="flex-1 py-3 text-gray-400 font-medium hover:text-white text-sm transition-colors">Cancel</button>
+                    <button type="submit" disabled={addSubmitting} className="flex-1 btn-primary py-3 text-sm">
                       {addSubmitting ? 'Adding…' : 'Add Station'}
                     </button>
                   </div>
@@ -1406,68 +1472,83 @@ function StationsManagementTable({
     { key: 'unknown', label: 'Other' },
   ];
 
+  const FILTER_ACCENT: Record<StationListFilter, string> = {
+    all: 'bg-white/10 border-white/15 text-gray-200',
+    running: 'bg-green-500/15 border-green-500/30 text-green-300',
+    degraded: 'bg-amber-500/15 border-amber-500/30 text-amber-300',
+    inactive: 'bg-gray-500/15 border-gray-500/30 text-gray-400',
+    unknown: 'bg-blue-500/15 border-blue-500/30 text-blue-300',
+  };
+
   return (
-    <div className="bg-white/5 border border-white/10 rounded-3xl p-6 lg:p-8 backdrop-blur-sm space-y-5">
-      <div className="flex flex-wrap gap-2">
-        {filters.map((filter) => {
-          const active = stationFilter === filter.key;
-          return (
-            <button
-              key={filter.key}
-              type="button"
-              onClick={() => onFilterChange(filter.key)}
-              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs border transition-colors ${
-                active
-                  ? 'bg-brand-cyan/20 border-brand-cyan/40 text-brand-cyan'
-                  : 'bg-black/30 border-white/10 text-gray-300 hover:bg-black/50'
-              }`}
-            >
-              <span>{filter.label}</span>
-              <span className="px-1.5 py-0.5 rounded-md bg-white/10 text-[10px]">{stateCounts[filter.key]}</span>
-            </button>
-          );
-        })}
-      </div>
-
+    <div className="rm-card p-5 lg:p-7 space-y-5">
+      {/* Filter + search row */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[250px]">
-          <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            value={stationSearch}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder="Search station name, country, province, district, frequency, or ID"
-            className="w-full bg-black/40 border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none focus:border-brand-cyan/40"
-          />
+        <div className="flex flex-wrap gap-1.5">
+          {filters.map((f) => {
+            const active = stationFilter === f.key;
+            return (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => onFilterChange(f.key)}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                  active
+                    ? FILTER_ACCENT[f.key]
+                    : 'bg-transparent border-white/[0.08] text-gray-500 hover:text-gray-300 hover:border-white/20'
+                }`}
+              >
+                {f.label}
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${active ? 'bg-white/15' : 'bg-white/5'}`}>
+                  {stateCounts[f.key]}
+                </span>
+              </button>
+            );
+          })}
         </div>
-        <button
-          type="button"
-          onClick={onRefreshAll}
-          className="px-4 py-2.5 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50"
-        >
-          Refresh
-        </button>
+
+        <div className="flex-1 flex items-center gap-2 min-w-[240px]">
+          <div className="relative flex-1">
+            <Search className="w-3.5 h-3.5 text-gray-600 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              value={stationSearch}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder="Search by name, country, province, frequency…"
+              className="rm-input w-full pl-8 pr-3 py-2 text-sm"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={onRefreshAll}
+            className="btn-ghost px-3 py-2 text-sm flex items-center gap-1.5 text-gray-400"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Refresh
+          </button>
+        </div>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-white/5">
-        <table className="w-full text-sm min-w-[1200px] table-fixed">
+      {/* Table */}
+      <div className="overflow-x-auto rounded-2xl border border-white/[0.06]">
+        <table className="w-full text-sm min-w-[1100px] table-fixed">
           <thead>
-            <tr className="border-b border-white/10 text-left text-gray-400">
-              <th className="py-3 px-3 font-medium w-[12%]">Station ID</th>
-              <th className="py-3 px-3 font-medium w-[20%]">Name</th>
-              <th className="py-3 px-3 font-medium w-[10%]">Country</th>
-              <th className="py-3 px-3 font-medium w-[14%]">Location</th>
-              <th className="py-3 px-3 font-medium w-[22%]">Now playing</th>
-              <th className="py-3 px-3 font-medium w-[10%]">State</th>
+            <tr className="border-b border-white/[0.07] bg-white/[0.02]">
+              <th className="py-3 px-4 text-left rm-section-label w-[11%]">Station ID</th>
+              <th className="py-3 px-4 text-left rm-section-label w-[19%]">Name</th>
+              <th className="py-3 px-4 text-left rm-section-label w-[9%]">Country</th>
+              <th className="py-3 px-4 text-left rm-section-label w-[13%]">Location</th>
+              <th className="py-3 px-4 text-left rm-section-label w-[22%]">Now Playing</th>
+              <th className="py-3 px-4 text-left rm-section-label w-[12%]">State</th>
               <th
-                className="py-3 px-3 font-medium w-[10%] leading-tight"
-                title="Unique songs in the database vs total matched plays (repeats count as plays, not extra rows)."
+                className="py-3 px-4 text-left rm-section-label w-[9%]"
+                title="Unique songs / total matched plays"
               >
-                Songs / plays
+                Songs
               </th>
-              <th className="py-3 px-3 font-medium text-right w-[6%]">Actions</th>
+              <th className="py-3 px-4 text-right rm-section-label w-[7%]">Actions</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-white/[0.04]">
             {stations.map((station) => (
               <StationTableRow
                 key={station.id}
@@ -1479,14 +1560,14 @@ function StationsManagementTable({
             ))}
             {!loading && stations.length === 0 && (
               <tr>
-                <td colSpan={8} className="py-10 text-center text-gray-500">
-                  No stations found for the current filter/search.
+                <td colSpan={8} className="py-14 text-center text-gray-500 text-sm">
+                  No stations match the current filter or search.
                 </td>
               </tr>
             )}
             {loading && (
               <tr>
-                <td colSpan={8} className="py-10 text-center text-gray-500">
+                <td colSpan={8} className="py-14 text-center text-gray-500 text-sm">
                   Loading stations…
                 </td>
               </tr>
@@ -1550,47 +1631,50 @@ function StationTableRow({
   }, [station.id]);
 
   return (
-    <tr className="border-b border-white/5 hover:bg-white/5">
-      <td className="py-3 px-3 text-xs text-gray-400 font-mono whitespace-nowrap truncate" title={station.id}>{station.id}</td>
-      <td className="py-3 px-3 min-w-0">
-        <div className="font-medium">{station.name}</div>
-        <div className="text-[11px] text-gray-500 mt-0.5 truncate">{station.frequencyMhz ? `${station.frequencyMhz} MHz` : 'Frequency not set'}</div>
+    <tr className="hover:bg-white/[0.025] transition-colors group">
+      <td className="py-3.5 px-4 text-[11px] text-gray-500 font-mono truncate" title={station.id}>{station.id}</td>
+      <td className="py-3.5 px-4 min-w-0">
+        <div className="font-semibold text-gray-100 truncate">{station.name}</div>
+        <div className="text-[11px] text-gray-600 mt-0.5">{station.frequencyMhz ? `${station.frequencyMhz} MHz` : '—'}</div>
       </td>
-      <td className="py-3 px-3 text-gray-300 truncate" title={station.country}>{station.country}</td>
-      <td className="py-3 px-3 text-gray-400 truncate" title={[station.province, station.district].filter(Boolean).join(' / ') || '—'}>
+      <td className="py-3.5 px-4 text-gray-400 text-sm truncate" title={station.country}>{station.country}</td>
+      <td className="py-3.5 px-4 text-gray-500 text-xs truncate" title={[station.province, station.district].filter(Boolean).join(' / ') || '—'}>
         {[station.province, station.district].filter(Boolean).join(' / ') || '—'}
       </td>
-      <td className="py-3 px-3 min-w-0">
-        <div className="font-medium text-gray-200 truncate" title={station.currentNowPlaying?.title || '—'}>{station.currentNowPlaying?.title || '—'}</div>
-        <div className="text-xs text-gray-500 truncate" title={station.currentNowPlaying?.artist || 'No current track'}>{station.currentNowPlaying?.artist || 'No current track'}</div>
+      <td className="py-3.5 px-4 min-w-0">
+        {station.currentNowPlaying ? (
+          <>
+            <div className="text-gray-200 text-sm truncate font-medium" title={station.currentNowPlaying.title}>{station.currentNowPlaying.title}</div>
+            <div className="text-[11px] text-gray-500 truncate" title={station.currentNowPlaying.artist}>{station.currentNowPlaying.artist}</div>
+          </>
+        ) : (
+          <span className="text-gray-600 text-xs italic">No current track</span>
+        )}
       </td>
-      <td className="py-3 px-3">
-        <span
-          title={badge.title}
-          className={`text-[11px] font-semibold uppercase tracking-wide px-2 py-1 rounded-lg border ${badge.className}`}
-        >
+      <td className="py-3.5 px-4">
+        <span title={badge.title} className={`rm-badge ${badge.className}`}>
           {badge.text}
         </span>
       </td>
-      <td className="py-3 px-3 text-gray-300 font-mono text-xs whitespace-nowrap" title="Unique songs vs total plays (same station detail list vs repeat count).">
+      <td className="py-3.5 px-4 font-mono text-xs" title="Unique songs / total plays">
         {spin ? (
           <span>
             <span className="text-gray-200">{spin.uniqueSongs}</span>
-            <span className="text-gray-500"> / </span>
-            <span>{spin.detectionCount}</span>
+            <span className="text-gray-600"> / </span>
+            <span className="text-gray-400">{spin.detectionCount}</span>
           </span>
         ) : (
-          <span>—</span>
+          <span className="text-gray-600">—</span>
         )}
       </td>
-      <td className="py-3 px-3">
-        <div className="flex justify-end items-center gap-2">
+      <td className="py-3.5 px-4">
+        <div className="flex justify-end items-center gap-1.5">
           <button
             type="button"
             onClick={() => onOpenStation(station.id)}
-            className="px-2.5 py-1.5 rounded-lg border border-brand-cyan/30 text-brand-cyan hover:bg-brand-cyan/10 text-xs inline-flex items-center gap-1"
+            className="px-2.5 py-1.5 rounded-lg border border-brand-cyan/25 text-brand-cyan hover:bg-brand-cyan/10 text-xs inline-flex items-center gap-1 transition-all"
           >
-            <Eye className="w-3.5 h-3.5" />
+            <Eye className="w-3 h-3" />
             View
           </button>
           <div className="relative">
@@ -1598,32 +1682,25 @@ function StationTableRow({
               type="button"
               aria-label="More actions"
               onClick={() => setMenuOpen((open) => !open)}
-              className="px-2.5 py-1.5 rounded-lg border border-white/10 bg-black/30 hover:bg-black/50 text-xs inline-flex items-center gap-1"
+              className="p-1.5 rounded-lg border border-white/[0.08] bg-black/20 hover:bg-black/50 text-gray-500 hover:text-gray-300 transition-all"
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
-              More
             </button>
             {menuOpen ? (
-              <div className="absolute right-0 mt-1 w-44 bg-zinc-900 border border-white/10 rounded-xl shadow-xl z-20 p-1">
+              <div className="absolute right-0 mt-1 w-44 bg-[#111113] border border-white/10 rounded-xl shadow-2xl z-20 p-1">
                 <button
                   type="button"
                   disabled={probing || !station.isActive}
-                  onClick={async () => {
-                    setMenuOpen(false);
-                    await handleProbe();
-                  }}
-                  className="w-full text-left px-3 py-2 rounded-lg text-xs hover:bg-white/10 disabled:opacity-40"
+                  onClick={async () => { setMenuOpen(false); await handleProbe(); }}
+                  className="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-300 hover:bg-white/10 hover:text-white disabled:opacity-40 transition-colors"
                 >
                   {probing ? 'Probing…' : 'Probe now'}
                 </button>
                 <button
                   type="button"
                   disabled={toggling}
-                  onClick={async () => {
-                    setMenuOpen(false);
-                    await handleToggle();
-                  }}
-                  className="w-full text-left px-3 py-2 rounded-lg text-xs hover:bg-white/10 disabled:opacity-40"
+                  onClick={async () => { setMenuOpen(false); await handleToggle(); }}
+                  className="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-300 hover:bg-white/10 hover:text-white disabled:opacity-40 transition-colors"
                 >
                   {station.isActive ? 'Pause monitoring' : 'Resume monitoring'}
                 </button>
@@ -1632,7 +1709,7 @@ function StationTableRow({
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => setMenuOpen(false)}
-                  className="block px-3 py-2 rounded-lg text-xs hover:bg-white/10 text-gray-200"
+                  className="block px-3 py-2 rounded-lg text-xs text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
                 >
                   Open stream URL
                 </a>
@@ -1814,54 +1891,54 @@ function StationDetailPage({
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-white/10 bg-black/30 hover:bg-black/50 text-sm"
+          className="btn-ghost inline-flex items-center gap-2 px-3 py-2 text-sm text-gray-400"
         >
           <ArrowLeft className="w-4 h-4" />
-          Back to stations
+          All stations
         </button>
 
         <div className="flex flex-wrap items-center gap-2">
           <a
             href={`/api/export/logs.xlsx?stationId=${encodeURIComponent(station.id)}&limit=50000`}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-cyan text-black font-semibold text-sm hover:brightness-110"
+            className="btn-primary inline-flex items-center gap-2 px-4 py-2 text-sm"
           >
             <Download className="w-4 h-4" />
-            Export {station.name} logs (XLSX template)
+            Export XLSX
           </a>
           <button
             type="button"
             onClick={onRefreshStation}
-            className="px-3 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50"
+            className="btn-ghost px-3 py-2 text-sm text-gray-400 flex items-center gap-1.5"
           >
-            Refresh page
+            <RefreshCw className="w-3.5 h-3.5" />
+            Refresh
           </button>
         </div>
       </div>
 
-      <div className="bg-white/5 border border-white/10 rounded-3xl p-6 md:p-8 space-y-5">
+      <div className="rm-card p-6 md:p-8 space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 className="text-3xl font-bold">{station.name}</h2>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-gray-400">
-              <span className="px-2 py-1 rounded-lg border border-white/10 bg-black/30">{station.country}</span>
-              {station.province ? <span>{station.province}</span> : null}
-              {station.district ? <span>/ {station.district}</span> : null}
-              {station.frequencyMhz ? <span>• {station.frequencyMhz} MHz</span> : null}
+            <h2 className="text-2xl font-bold text-white">{station.name}</h2>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-sm">
+              <span className="px-2 py-0.5 rounded-md text-xs border border-white/10 bg-white/5 text-gray-300">{station.country}</span>
+              {station.province ? <span className="text-gray-500">{station.province}</span> : null}
+              {station.district ? <span className="text-gray-600">/ {station.district}</span> : null}
+              {station.frequencyMhz ? <span className="text-gray-500 font-mono text-xs">· {station.frequencyMhz} MHz</span> : null}
             </div>
           </div>
 
-          <div className="text-right space-y-1 text-xs text-gray-500">
+          <div className="text-right space-y-1.5 text-xs text-gray-500">
             <div>
-              <span title={badge.title} className={`px-2 py-1 rounded-lg border font-semibold uppercase tracking-wide ${badge.className}`}>
-                {badge.text}
-              </span>
+              <span title={badge.title} className={`rm-badge ${badge.className}`}>{badge.text}</span>
             </div>
             <div>Last check: {station.lastPollAt ? new Date(station.lastPollAt).toLocaleString() : '—'}</div>
             <div>Last song: {station.lastSongDetectedAt ? new Date(station.lastSongDetectedAt).toLocaleString() : '—'}</div>
-            <div title="Total matched plays = sum of play counts; repeats of the same song add here, not as new rows in the song list.">
-              Unique songs: {spin?.uniqueSongs ?? 0}
-              <span className="text-gray-600"> · </span>
-              Total plays: {spin?.detectionCount ?? 0}
+            <div title="Unique songs / total plays">
+              <span className="text-gray-300">{spin?.uniqueSongs ?? 0}</span>
+              <span className="text-gray-600"> unique · </span>
+              <span className="text-gray-400">{spin?.detectionCount ?? 0}</span>
+              <span className="text-gray-600"> plays</span>
             </div>
           </div>
         </div>
@@ -1871,8 +1948,9 @@ function StationDetailPage({
             type="button"
             onClick={handleProbe}
             disabled={probing || !station.isActive}
-            className="px-3 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50 disabled:opacity-40"
+            className="btn-ghost px-3 py-2 text-sm text-gray-300 flex items-center gap-1.5 disabled:opacity-40"
           >
+            <Activity className="w-3.5 h-3.5" />
             {probing ? 'Probing…' : 'Probe now'}
           </button>
           <button
@@ -1899,7 +1977,7 @@ function StationDetailPage({
                 setToggling(false);
               }
             }}
-            className="px-3 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50 disabled:opacity-40"
+            className="btn-ghost px-3 py-2 text-sm text-gray-300 disabled:opacity-40"
           >
             {station.isActive ? 'Pause monitoring' : 'Resume monitoring'}
           </button>
@@ -1907,14 +1985,14 @@ function StationDetailPage({
             href={(station.preferredStreamUrl || '').trim() || station.streamUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="px-3 py-2 rounded-xl border border-white/10 bg-black/30 text-sm hover:bg-black/50 inline-flex items-center gap-2"
+            className="btn-ghost px-3 py-2 text-sm text-gray-300 inline-flex items-center gap-1.5"
           >
-            Open active mount <ExternalLink className="w-3.5 h-3.5" />
+            Open stream <ExternalLink className="w-3.5 h-3.5" />
           </a>
         </div>
 
-        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 space-y-2">
-          <div className="text-[11px] uppercase tracking-wide text-amber-200/80 font-semibold">
+        <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] px-4 py-4 space-y-2">
+          <div className="rm-section-label text-amber-400/80">
             Multi-server stream discovery
           </div>
           <p className="text-[11px] text-gray-500 leading-relaxed">
@@ -2046,10 +2124,10 @@ function StationDetailPage({
         </div>
 
         <div
-          className="rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-xs text-gray-400 space-y-1"
+          className="rm-card-inner px-4 py-3 text-xs text-gray-400 space-y-1"
           title={badge.title}
         >
-          <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Stream vs song ID</div>
+          <div className="rm-section-label">Stream vs Song ID</div>
           <p className="text-gray-300">{badge.title}</p>
           <p>
             Source tier:{' '}
@@ -2070,31 +2148,31 @@ function StationDetailPage({
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <div className="bg-black/30 rounded-2xl p-5 border border-white/10">
-            <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold mb-3">Current now playing</div>
+          <div className="rm-card-inner p-5">
+            <div className="rm-section-label mb-3">Now Playing</div>
             {station.currentNowPlaying ? (
               <div className="flex items-start gap-3">
-                <div className="w-12 h-12 rounded-xl border border-white/10 bg-gradient-to-br from-brand-cyan/20 to-brand-purple/20 flex items-center justify-center">
-                  <Music className="w-6 h-6 text-brand-cyan" />
+                <div className="w-11 h-11 rounded-xl border border-brand-cyan/20 bg-gradient-to-br from-brand-cyan/15 to-brand-purple/15 flex items-center justify-center shrink-0">
+                  <Music className="w-5 h-5 text-brand-cyan" />
                 </div>
                 <div>
-                  <p className="font-semibold">{station.currentNowPlaying.title}</p>
+                  <p className="font-semibold text-gray-100">{station.currentNowPlaying.title}</p>
                   <p className="text-sm text-gray-400">{station.currentNowPlaying.artist}</p>
-                  <p className="text-xs text-gray-500 mt-1">Detected {new Date(station.currentNowPlaying.updatedAt).toLocaleString()}</p>
+                  <p className="text-xs text-gray-600 mt-1">Detected {new Date(station.currentNowPlaying.updatedAt).toLocaleString()}</p>
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-gray-500">No current metadata track. Probe to refresh.</p>
+              <p className="text-sm text-gray-500 italic">No current track. Probe to refresh.</p>
             )}
           </div>
 
-          <div className="bg-black/30 rounded-2xl p-5 border border-white/10 space-y-3">
-            <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Station stream URL</div>
+          <div className="rm-card-inner p-5 space-y-3">
+            <div className="rm-section-label">Station stream URL</div>
             <textarea
               rows={3}
               value={streamEdit}
               onChange={(event) => setStreamEdit(event.target.value)}
-              className="w-full text-xs font-mono bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-gray-300 outline-none focus:border-brand-cyan/50 resize-y"
+              className="w-full text-xs font-mono rm-input px-3 py-2 text-gray-300 resize-y"
               spellCheck={false}
             />
             <div className="flex flex-wrap gap-2">
@@ -2170,17 +2248,15 @@ function StationDetailPage({
                 {refreshingUrl ? 'Refreshing…' : 'Auto-refresh from source'}
               </button>
             </div>
-            <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold pt-2">
-              Preferred mount (optional direct stream)
-            </div>
+            <div className="rm-section-label pt-2">Preferred mount (optional)</div>
             <p className="text-[11px] text-gray-500">
-              When set, monitoring uses this URL instead of the catalog URL above. Leave empty to use the station URL only.
+              When set, monitoring uses this URL instead of the catalog URL. Leave empty to use station URL only.
             </p>
             <textarea
               rows={2}
               value={preferredEdit}
               onChange={(event) => setPreferredEdit(event.target.value)}
-              className="w-full text-xs font-mono bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-gray-300 outline-none focus:border-brand-cyan/50 resize-y"
+              className="w-full text-xs font-mono rm-input px-3 py-2 text-gray-300 resize-y"
               spellCheck={false}
               placeholder="https://… direct mp3/aac/hls mount"
             />
@@ -2220,17 +2296,17 @@ function StationDetailPage({
           </div>
         </div>
 
-        <div className="bg-black/30 rounded-2xl p-5 border border-white/10 space-y-4">
+        <div className="rm-card-inner p-5 space-y-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-lg font-semibold">Unknown Review</h3>
-              <p className="text-xs text-gray-500">Unmatched/unresolved samples for this station.</p>
+              <h3 className="font-semibold text-gray-100">Unknown Review</h3>
+              <p className="text-xs text-gray-500 mt-0.5">Unmatched/unresolved samples for this station.</p>
             </div>
             <button
               type="button"
               onClick={fetchUnknownSamples}
               disabled={unknownLoading}
-              className="px-3 py-2 rounded-xl border border-white/10 bg-black/30 text-xs hover:bg-black/50 disabled:opacity-50"
+              className="btn-ghost-sm px-3 py-1.5 text-gray-400 disabled:opacity-50"
             >
               {unknownLoading ? 'Refreshing…' : 'Refresh'}
             </button>
@@ -2416,10 +2492,10 @@ function StationDetailPage({
         )}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+        <div className="rm-card p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold">Logged songs for {station.name}</h3>
+            <h3 className="font-semibold text-gray-100">Logged songs — {station.name}</h3>
             <span className="text-xs text-gray-500 text-right max-w-[min(100%,22rem)] leading-snug">
               {filteredSongSpins.length} of {songSpins.length} rows shown
               {spin != null ? (
@@ -2437,13 +2513,13 @@ function StationDetailPage({
             <input
               value={songSearch}
               onChange={(event) => setSongSearch(event.target.value)}
-              placeholder="Search title / artist / album / raw metadata"
-              className="flex-1 min-w-[220px] bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan/50"
+              placeholder="Search title / artist / album…"
+              className="rm-input flex-1 min-w-[180px] px-3 py-2 text-sm"
             />
             <select
               value={songFilter}
               onChange={(event) => setSongFilter(event.target.value as 'all' | 'withArtist' | 'titleOnly' | 'mixedSplit')}
-              className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan/50"
+              className="rm-input bg-black/40 px-3 py-2 text-sm"
             >
               <option value="all">All songs</option>
               <option value="withArtist">With artist</option>
@@ -2500,10 +2576,10 @@ function StationDetailPage({
           </div>
         </div>
 
-        <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+        <div className="rm-card p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold">Recent detection logs</h3>
-            <span className="text-xs text-gray-500">{logs.length} rows</span>
+            <h3 className="font-semibold text-gray-100">Recent Detection Logs</h3>
+            <span className="text-xs text-gray-600">{logs.length} rows</span>
           </div>
           <div className="overflow-x-auto max-h-[480px]">
             <table className="w-full text-sm min-w-[560px] table-fixed">
@@ -2555,25 +2631,42 @@ function StationDetailPage({
 
 function NavIcon({ icon, active, onClick, label }: any) {
   return (
-    <button 
+    <button
       onClick={onClick}
-      className={`group relative p-3 rounded-xl transition-all duration-300 ${active ? 'bg-brand-purple/20 text-brand-purple' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}
+      className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 text-sm font-medium ${
+        active
+          ? 'bg-brand-cyan/10 text-brand-cyan border border-brand-cyan/20 shadow-[inset_0_0_0_1px_rgba(0,242,255,0.1)]'
+          : 'text-gray-400 hover:text-gray-100 hover:bg-white/[0.05] border border-transparent'
+      }`}
     >
-      {icon}
-      <span className="absolute left-20 bg-black border border-white/10 text-[10px] text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-        {label}
-      </span>
-      {active && <motion.div layoutId="nav-active" className="absolute -left-5 top-1/4 w-1 h-1/2 bg-brand-purple rounded-full shadow-[0_0_10px_rgba(112,0,255,0.8)]" />}
+      {active && (
+        <motion.div
+          layoutId="nav-active"
+          className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-full bg-brand-cyan shadow-[0_0_8px_rgba(0,242,255,0.8)]"
+        />
+      )}
+      <span className={`${active ? 'text-brand-cyan' : 'text-gray-500'} transition-colors`}>{icon}</span>
+      <span>{label}</span>
     </button>
   );
 }
 
-function MetricCard({ label, value, sub }: any) {
+const METRIC_ACCENT: Record<string, { border: string; text: string; glow: string }> = {
+  cyan:   { border: 'border-brand-cyan/20',  text: 'text-brand-cyan',    glow: 'shadow-[0_4px_20px_rgba(0,242,255,0.08)]'  },
+  green:  { border: 'border-green-500/20',   text: 'text-green-400',     glow: 'shadow-[0_4px_20px_rgba(34,197,94,0.08)]'  },
+  amber:  { border: 'border-amber-500/20',   text: 'text-amber-400',     glow: 'shadow-[0_4px_20px_rgba(251,191,36,0.08)]' },
+  purple: { border: 'border-brand-purple/30',text: 'text-purple-400',    glow: 'shadow-[0_4px_20px_rgba(112,0,255,0.08)]'  },
+  sky:    { border: 'border-sky-500/20',     text: 'text-sky-400',       glow: 'shadow-[0_4px_20px_rgba(56,189,248,0.08)]' },
+  orange: { border: 'border-orange-500/20',  text: 'text-orange-400',    glow: 'shadow-[0_4px_20px_rgba(249,115,22,0.08)]' },
+};
+
+function MetricCard({ label, value, sub, accent = 'cyan' }: { label: string; value: string; sub: string; accent?: string }) {
+  const a = METRIC_ACCENT[accent] ?? METRIC_ACCENT.cyan;
   return (
-    <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col items-center min-w-[120px] backdrop-blur-sm">
-      <span className="text-[10px] uppercase font-bold text-gray-500 mb-1">{label}</span>
-      <span className="text-2xl font-bold text-white">{value}</span>
-      <span className="text-[10px] text-gray-600 mt-1">{sub}</span>
+    <div className={`bg-white/[0.03] border ${a.border} rounded-2xl p-4 flex flex-col ${a.glow}`}>
+      <span className="rm-section-label mb-2">{label}</span>
+      <span className={`text-2xl font-bold ${a.text} leading-none mb-1`}>{value}</span>
+      <span className="text-[10px] text-gray-600 leading-snug">{sub}</span>
     </div>
   );
 }
