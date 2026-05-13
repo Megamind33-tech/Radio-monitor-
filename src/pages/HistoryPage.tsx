@@ -5,6 +5,7 @@ import { formatMethod } from '../lib/dashboard-format';
 
 export function HistoryPage({
   logs,
+  totalLogCount,
   historyLoading,
   selectedStationId,
   orderedStations,
@@ -13,6 +14,7 @@ export function HistoryPage({
   onRefresh,
 }: {
   logs: DetectionLog[];
+  totalLogCount: number;
   historyLoading: boolean;
   selectedStationId: string;
   orderedStations: Station[];
@@ -92,7 +94,14 @@ export function HistoryPage({
                 </td>
               </tr>
             ))}
-            {!historyLoading && logs.length === 0 && (
+            {!historyLoading && logs.length === 0 && totalLogCount > 0 && (
+              <tr>
+                <td colSpan={5} className="py-12 text-center text-slate-500 text-sm">
+                  No logs match the current header filter for this station scope. Clear the search to see all loaded rows.
+                </td>
+              </tr>
+            )}
+            {!historyLoading && logs.length === 0 && totalLogCount === 0 && (
               <tr>
                 <td colSpan={5} className="py-12 text-center text-slate-500 text-sm">
                   No airplay detections yet. Probe a station to create logs.

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Radio, Plus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type {
@@ -29,7 +29,14 @@ import { HistoryPage } from './pages/HistoryPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { LearningPage } from './pages/LearningPage';
 import { SettingsPage } from './pages/SettingsPage';
-
+import { HelpModal } from './components/shell/HelpModal';
+import { NotificationsPanel, type NotificationItem } from './components/shell/NotificationsPanel';
+import {
+  filterDetectionLogs,
+  filterSongSpins,
+  railTasksFromDashboard,
+  activitySpectrumFromLogs,
+} from './lib/dashboard-rail';
 
 // --- Components ---
 
@@ -75,6 +82,10 @@ export default function App() {
   const [hashBackfillResult, setHashBackfillResult] = useState<any | null>(null);
   const [crawlerStatus, setCrawlerStatus] = useState<any | null>(null);
   const [rematchSummary, setRematchSummary] = useState<any | null>(null);
+  const [logQuery, setLogQuery] = useState('');
+  const [analyticsQuery, setAnalyticsQuery] = useState('');
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
 
   const fetchData = React.useCallback(async () => {
     try {
@@ -349,7 +360,18 @@ export default function App() {
     window.localStorage.setItem('rm_include_hidden_stations', includeHiddenStations ? '1' : '0');
   }, [includeHiddenStations]);
 
-  const stationNameById = new Map(stations.map((station) => [station.id, station.name]));
+  useEffect(() => {
+    if (activeTab !== 'history' && activeTab !== 'activity') setLogQuery('');
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'analytics') setAnalyticsQuery('');
+  }, [activeTab]);
+
+  const stationNameById = React.useMemo(
+    () => new Map(stations.map((station) => [station.id, station.name])),
+    [stations],
+  );
   const spinByStation = new Map(spinSummaries.map((s) => [s.stationId, s]));
   const monitoredCount = stations.filter((s) => s.isActive).length;
   const orderedStations = React.useMemo(() => {
@@ -406,6 +428,101 @@ export default function App() {
     });
   }, [orderedStations, stationFilter, stationSearch]);
 
+  const filteredLogsUi = React.useMemo(
+    () => filterDetectionLogs(logs, logQuery, stationNameById),
+    [logs, logQuery, stationNameById],
+  );
+
+  const filteredSongSpins = React.useMemo(
+    () => filterSongSpins(songSpins, analyticsQuery, stations),
+    [songSpins, analyticsQuery, stations],
+  );
+
+  const degradedStations = React.useMemo(
+    () => stations.filter((s) => s.monitorState === 'DEGRADED').map((s) => ({ id: s.id, name: s.name })),
+    [stations],
+  );
+
+  const railTasks = React.useMemo(
+    () =>
+      railTasksFromDashboard({
+        unknownTotal: unknownStorage?.totalUnknownSampleCount ?? 0,
+        degradedCount: degradedStations.length,
+        rematchPending: rematchSummary?.pending,
+        untaggedAudio: audioSamples.filter((s) => !s.manuallyTagged).length,
+      }),
+    [unknownStorage, degradedStations.length, rematchSummary, audioSamples],
+  );
+
+  const activityBars = React.useMemo(() => activitySpectrumFromLogs(logs, 48), [logs]);
+
+  const notificationItems = React.useMemo((): NotificationItem[] => {
+    const list: NotificationItem[] = [];
+    const unk = unknownStorage?.totalUnknownSampleCount ?? 0;
+    if (unk > 0) {
+      list.push({
+        id: 'unk',
+        title: `${unk} unknown samples`,
+        detail: 'Review in Audio Library',
+        actionLabel: 'Open Audio Library',
+        onAction: () => setActiveTab('audio'),
+      });
+    }
+    for (const s of degradedStations.slice(0, 5)) {
+      list.push({
+        id: `deg-${s.id}`,
+        title: 'Degraded stream',
+        detail: s.name,
+        tone: 'warn',
+        actionLabel: 'Open station',
+        onAction: () => {
+          setActiveTab('stations');
+          setStationHash(s.id);
+        },
+      });
+    }
+    return list;
+  }, [unknownStorage, degradedStations]);
+
+  const headerSearch = React.useMemo(() => {
+    if (activeTab === 'stations' && !stationPageId) {
+      return {
+        show: true as const,
+        value: stationSearch,
+        onChange: setStationSearch,
+        placeholder: 'Search stations…',
+      };
+    }
+    if (activeTab === 'history' || activeTab === 'activity') {
+      return {
+        show: true as const,
+        value: logQuery,
+        onChange: setLogQuery,
+        placeholder: 'Filter logs (station, title, method…)…',
+      };
+    }
+    if (activeTab === 'analytics') {
+      return {
+        show: true as const,
+        value: analyticsQuery,
+        onChange: setAnalyticsQuery,
+        placeholder: 'Filter spins (station, title, province…)…',
+      };
+    }
+    return {
+      show: false as const,
+      value: '',
+      onChange: (_: string) => {},
+      placeholder: '',
+    };
+  }, [activeTab, stationPageId, stationSearch, logQuery, analyticsQuery]);
+
+  const handleNavigate = React.useCallback((page: AppPageId) => {
+    setHelpOpen(false);
+    setNotifOpen(false);
+    setActiveTab(page);
+  }, []);
+
   const activeStation = stationPageId ? stationById.get(stationPageId) || null : null;
   useEffect(() => {
     if (typeof document !== 'undefined') {
@@ -418,7 +535,7 @@ export default function App() {
     <div className="min-h-screen bg-rm-canvas text-rm-text selection:bg-rm-indigo/25">
       <AppSidebar
         active={activeTab}
-        onNavigate={setActiveTab}
+        onNavigate={handleNavigate}
         onAddStation={() => setIsAddingStation(true)}
       />
 
@@ -454,10 +571,19 @@ export default function App() {
                       ? 'A condensed live feed of the most recent detections.'
                       : 'Fingerprint matching, unknown review, catalog growth, and royalty-ready logs.'
               }
-              searchValue={stationSearch}
-              onSearchChange={setStationSearch}
-              searchPlaceholder="Search stations…"
-              showSearch={false}
+              searchValue={headerSearch.value}
+              onSearchChange={headerSearch.onChange}
+              searchPlaceholder={headerSearch.placeholder}
+              showSearch={headerSearch.show}
+              onHelpClick={() => {
+                setNotifOpen(false);
+                setHelpOpen(true);
+              }}
+              onNotificationsClick={() => {
+                setHelpOpen(false);
+                setNotifOpen((o) => !o);
+              }}
+              notificationCount={notificationItems.length}
             />
           </header>
 
@@ -511,18 +637,30 @@ export default function App() {
               onFilterChange={setStationFilter}
               onOpenStation={(id) => setStationHash(id)}
               onRefreshAll={fetchData}
+              hideSearchInput={activeTab === 'stations' && !stationPageId}
             />
           )}
 
           {activeTab === 'activity' && (
-            <ActivityPage logs={logs} loading={historyLoading} stationNameById={stationNameById} />
+            <ActivityPage
+              logs={filteredLogsUi}
+              totalLogCount={logs.length}
+              loading={historyLoading}
+              stationNameById={stationNameById}
+              selectedStationId={selectedStationId}
+              orderedStations={orderedStations}
+              onStationChange={setSelectedStationId}
+              onRefresh={() => fetchLogs(selectedStationId)}
+              barHeights={activityBars}
+            />
           )}
 
           {activeTab === 'learning' && <LearningPage />}
 
           {activeTab === 'analytics' && (
             <AnalyticsPage
-              songSpins={songSpins}
+              songSpins={filteredSongSpins}
+              totalSpinCount={songSpins.length}
               stations={stations}
               analyticsLoading={analyticsLoading}
               onRefresh={() => fetchSongAnalytics()}
@@ -531,7 +669,8 @@ export default function App() {
 
           {activeTab === 'history' && (
             <HistoryPage
-              logs={logs}
+              logs={filteredLogsUi}
+              totalLogCount={logs.length}
               historyLoading={historyLoading}
               selectedStationId={selectedStationId}
               orderedStations={orderedStations}
@@ -589,9 +728,17 @@ export default function App() {
           )}
         </div>
 
-        <RightRail metrics={metrics} monitoredCount={monitoredCount} />
+        <RightRail
+          metrics={metrics}
+          monitoredCount={monitoredCount}
+          stations={stations}
+          logs={logs}
+          tasks={railTasks}
+        />
       </div>
 
+      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <NotificationsPanel open={notifOpen} onClose={() => setNotifOpen(false)} items={notificationItems} />
       {/* Modals */}
       <AnimatePresence>
         {isAddingStation && (

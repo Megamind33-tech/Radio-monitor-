@@ -1,45 +1,77 @@
 import React from 'react';
-import { Activity, CheckCircle2, AlertCircle } from 'lucide-react';
-import type { DetectionLog } from '../types/dashboard';
+import { Activity, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import type { DetectionLog, Station } from '../types/dashboard';
 import { formatMethod } from '../lib/dashboard-format';
 
 export function ActivityPage({
   logs,
+  totalLogCount,
   loading,
   stationNameById,
+  selectedStationId,
+  orderedStations,
+  onStationChange,
+  onRefresh,
+  barHeights,
 }: {
   logs: DetectionLog[];
+  totalLogCount: number;
   loading: boolean;
   stationNameById: Map<string, string>;
+  selectedStationId: string;
+  orderedStations: Station[];
+  onStationChange: (id: string) => void;
+  onRefresh: () => void;
+  barHeights: number[];
 }) {
-  const recent = logs.slice(0, 24);
+  const recent = logs.slice(0, 40);
 
   return (
     <div className="space-y-6">
       <div className="rm-card overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-3">
+        <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Activity className="w-5 h-5 text-rm-indigo" />
             <div>
               <h2 className="text-base font-semibold text-slate-900">Live activity</h2>
-              <p className="text-xs text-slate-500">Latest detections across all stations (mirrors History feed).</p>
+              <p className="text-xs text-slate-500">Latest detections — same feed as History, scoped by station below.</p>
             </div>
           </div>
-          <span className="text-[10px] uppercase tracking-widest text-slate-400 font-semibold">{recent.length} rows</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={selectedStationId}
+              onChange={(e) => onStationChange(e.target.value)}
+              className="rm-input bg-slate-100 px-3 py-1.5 text-xs min-w-[140px]"
+            >
+              <option value="all">All stations</option>
+              {orderedStations.map((station) => (
+                <option key={station.id} value={station.id}>{station.name}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={onRefresh}
+              className="btn-ghost-sm px-3 py-1.5 text-slate-600 flex items-center gap-1.5 text-xs"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Refresh
+            </button>
+            <span className="text-[10px] uppercase tracking-widest text-slate-400 font-semibold">{recent.length} rows</span>
+          </div>
         </div>
         <div className="h-28 bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-900 relative">
-          <div className="absolute inset-0 opacity-40 flex items-end justify-around px-2 pb-2 gap-0.5">
-            {Array.from({ length: 48 }).map((_, i) => (
+          <div className="absolute inset-0 opacity-50 flex items-end justify-around px-2 pb-2 gap-0.5">
+            {barHeights.map((h, i) => (
               <div
                 key={i}
-                className="w-1 rounded-t bg-indigo-300/80"
-                style={{ height: `${20 + ((i * 17) % 55)}px` }}
+                className="w-1 rounded-t bg-indigo-300/90"
+                style={{ height: `${Math.max(10, Math.round(h * 72))}px` }}
               />
             ))}
           </div>
-          <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/50 to-transparent" />
+          <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/55 to-transparent" />
           <div className="absolute left-4 top-3 text-[10px] text-white/70 font-medium tracking-widest uppercase">
-            Spectrum (decorative)
+            Match activity (from recent logs)
           </div>
         </div>
       </div>
@@ -83,7 +115,14 @@ export function ActivityPage({
                   </td>
                 </tr>
               ))}
-              {!loading && recent.length === 0 && (
+              {!loading && recent.length === 0 && totalLogCount > 0 && (
+                <tr>
+                  <td colSpan={5} className="py-12 text-center text-slate-500 text-sm">
+                    No rows match the header filter for this station scope.
+                  </td>
+                </tr>
+              )}
+              {!loading && recent.length === 0 && totalLogCount === 0 && (
                 <tr>
                   <td colSpan={5} className="py-12 text-center text-slate-500 text-sm">
                     No recent activity yet. Open History for the full log or probe a station.

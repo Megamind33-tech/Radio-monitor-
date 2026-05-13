@@ -87,6 +87,7 @@ export function StationsManagementTable({
   onFilterChange,
   onOpenStation,
   onRefreshAll,
+  hideSearchInput,
 }: {
   loading: boolean;
   stations: Station[];
@@ -98,6 +99,7 @@ export function StationsManagementTable({
   onFilterChange: (value: StationListFilter) => void;
   onOpenStation: (stationId: string) => void;
   onRefreshAll: () => void;
+  hideSearchInput?: boolean;
 }) {
   const filters: Array<{ key: StationListFilter; label: string }> = [
     { key: 'all', label: 'All-State' },
@@ -142,16 +144,18 @@ export function StationsManagementTable({
           })}
         </div>
 
-        <div className="flex-1 flex items-center gap-2 min-w-[240px]">
-          <div className="relative flex-1">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              value={stationSearch}
-              onChange={(event) => onSearchChange(event.target.value)}
-              placeholder="Search by name, country, province, frequency…"
-              className="rm-input w-full pl-8 pr-3 py-2 text-sm"
-            />
-          </div>
+        <div className={`flex-1 flex items-center gap-2 min-w-[240px] ${hideSearchInput ? 'justify-end' : ''}`}>
+          {!hideSearchInput ? (
+            <div className="relative flex-1">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                value={stationSearch}
+                onChange={(event) => onSearchChange(event.target.value)}
+                placeholder="Search by name, country, province, frequency…"
+                className="rm-input w-full pl-8 pr-3 py-2 text-sm"
+              />
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={onRefreshAll}

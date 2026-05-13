@@ -8,6 +8,9 @@ export function AppTopBar({
   onSearchChange,
   searchPlaceholder,
   showSearch,
+  onHelpClick,
+  notificationCount,
+  onNotificationsClick,
 }: {
   title: string;
   subtitle: string;
@@ -15,7 +18,11 @@ export function AppTopBar({
   onSearchChange: (v: string) => void;
   searchPlaceholder: string;
   showSearch: boolean;
+  onHelpClick?: () => void;
+  notificationCount?: number;
+  onNotificationsClick?: () => void;
 }) {
+  const n = notificationCount ?? 0;
   return (
     <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
       <div className="min-w-0 flex-1">
@@ -40,6 +47,7 @@ export function AppTopBar({
         ) : null}
         <button
           type="button"
+          onClick={onHelpClick}
           className="p-2 rounded-xl border border-slate-200 bg-white/80 text-slate-500 hover:text-rm-indigo hover:border-indigo-200 transition-colors"
           aria-label="Help"
         >
@@ -47,11 +55,18 @@ export function AppTopBar({
         </button>
         <button
           type="button"
+          onClick={onNotificationsClick}
           className="p-2 rounded-xl border border-slate-200 bg-white/80 text-slate-500 hover:text-rm-indigo hover:border-indigo-200 transition-colors relative"
           aria-label="Notifications"
         >
           <Bell className="w-4 h-4" />
-          <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500" />
+          {n > 0 ? (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-[10px] font-bold text-white flex items-center justify-center border border-white">
+              {n > 9 ? '9+' : n}
+            </span>
+          ) : (
+            <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500" />
+          )}
         </button>
         <div className="flex items-center gap-2 pl-1">
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white text-xs font-bold flex items-center justify-center shadow-md">

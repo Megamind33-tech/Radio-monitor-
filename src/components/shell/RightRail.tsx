@@ -1,23 +1,35 @@
-import React from 'react';
-import type { Metrics } from '../../types/dashboard';
+import React, { useMemo } from 'react';
+import type { Metrics, DetectionLog, Station } from '../../types/dashboard';
+import type { RailTaskItem, CalendarCell } from '../../lib/dashboard-rail';
 import {
-  railTasks,
-  railRecentActivity,
-  railCalendarMonth,
-  railCalendarDays,
-  provinceBreakdown,
-} from '../../mockData/stations';
+  calendarCellsForMonth,
+  calendarMonthLabel,
+  provinceMixFromStations,
+  railRecentFromLogs,
+} from '../../lib/dashboard-rail';
 
 export function RightRail({
   metrics,
   monitoredCount,
+  stations,
+  logs,
+  tasks,
 }: {
   metrics: Metrics | null;
   monitoredCount: number;
+  stations: Station[];
+  logs: DetectionLog[];
+  tasks: RailTaskItem[];
 }) {
   const matchPct = metrics
     ? `${((metrics.music_match_rate_24h ?? metrics.music_match_rate ?? metrics.match_rate_24h ?? metrics.match_rate) * 100).toFixed(1)}%`
     : '—';
+
+  const stationNameById = useMemo(() => new Map(stations.map((s) => [s.id, s.name])), [stations]);
+  const provinceRows = useMemo(() => provinceMixFromStations(stations), [stations]);
+  const recentLines = useMemo(() => railRecentFromLogs(logs, stationNameById, 8), [logs, stationNameById]);
+  const monthLabel = useMemo(() => calendarMonthLabel(), []);
+  const calCells = useMemo<CalendarCell[]>(() => calendarCellsForMonth(), []);
 
   return (
     <aside className="hidden xl:flex w-80 shrink-0 flex-col border-l border-slate-200/80 bg-white/50 backdrop-blur-sm min-h-screen sticky top-0">
@@ -39,23 +51,23 @@ export function RightRail({
         <div>
           <div className="flex items-center justify-between mb-2">
             <p className="rm-section-label">Calendar</p>
-            <span className="text-[10px] text-slate-400 font-medium">{railCalendarMonth}</span>
+            <span className="text-[10px] text-slate-400 font-medium">{monthLabel}</span>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-3">
             <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-slate-400 mb-1">
-              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d) => (
-                <span key={d}>{d}</span>
+              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+                <span key={`${d}-${i}`}>{d}</span>
               ))}
             </div>
             <div className="grid grid-cols-7 gap-1">
-              {railCalendarDays.map((cell) => (
+              {calCells.map((cell) => (
                 <div
-                  key={cell.d}
+                  key={cell.key}
                   className={`aspect-square rounded-lg flex items-center justify-center text-[11px] font-medium ${
-                    cell.muted ? 'text-slate-300' : 'text-slate-700'
-                  } ${cell.highlight ? 'bg-rm-indigo text-white shadow-sm' : 'hover:bg-slate-50'}`}
+                    cell.d == null ? 'text-slate-200' : cell.muted ? 'text-slate-300' : 'text-slate-700'
+                  } ${cell.highlight ? 'bg-rm-indigo text-white shadow-sm' : cell.d != null && !cell.muted ? 'hover:bg-slate-50' : ''}`}
                 >
-                  {cell.d}
+                  {cell.d == null ? '·' : cell.d}
                 </div>
               ))}
             </div>
@@ -65,7 +77,7 @@ export function RightRail({
         <div>
           <p className="rm-section-label mb-2">Tasks</p>
           <ul className="space-y-2">
-            {railTasks.map((t) => (
+            {tasks.map((t) => (
               <li
                 key={t.id}
                 className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-xs ${
@@ -83,13 +95,10 @@ export function RightRail({
         </div>
 
         <div>
-          <p className="rm-section-label mb-2">Recent (mock)</p>
+          <p className="rm-section-label mb-2">Recent detections</p>
           <ul className="space-y-2">
-            {railRecentActivity.map((a) => (
-              <li
-                key={a.id}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
-              >
+            {(recentLines).map((a) => (
+              <li key={a.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs">
                 <div className="font-semibold text-slate-800">{a.label}</div>
                 <div
                   className={`text-[10px] mt-0.5 ${
@@ -100,17 +109,20 @@ export function RightRail({
                 </div>
               </li>
             ))}
+            {recentLines.length === 0 ? (
+              <li className="text-xs text-slate-500 px-1 py-2">No logs loaded yet.</li>
+            ) : null}
           </ul>
         </div>
 
         <div>
-          <p className="rm-section-label mb-2">Coverage mix</p>
+          <p className="rm-section-label mb-2">Stations by province</p>
           <div className="rounded-2xl border border-slate-200 bg-white p-3 space-y-2">
-            {provinceBreakdown.map((row) => (
+            {provinceRows.map((row) => (
               <div key={row.name}>
                 <div className="flex justify-between text-[10px] text-slate-600 mb-0.5">
-                  <span>{row.name}</span>
-                  <span className="font-mono">{row.pct}%</span>
+                  <span className="truncate pr-2">{row.name}</span>
+                  <span className="font-mono shrink-0">{row.pct}%</span>
                 </div>
                 <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
                   <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500" style={{ width: `${row.pct}%` }} />

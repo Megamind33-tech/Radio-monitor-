@@ -4,11 +4,14 @@ import type { SongSpinRow, Station } from '../types/dashboard';
 
 export function AnalyticsPage({
   songSpins,
+  totalSpinCount,
   stations,
   analyticsLoading,
   onRefresh,
 }: {
   songSpins: SongSpinRow[];
+  /** Unfiltered count from API (for empty vs filter-empty messaging). */
+  totalSpinCount: number;
   stations: Station[];
   analyticsLoading: boolean;
   onRefresh: () => void;
@@ -47,7 +50,7 @@ export function AnalyticsPage({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {analyticsLoading && songSpins.length === 0 ? (
+            {analyticsLoading && totalSpinCount === 0 ? (
               <tr>
                 <td colSpan={7} className="py-10 text-center text-slate-500">Loading analytics…</td>
               </tr>
@@ -67,7 +70,14 @@ export function AnalyticsPage({
                 );
               })
             )}
-            {!analyticsLoading && songSpins.length === 0 && (
+            {!analyticsLoading && songSpins.length === 0 && totalSpinCount > 0 && (
+              <tr>
+                <td colSpan={7} className="py-12 text-center text-slate-500 text-sm">
+                  No spins match the current search. Clear the header filter to see all loaded rows.
+                </td>
+              </tr>
+            )}
+            {!analyticsLoading && songSpins.length === 0 && totalSpinCount === 0 && (
               <tr>
                 <td colSpan={7} className="py-12 text-center text-slate-500 text-sm">
                   No matched detections yet. Leave the monitor running — spins appear as tracks are logged.
