@@ -2,6 +2,9 @@ import crypto from "node:crypto";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { FingerprintResult, MatchResult, NormalizedMetadata } from "../types.js";
+import type { LocalFingerprintLearnSource } from "../lib/local-fingerprint-learning-policy.js";
+
+export { learnSourceFromMatch, isTrustedIdentityForLocalLearning } from "../lib/local-fingerprint-learning-policy.js";
 import { parseFeaturedFromArtist, titleWithoutFeaturing } from "../lib/track-credits.js";
 import { RematchService } from "./rematch.service.js";
 
@@ -305,7 +308,7 @@ export class LocalFingerprintService {
     fp: FingerprintResult;
     match: MatchResult | null;
     metadata?: NormalizedMetadata | null;
-    source: "acoustid" | "stream_metadata" | "manual";
+    source: LocalFingerprintLearnSource;
   }): Promise<void> {
     if (!isLearningEnabled()) return;
     const { fp, match, metadata, source } = input;
@@ -314,6 +317,7 @@ export class LocalFingerprintService {
     const title = (match?.title || metadata?.rawTitle || "").trim() || null;
     const artist = (match?.artist || metadata?.rawArtist || "").trim() || null;
     if (!title && !artist) {
+      logger.debug({ source }, "LocalFingerprint learn skipped: no artist/title identity");
       return;
     }
 

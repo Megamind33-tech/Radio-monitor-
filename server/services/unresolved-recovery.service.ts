@@ -8,9 +8,13 @@ import { AcoustidService } from "./acoustid.service.js";
 import { AuddService } from "./audd.service.js";
 import { AcrcloudService } from "./acrcloud.service.js";
 import { LocalFingerprintService } from "./local-fingerprint.service.js";
+import {
+  isTrustedIdentityForLocalLearning,
+  learnSourceFromMatch,
+} from "../lib/local-fingerprint-learning-policy.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
-import { MatchResult } from "../types.js";
+import type { DetectionMethod, MatchResult } from "../types.js";
 import { fingerprintPipelineGate } from "../lib/fingerprint-pipeline-gate.js";
 
 function parseEnvInt(key: string, fallback: number): number {
@@ -34,7 +38,7 @@ function envBoolTrue(key: string, fallback = true): boolean {
   return !(t === "0" || t === "false" || t === "no" || t === "off");
 }
 
-function detectionMethodForProvider(provider: MatchResult["sourceProvider"] | undefined): string {
+function detectionMethodForProvider(provider: MatchResult["sourceProvider"] | undefined): DetectionMethod {
   if (provider === "audd") return "fingerprint_audd";
   if (provider === "acrcloud") return "fingerprint_acrcloud";
   if (provider === "local_fingerprint") return "fingerprint_local";
@@ -356,11 +360,39 @@ export class UnresolvedRecoveryService {
           });
 
           if (recoveredViaAcoustid || recoveredViaAudd || recoveredViaAcrcloud) {
-            await LocalFingerprintService.learn({
-              fp: fingerprint,
-              match,
-              source: recoveredViaAcoustid ? "acoustid" : "manual",
-            });
+            const detMethod = detectionMethodForProvider(match.sourceProvider);
+            if (isTrustedIdentityForLocalLearning(detMethod, match)) {
+              const src = learnSourceFromMatch(match);
+              await LocalFingerprintService.learn({
+                fp: fingerprint,
+                match,
+                source: src,
+              });
+              logger.info(
+                {
+                  unresolvedSampleId: row.id,
+                  stationId: row.stationId,
+                  learnSource: src,
+                  path: "unresolved_recovery",
+                },
+                "LocalFingerprint taught from unresolved sample recovery"
+              );
+            } else {
+              logger.info(
+                {
+                  unresolvedSampleId: row.id,
+                  stationId: row.stationId,
+                  detMethod,
+                  reason: "local_fp_learn_skipped_untrusted_identity",
+                },
+                "Skipped LocalFingerprint learn after recovery: identity not trusted for library promotion"
+              );
+            }
+          } else if (match.sourceProvider === "local_fingerprint") {
+            logger.info(
+              { unresolvedSampleId: row.id, stationId: row.stationId, title: titleFinal },
+              "Unresolved recovery hit existing LocalFingerprint library row (canonical; no duplicate learn)"
+            );
           }
 
           await prisma.currentNowPlaying.upsert({

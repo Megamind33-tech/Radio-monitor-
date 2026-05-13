@@ -2,6 +2,10 @@ import axios from "axios";
 import { prisma } from "../lib/prisma.js";
 import { FingerprintService } from "./fingerprint.service.js";
 import { LocalFingerprintService } from "./local-fingerprint.service.js";
+import {
+  isTrustedIdentityForLocalLearning,
+  learnSourceFromMatch,
+} from "../lib/local-fingerprint-learning-policy.js";
 import { CatalogIdentityService } from "./catalog-identity.service.js";
 import crypto from "node:crypto";
 import fs from "fs";
@@ -285,11 +289,30 @@ export class CatalogCrawlerService {
         await prisma.catalogCrawlSource.update({ where: { id }, data: { fingerprintStatus: "failed", failureReason: "fingerprint_failed", failureCount: { increment: 1 } } });
         return { ok: false, reason: "fingerprint_failed" };
       }
+      const crawlMatch = {
+        title: meta.title ?? undefined,
+        artist: meta.artist ?? undefined,
+        confidence: meta.metadataConfidence,
+        score: meta.metadataConfidence,
+        sourceProvider: "musicbrainz_search" as const,
+        reasonCode: "crawler_media_ingest",
+      };
+      if (!isTrustedIdentityForLocalLearning("catalog_lookup", crawlMatch)) {
+        await prisma.catalogCrawlSource.update({
+          where: { id },
+          data: {
+            fingerprintStatus: "failed",
+            failureReason: "metadata_not_trusted_for_local_library",
+            failureCount: { increment: 1 },
+          },
+        });
+        return { ok: false, reason: "metadata_not_trusted_for_local_library" };
+      }
       await LocalFingerprintService.learn({
         fp,
-        source: "manual",
+        source: learnSourceFromMatch(crawlMatch),
         metadata: null,
-        match: { title: meta.title ?? undefined, artist: meta.artist ?? undefined, confidence: meta.metadataConfidence, score: meta.metadataConfidence, sourceProvider: "local_fingerprint", reasonCode: "crawler_media_ingest" },
+        match: crawlMatch,
       });
       await prisma.catalogCrawlSource.update({ where: { id }, data: { fingerprintStatus: "fingerprinted", metadataStatus: "extracted", titleRaw: meta.title, artistRaw: meta.artist, finalUrl: pre.finalUrl || null, contentType: pre.contentType || null, lastStatus: "fingerprinted", lastCheckedAt: new Date() } });
       return { ok: true };

@@ -12,7 +12,13 @@ import { FingerprintService } from "./fingerprint.service.js";
 import { AcoustidService } from "./acoustid.service.js";
 import { AuddService } from "./audd.service.js";
 import { AcrcloudService } from "./acrcloud.service.js";
-import { LocalFingerprintService } from "./local-fingerprint.service.js";
+import {
+  LocalFingerprintService,
+} from "./local-fingerprint.service.js";
+import {
+  isTrustedIdentityForLocalLearning,
+  learnSourceFromMatch,
+} from "../lib/local-fingerprint-learning-policy.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { CatalogLookupService } from "./catalog-lookup.service.js";
 import {
@@ -519,6 +525,31 @@ export class MonitorService {
         }
       }
 
+      /**
+       * Strong local hits skip AcoustID early; marginal hits (below LOCAL_FP_MIN_CONFIDENCE_FOR_SKIP_ACOUSTID)
+       * are intentionally ignored during the attempt loop so we still try AcoustID/paid lanes first.
+       * If everything external misses, reuse the last capture and accept a marginal local library
+       * hit so metadata-missing stations can still resolve repeat audio (ZNBC-style).
+       */
+      if (!audioMatch && capturedFingerprint?.fingerprint) {
+        const fallbackMin = parseEnvFloat("LOCAL_FP_MIN_FALLBACK_CONFIDENCE", 0.72);
+        const lm = await LocalFingerprintService.lookup(capturedFingerprint);
+        if (lm && (lm.confidence ?? 0) >= fallbackMin) {
+          audioMatch = lm;
+          audioMatchSource = "local";
+          logger.info(
+            {
+              station: station.name,
+              stationId,
+              confidence: lm.confidence,
+              title: lm.title,
+              artist: lm.artist,
+            },
+            "Marginal local fingerprint hit used after external fingerprint miss"
+          );
+        }
+      }
+
       let catalogMatch: MatchResult | null = null;
       let catalogRejectedLowConfidence = false;
       /** Always try catalog when ICY is non-empty — okForCatalog only scales merge trust, it must not block lookup (was starving real songs). */
@@ -538,6 +569,19 @@ export class MonitorService {
 
       const minAcoust = parseEnvFloat("ACOUSTID_PREFER_MIN_SCORE", 0.55);
       const merged = mergeAcoustidAndCatalog(audioMatch, catalogMatch, minAcoust, catalogTrustFactor);
+
+      if (merged.method === "fingerprint_local" && merged.match) {
+        logger.info(
+          {
+            stationId,
+            station: station.name,
+            title: merged.match.title,
+            artist: merged.match.artist,
+            confidence: merged.match.confidence,
+          },
+          "Now playing resolution: LocalFingerprint canonical library hit"
+        );
+      }
 
       let match = merged.match;
       let method: DetectionMethod = merged.method;
@@ -642,23 +686,6 @@ export class MonitorService {
             lastAudioFingerprintAt: new Date(),
             ...(icyCrossCheckAudio ? { lastIcyVerificationFingerprintAt: new Date() } : {}),
           },
-        });
-      }
-
-      // Self-learning: persist the fingerprint whenever we have a confirmed match
-      // so future plays of the same track are resolved locally (no AcoustID / MB call).
-      if (capturedFingerprint && match && audioMatchSource !== "local") {
-        const learnSource: "acoustid" | "stream_metadata" | "manual" =
-          audioMatchSource === "acoustid"
-            ? "acoustid"
-            : audioMatchSource === "audd"
-              ? "manual"
-              : "stream_metadata";
-        await LocalFingerprintService.learn({
-          fp: capturedFingerprint,
-          match,
-          metadata,
-          source: learnSource,
         });
       }
 
@@ -1334,13 +1361,31 @@ export class MonitorService {
           // Persist to the self-learned fingerprint library so future plays of this
           // song are resolved locally — no AcoustID or catalog call needed.
           if (fp && matchForLibrary) {
-            await LocalFingerprintService.learn({
-              fp,
-              match: matchForLibrary,
-              metadata: metadata ?? null,
-              source: match?.sourceProvider?.includes("acoustid") ? "acoustid" : "stream_metadata",
-            });
-            learnedLibraryThisPoll = true;
+            if (isTrustedIdentityForLocalLearning(method, matchForLibrary)) {
+              const src = learnSourceFromMatch(matchForLibrary);
+              await LocalFingerprintService.learn({
+                fp,
+                match: matchForLibrary,
+                metadata: metadata ?? null,
+                source: src,
+              });
+              learnedLibraryThisPoll = true;
+              logger.info(
+                { stationId, detectionLogId: log.id, learnSource: src, path: "archive_sample" },
+                "LocalFingerprint taught from archived song sample"
+              );
+            } else {
+              logger.info(
+                {
+                  stationId,
+                  detectionLogId: log.id,
+                  method,
+                  confidence: matchForLibrary.confidence,
+                  reason: "local_fp_learn_skipped_untrusted_identity",
+                },
+                "Skipped LocalFingerprint learn from archive: identity not trusted for library promotion"
+              );
+            }
           }
         }
       } catch (e) {
@@ -1354,19 +1399,31 @@ export class MonitorService {
       opts?.capturedFingerprint &&
       matchForLibrary
     ) {
-      const learnSource: "acoustid" | "stream_metadata" | "manual" =
-        match?.sourceProvider === "audd" || match?.sourceProvider === "acrcloud"
-          ? "manual"
-          : match?.sourceProvider?.includes("acoustid")
-            ? "acoustid"
-            : "stream_metadata";
-      await LocalFingerprintService.learn({
-        fp: opts.capturedFingerprint,
-        match: matchForLibrary,
-        metadata: metadata ?? null,
-        source: learnSource,
-      });
-      learnedLibraryThisPoll = true;
+      if (!isTrustedIdentityForLocalLearning(method, matchForLibrary)) {
+        logger.info(
+          {
+            stationId,
+            method,
+            confidence: matchForLibrary.confidence,
+            sourceProvider: matchForLibrary.sourceProvider,
+            reason: "local_fp_learn_skipped_untrusted_identity",
+          },
+          "Skipped LocalFingerprint learn from live capture: identity not trusted for library promotion"
+        );
+      } else {
+        const learnSource = learnSourceFromMatch(matchForLibrary);
+        await LocalFingerprintService.learn({
+          fp: opts.capturedFingerprint,
+          match: matchForLibrary,
+          metadata: metadata ?? null,
+          source: learnSource,
+        });
+        learnedLibraryThisPoll = true;
+        logger.info(
+          { stationId, detectionLogId: log.id, learnSource, path: "live_capture" },
+          "LocalFingerprint taught from live poll fingerprint"
+        );
+      }
     }
 
     await prisma.currentNowPlaying.upsert({
