@@ -58,6 +58,21 @@ export function mergeAcoustidAndCatalog(
     if (sameTitle && sameArtist) {
       return { match: audio, method: audioMethod, reasonCode: null };
     }
+
+    /**
+     * Canonical local library hit (Chromaprint) must not lose to a high-confidence text
+     * catalog guess when the two disagree — text catalogs are wrong on many ZNBC-style
+     * streams while the local fingerprint came from prior trusted audio resolution.
+     */
+    const localWinMin = parseEnvFloat("LOCAL_FP_MERGE_WIN_OVER_CATALOG", 0.82);
+    if (audio.sourceProvider === "local_fingerprint" && (audio.score ?? 0) >= localWinMin) {
+      return {
+        match: audio,
+        method: audioMethod,
+        reasonCode: "local_fingerprint_preferred_over_disagreeing_catalog",
+      };
+    }
+
     /** Disagreement: do not let marginal AcoustID beat catalog (see ACOUSTID_MIN_SCORE_OVER_CATALOG). */
     if (audio.score >= minAcoustidOverCatalog) {
       return {

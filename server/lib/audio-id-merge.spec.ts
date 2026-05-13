@@ -46,6 +46,21 @@ function run() {
   assert(r3.match?.title === "X", "AcoustID in (prefer,minOver) with weak catalog should prefer audio");
   assert(r3.reasonCode === "acoustid_preferred_weak_catalog", r3.reasonCode ?? "");
 
+  const strongCat = { ...catalog, confidence: 0.95, title: "Wrong Title", artist: "Wrong Artist" };
+  const localAudio = {
+    score: 0.9,
+    confidence: 0.9,
+    title: "True Song",
+    artist: "True Artist",
+    sourceProvider: "local_fingerprint" as const,
+  };
+  const r4 = mergeAcoustidAndCatalog(localAudio, strongCat, 0.55, 1);
+  assert(r4.match?.title === "True Song", "strong local_fingerprint must win over disagreeing high-confidence catalog");
+  assert(
+    r4.reasonCode === "local_fingerprint_preferred_over_disagreeing_catalog",
+    r4.reasonCode ?? ""
+  );
+
   console.log("audio-id-merge.spec: ok");
 }
 
