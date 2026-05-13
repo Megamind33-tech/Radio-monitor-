@@ -75,8 +75,8 @@ function ServicePill({ ok, label }: { ok: boolean; label: string }) {
     <span
       className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
         ok
-          ? 'border-green-500/25 bg-green-500/8 text-green-300'
-          : 'border-white/[0.08] bg-black/20 text-gray-500'
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          : 'border-slate-200 bg-slate-50 text-slate-500'
       }`}
     >
       {ok ? <CheckCircle2 className="w-3 h-3 shrink-0" /> : <XCircle className="w-3 h-3 shrink-0" />}
@@ -139,10 +139,10 @@ export function LearningLibraryTab() {
       <div className="flex flex-wrap justify-between items-start gap-4">
         <div>
           <h2 className="text-lg font-semibold flex items-center gap-2">
-            <Brain className="w-5 h-5 text-brand-purple" />
+            <Brain className="w-5 h-5 text-violet-600" />
             Learning Library
           </h2>
-          <p className="text-sm text-gray-500 mt-1 max-w-2xl">
+          <p className="text-sm text-slate-500 mt-1 max-w-2xl">
             Chromaprint fingerprints learned from successful matches. Local hits skip AcoustID on repeat plays.
             Pipeline load shows how many stations are capturing audio right now.
           </p>
@@ -150,7 +150,7 @@ export function LearningLibraryTab() {
         <div className="flex gap-2">
           <a
             href="/api/fingerprints/local/export?format=csv"
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-white/10 bg-black/20 text-sm hover:bg-black/40 text-gray-300 transition-all"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm hover:bg-slate-100 text-slate-700 transition-all"
             download
           >
             <Download className="w-3.5 h-3.5" />
@@ -159,7 +159,7 @@ export function LearningLibraryTab() {
           <button
             type="button"
             onClick={() => void fetchAll()}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-white/10 bg-black/20 text-sm hover:bg-black/40 text-gray-300 transition-all"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm hover:bg-slate-100 text-slate-700 transition-all"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             Refresh
@@ -168,33 +168,33 @@ export function LearningLibraryTab() {
       </div>
 
       {error && (
-        <div className="rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="lg:col-span-2 bg-white/[0.03] border border-white/[0.07] rounded-3xl p-6 space-y-4">
+        <div className="lg:col-span-2 bg-slate-50/90 border border-slate-200 rounded-3xl p-6 space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
-              <Activity className="w-4 h-4 text-brand-cyan" />
+            <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+              <Activity className="w-4 h-4 text-rm-indigo" />
               Fingerprint pipeline (live)
             </h3>
-            <span className="text-[10px] text-gray-600 uppercase tracking-wider">Polls every {POLL_MS / 1000}s</span>
+            <span className="text-[10px] text-slate-400 uppercase tracking-wider">Polls every {POLL_MS / 1000}s</span>
           </div>
           <div className="flex items-end gap-4">
             <div className="flex-1">
-              <div className="flex justify-between text-xs text-gray-500 mb-1">
+              <div className="flex justify-between text-xs text-slate-500 mb-1">
                 <span>Concurrent captures</span>
                 <span>
                   {active} / {cap}
                 </span>
               </div>
-              <div className="h-3 rounded-full bg-black/50 overflow-hidden border border-white/10">
+              <div className="h-3 rounded-full bg-slate-200 overflow-hidden border border-slate-200">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-brand-cyan to-brand-purple transition-all duration-500"
+                  className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all duration-500"
                   style={{ width: `${loadPct}%` }}
                 />
               </div>
-              <p className="text-[11px] text-gray-600 mt-2">
+              <p className="text-[11px] text-slate-400 mt-2">
                 Min gap between starts: {dash?.pipelineEnv.minGapMs ?? '—'} ms · Max concurrent:{' '}
                 {dash?.pipelineEnv.maxConcurrent ?? '—'} (env tunable)
               </p>
@@ -212,26 +212,26 @@ export function LearningLibraryTab() {
           </div>
         </div>
 
-        <div className="bg-white/[0.03] border border-white/[0.07] rounded-3xl p-6 space-y-4">
-          <h3 className="text-sm font-semibold text-gray-300">How it learns</h3>
-          <ol className="text-xs text-gray-400 space-y-2 list-decimal list-inside leading-relaxed">
+        <div className="bg-slate-50/90 border border-slate-200 rounded-3xl p-6 space-y-4">
+          <h3 className="text-sm font-semibold text-slate-700">How it learns</h3>
+          <ol className="text-xs text-slate-600 space-y-2 list-decimal list-inside leading-relaxed">
             <li>Match from AcoustID, catalog, or paid fallback after audio capture.</li>
             <li>Fingerprint + metadata stored in LocalFingerprint (deduped by SHA-1).</li>
             <li>Next time the same audio pattern appears → instant local match.</li>
           </ol>
-          <div className="pt-2 border-t border-white/10">
-            <p className="text-[10px] uppercase text-gray-600 mb-2">Teach sources (counts)</p>
+          <div className="pt-2 border-t border-slate-200">
+            <p className="text-[10px] uppercase text-slate-400 mb-2">Teach sources (counts)</p>
             <div className="flex flex-wrap gap-2">
-              {bySourceEntries.length === 0 && <span className="text-xs text-gray-600">No rows yet</span>}
+              {bySourceEntries.length === 0 && <span className="text-xs text-slate-400">No rows yet</span>}
               {bySourceEntries.map(([k, v]) => (
-                <span key={k} className="px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-xs text-gray-300">
-                  {sourceLabel(k)}: <span className="text-white font-mono">{v}</span>
+                <span key={k} className="px-2 py-1 rounded-lg bg-slate-100 border border-slate-200 text-xs text-slate-700">
+                  {sourceLabel(k)}: <span className="text-slate-900 font-mono">{v}</span>
                 </span>
               ))}
             </div>
           </div>
           {(lib?.latestMatchedAt || lib?.latestLearnedAt) && (
-            <p className="text-[11px] text-gray-600">
+            <p className="text-[11px] text-slate-400">
               Last library activity:{' '}
               {lib.latestMatchedAt ? new Date(lib.latestMatchedAt).toLocaleString() : '—'}
             </p>
@@ -239,8 +239,8 @@ export function LearningLibraryTab() {
         </div>
       </div>
 
-      <div className="bg-white/[0.03] border border-white/[0.07] rounded-3xl p-6">
-        <h3 className="text-sm font-semibold text-gray-300 mb-4">Recognition stack (env)</h3>
+      <div className="bg-slate-50/90 border border-slate-200 rounded-3xl p-6">
+        <h3 className="text-sm font-semibold text-slate-700 mb-4">Recognition stack (env)</h3>
         <div className="flex flex-wrap gap-2">
           <ServicePill ok={dash?.services.acoustid ?? false} label="AcoustID key" />
           <ServicePill ok={dash?.services.musicbrainz ?? false} label="MusicBrainz UA" />
@@ -251,18 +251,18 @@ export function LearningLibraryTab() {
         </div>
       </div>
 
-      <div className="bg-white/[0.03] border border-white/[0.07] rounded-3xl p-6">
+      <div className="bg-slate-50/90 border border-slate-200 rounded-3xl p-6">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
-            <Radio className="w-4 h-4 text-brand-cyan" />
+          <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+            <Radio className="w-4 h-4 text-rm-indigo" />
             Recent learned fingerprints
           </h3>
-          <span className="text-xs text-gray-600">{rows.length} shown</span>
+          <span className="text-xs text-slate-400">{rows.length} shown</span>
         </div>
         <div className="overflow-x-auto max-h-[560px]">
           <table className="w-full text-left text-sm min-w-[1100px]">
             <thead>
-              <tr className="border-b border-white/10 text-gray-500 text-xs uppercase tracking-wide">
+              <tr className="border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wide">
                 <th className="py-2 pr-3">Track</th>
                 <th className="py-2 pr-3">Album / label</th>
                 <th className="py-2 pr-3">Source</th>
@@ -274,14 +274,14 @@ export function LearningLibraryTab() {
             <tbody>
               {loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-gray-500">
+                  <td colSpan={6} className="py-10 text-center text-slate-500">
                     Loading library…
                   </td>
                 </tr>
               )}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-gray-500">
+                  <td colSpan={6} className="py-10 text-center text-slate-500">
                     No fingerprints yet. Run the monitor until songs match — first learn happens after a successful ID
                     (and first-play archive when enabled).
                   </td>
@@ -296,43 +296,43 @@ export function LearningLibraryTab() {
                       ? `${r.durationSec}s`
                       : '—';
                 return (
-                  <tr key={r.id} className="border-b border-white/5 hover:bg-white/[0.03]">
+                  <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50/90">
                     <td className="py-3 pr-3 align-top">
-                      <div className="font-medium text-white truncate max-w-[280px]" title={r.title || ''}>
+                      <div className="font-medium text-slate-900 truncate max-w-[280px]" title={r.title || ''}>
                         {r.title || '—'}
                       </div>
-                      <div className="text-xs text-gray-500 truncate max-w-[280px]" title={r.artist || ''}>
+                      <div className="text-xs text-slate-500 truncate max-w-[280px]" title={r.artist || ''}>
                         {r.displayArtist || r.artist || '—'}
                       </div>
                       {feat.length > 0 && (
-                        <div className="text-[10px] text-brand-cyan/90 mt-0.5">Feat. {feat.join(', ')}</div>
+                        <div className="text-[10px] text-rm-indigo/90 mt-0.5">Feat. {feat.join(', ')}</div>
                       )}
                       {r.titleWithoutFeat && r.titleWithoutFeat !== r.title && (
-                        <div className="text-[10px] text-gray-600 mt-0.5">Title (clean): {r.titleWithoutFeat}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">Title (clean): {r.titleWithoutFeat}</div>
                       )}
-                      <div className="text-[10px] text-gray-600 mt-1 font-mono">
+                      <div className="text-[10px] text-slate-400 mt-1 font-mono">
                         {dur} · conf {typeof r.confidence === 'number' ? r.confidence.toFixed(2) : '—'}
                         {r.recordingMbid ? ` · MB ${r.recordingMbid.slice(0, 8)}…` : ''}
                       </div>
                     </td>
-                    <td className="py-3 pr-3 align-top text-xs text-gray-400">
+                    <td className="py-3 pr-3 align-top text-xs text-slate-600">
                       <div className="truncate max-w-[200px]" title={r.releaseTitle || ''}>
                         {r.releaseTitle || '—'}
                       </div>
-                      <div className="text-gray-600 truncate max-w-[200px]" title={r.labelName || ''}>
+                      <div className="text-slate-400 truncate max-w-[200px]" title={r.labelName || ''}>
                         {r.labelName || ''}
                       </div>
-                      <div className="text-gray-600">{r.genre || ''}</div>
+                      <div className="text-slate-400">{r.genre || ''}</div>
                       {r.countryCode && <div className="text-[10px]">{r.countryCode}</div>}
                     </td>
                     <td className="py-3 pr-3 align-top">
-                      <span className="px-2 py-0.5 rounded-md bg-brand-purple/15 text-brand-purple text-[10px] font-bold uppercase">
+                      <span className="px-2 py-0.5 rounded-md bg-violet-100 text-violet-800 text-[10px] font-bold uppercase">
                         {r.source}
                       </span>
                     </td>
-                    <td className="py-3 pr-3 align-top text-right font-mono text-gray-300">{r.playCountTotal}</td>
-                    <td className="py-3 pr-3 align-top text-right font-mono text-gray-400">{r.timesMatched}</td>
-                    <td className="py-3 pr-3 align-top text-xs text-gray-500 whitespace-nowrap">
+                    <td className="py-3 pr-3 align-top text-right font-mono text-slate-700">{r.playCountTotal}</td>
+                    <td className="py-3 pr-3 align-top text-right font-mono text-slate-600">{r.timesMatched}</td>
+                    <td className="py-3 pr-3 align-top text-xs text-slate-500 whitespace-nowrap">
                       {new Date(r.lastMatchedAt).toLocaleString()}
                     </td>
                   </tr>
@@ -348,10 +348,10 @@ export function LearningLibraryTab() {
 
 function StatBox({ label, value, sub }: { label: string; value: string | number; sub: string }) {
   return (
-    <div className="rounded-2xl border border-white/[0.08] bg-black/25 px-3 py-3">
-      <div className="text-[10px] uppercase text-gray-600 font-semibold tracking-wider">{label}</div>
-      <div className="text-xl font-bold text-brand-cyan mt-1 leading-none">{value}</div>
-      <div className="text-[10px] text-gray-600 mt-1.5">{sub}</div>
+    <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+      <div className="text-[10px] uppercase text-slate-400 font-semibold tracking-wider">{label}</div>
+      <div className="text-xl font-bold text-rm-indigo mt-1 leading-none">{value}</div>
+      <div className="text-[10px] text-slate-400 mt-1.5">{sub}</div>
     </div>
   );
 }
