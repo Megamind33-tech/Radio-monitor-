@@ -39,6 +39,7 @@ export function formatMethod(method: string) {
   if (method === 'fingerprint_acoustid') return 'AcoustID';
   if (method === 'fingerprint_local') return 'Local library';
   if (method === 'catalog_lookup') return 'Catalog';
+  if (method === 'onlineradiobox_track') return 'OnlineRadioBox';
   return method;
 }
 

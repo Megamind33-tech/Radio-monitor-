@@ -638,6 +638,93 @@ export class MetadataService {
     }
   }
 
+  /**
+   * Parse `zm.phoenix`-style slug or `onlineradiobox.com/{cc}/{slug}` URL from `sourceIdsJson`.
+   * Shared with OnlineRadioBox track polling scripts.
+   */
+  static parseOnlineRadioBoxRadioId(sourceIdsJson: string | null | undefined): string | null {
+    if (!sourceIdsJson) return null;
+    try {
+      const o = JSON.parse(sourceIdsJson) as { onlineradiobox?: string; onlineRadioBoxUrl?: string };
+      const v = o.onlineradiobox;
+      if (typeof v === "string" && v.includes(".")) return v.trim().toLowerCase();
+      const url = typeof o.onlineRadioBoxUrl === "string" ? o.onlineRadioBoxUrl : "";
+      const m = url.match(/onlineradiobox\.com\/([a-z]{2})\/([^/?#]+)/i);
+      if (m?.[1] && m?.[2]) return `${m[1].toLowerCase()}.${m[2].toLowerCase()}`;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private static artistTitleFromOrbApiData(data: Record<string, unknown>): {
+    artist: string;
+    song: string;
+    combined: string;
+  } {
+    const title = String(data.title ?? "").trim();
+    if (title && title.includes(" - ")) {
+      const i = title.indexOf(" - ");
+      return {
+        artist: title.slice(0, i).trim(),
+        song: title.slice(i + 3).trim(),
+        combined: title,
+      };
+    }
+    const ia = String(data.iArtist ?? "").trim();
+    const iname = String(data.iName ?? "").trim();
+    if (ia || iname) {
+      return {
+        artist: ia,
+        song: iname,
+        combined: [ia, iname].filter(Boolean).join(" - ") || title,
+      };
+    }
+    return { artist: "", song: title, combined: title };
+  }
+
+  /**
+   * OnlineRadioBox scraper (`scraper2.onlineradiobox.com`) when `sourceIdsJson` references ORB.
+   * Same data source as `scripts/orb_track_poller.mjs`, integrated as a **third metadata witness**
+   * for MATCHING ENGINE V2 (parallel with ICY + mount-based provider fallbacks).
+   * Set `ORB_LIVE_POLL_METADATA=0` to disable HTTP on every poll.
+   */
+  static async readOnlineRadioBoxNowPlaying(sourceIdsJson: string | null | undefined): Promise<NormalizedMetadata | null> {
+    const disabled = String(process.env.ORB_LIVE_POLL_METADATA ?? "1").trim().toLowerCase();
+    if (disabled === "0" || disabled === "false" || disabled === "off") return null;
+    const radioId = MetadataService.parseOnlineRadioBoxRadioId(sourceIdsJson);
+    if (!radioId) return null;
+    const timeout = Math.max(1500, parseInt(process.env.ORB_FETCH_TIMEOUT_MS || "2500", 10) || 2500);
+    const maxAgeSec = Math.max(60, parseInt(process.env.ORB_MAX_TRACK_AGE_SECONDS || "900", 10) || 900);
+    const url = `https://scraper2.onlineradiobox.com/${encodeURIComponent(radioId)}?l=0`;
+    try {
+      const res = await axios.get<Record<string, unknown>>(url, {
+        timeout,
+        headers: { "User-Agent": METADATA_UA },
+        validateStatus: (s) => s >= 200 && s < 400,
+      });
+      const data = res.data;
+      if (!data || typeof data !== "object") return null;
+      if (data.alias && String(data.alias).toLowerCase() !== radioId.toLowerCase()) return null;
+      const updatedSec = Number(data.updated);
+      if (Number.isFinite(updatedSec) && updatedSec > 0) {
+        const ageSec = Math.floor(Date.now() / 1000) - updatedSec;
+        if (ageSec > maxAgeSec) {
+          logger.debug({ radioId, ageSec }, "OnlineRadioBox scrape: track timestamp too stale for live poll");
+          return null;
+        }
+      }
+      const { artist, song, combined } = MetadataService.artistTitleFromOrbApiData(data);
+      const combinedText = (combined || [artist, song].filter(Boolean).join(" - ")).trim();
+      if (!song && !combinedText) return null;
+      if (!MetadataService.isUsefulSongText(combinedText)) return null;
+      return this.parseStreamTitle(combinedText);
+    } catch (error) {
+      logger.debug({ error, radioId }, "OnlineRadioBox live metadata read failed");
+      return null;
+    }
+  }
+
   static isMetadataTrustworthy(metadata: NormalizedMetadata, lastMetadata?: string): { trusted: boolean, reason?: string } {
     if (!metadata.combinedRaw) return { trusted: false, reason: 'empty' };
 

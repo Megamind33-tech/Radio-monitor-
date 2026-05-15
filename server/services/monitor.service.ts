@@ -204,16 +204,18 @@ export class MonitorService {
 
       let icyMeta: NormalizedMetadata | null = null;
       let providerMeta: NormalizedMetadata | null = null;
+      let orbMeta: NormalizedMetadata | null = null;
       let metadata: NormalizedMetadata | null = null;
       let legacyFingerprint = false;
       let reasonCode: string | null = null;
 
       if (station.metadataPriorityEnabled) {
-        [icyMeta, providerMeta] = await Promise.all([
+        [icyMeta, providerMeta, orbMeta] = await Promise.all([
           MetadataService.readStreamMetadata(resolvedUrl),
           MetadataService.readProviderNowPlayingMetadata(resolvedUrl),
+          MetadataService.readOnlineRadioBoxNowPlaying(station.sourceIdsJson),
         ]);
-        metadata = icyMeta ?? providerMeta ?? null;
+        metadata = icyMeta ?? providerMeta ?? orbMeta ?? null;
         latestNowPlaying = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
 
         if (!metadata) {
@@ -684,6 +686,7 @@ export class MonitorService {
         metadata,
         icyMeta,
         providerMeta,
+        orbMeta,
         metaTrust01: metaTrust,
         audioMatch,
         audioMatchSource,

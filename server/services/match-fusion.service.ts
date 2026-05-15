@@ -28,10 +28,12 @@ function fingerprintEvidenceType(
 
 export type LivePollFusionInput = {
   stationId: string;
-  /** Chosen metadata row for catalog / trust (ICY ?? provider ?? TuneIn). */
+  /** Chosen metadata row for catalog / trust (ICY ?? provider ?? ORB ?? TuneIn). */
   metadata: NormalizedMetadata | null;
   icyMeta: NormalizedMetadata | null;
   providerMeta: NormalizedMetadata | null;
+  /** OnlineRadioBox scraper witness when `sourceIdsJson` lists ORB. */
+  orbMeta: NormalizedMetadata | null;
   /** 0–1 trust in chosen metadata row for catalog merge. */
   metaTrust01: number;
   audioMatch: MatchResult | null;
@@ -118,6 +120,7 @@ export class MatchFusionService {
       metadata: input.recoveryMeta,
       icyMeta: input.recoveryMeta,
       providerMeta: null,
+      orbMeta: null,
       metaTrust01,
       audioMatch: input.audioMatch,
       audioMatchSource: input.audioMatchSource,
@@ -164,6 +167,7 @@ export class MatchFusionService {
       metadata,
       icyMeta,
       providerMeta,
+      orbMeta,
       metaTrust01,
       audioMatch,
       audioMatchSource,
@@ -182,7 +186,11 @@ export class MatchFusionService {
 
     let icyEv: MatchEvidence | null = null;
     if (icyMeta) {
-      const disagree = icyProviderCombinedDisagree(icyMeta, providerMeta);
+      const disagreeProv = icyProviderCombinedDisagree(icyMeta, providerMeta);
+      const disagreeOrb = icyProviderCombinedDisagree(icyMeta, orbMeta);
+      const icyContradictionFlags: string[] = [];
+      if (disagreeProv) icyContradictionFlags.push("provider_combined_text_differs");
+      if (disagreeOrb) icyContradictionFlags.push("onlineradiobox_combined_text_differs");
       icyEv = evidenceFromNormalizedMetadata({
         evidenceType: "icy_metadata",
         meta: icyMeta,
@@ -190,7 +198,7 @@ export class MatchFusionService {
         metaTrust01,
         staleFlag: metaTrust01 <= 0,
         junkFlag: false,
-        contradictionFlags: disagree ? ["provider_combined_text_differs"] : undefined,
+        contradictionFlags: icyContradictionFlags.length ? icyContradictionFlags : undefined,
       });
       supporting.push(icyEv);
     }
@@ -208,6 +216,30 @@ export class MatchFusionService {
         conflicting.push({
           ...provEv,
           qualityFlags: [...(provEv.qualityFlags ?? []), "differs_from_icy_combined"],
+        });
+      }
+    }
+
+    if (orbMeta) {
+      const orbTrust = orbMeta === metadata ? metaTrust01 : Math.max(0.35, metaTrust01 * 0.82);
+      const orbEv = evidenceFromNormalizedMetadata({
+        evidenceType: "provider_metadata",
+        meta: orbMeta,
+        stationId,
+        metaTrust01: orbTrust,
+        sourceLabel: "onlineradiobox",
+      });
+      supporting.push(orbEv);
+      if (icyProviderCombinedDisagree(icyMeta, orbMeta)) {
+        conflicting.push({
+          ...orbEv,
+          qualityFlags: [...(orbEv.qualityFlags ?? []), "differs_from_icy_combined"],
+        });
+      }
+      if (icyProviderCombinedDisagree(providerMeta, orbMeta)) {
+        conflicting.push({
+          ...orbEv,
+          qualityFlags: [...(orbEv.qualityFlags ?? []), "differs_from_mount_provider_combined"],
         });
       }
     }

@@ -144,6 +144,35 @@ async function main() {
       continue;
     }
 
+    const titleFinal = song || combined || null;
+    const artistFinal = artist || null;
+    const matchDiagnosticsJson = JSON.stringify({
+      pollReason: "onlineradiobox_poller",
+      recoveryMode: false,
+      onlineradioboxRadioId: radioId,
+      fingerprintAttempts: [
+        {
+          attempt: 1,
+          delaySec: 0,
+          sampleSec: 0,
+          outcome: "onlineradiobox_scraper",
+        },
+      ],
+      fusionV2: {
+        status: "matched",
+        reasonCode: "onlineradiobox_track",
+        finalMethod: "onlineradiobox_track",
+        finalConfidence: 0.75,
+        finalTitle: titleFinal,
+        finalArtist: artistFinal,
+        shouldLearnFingerprint: false,
+        secondPassCatalogApplied: false,
+        lanes: [{ type: "provider_metadata", tier: "medium", source: "onlineradiobox" }],
+        conflicts: 0,
+        winningType: "provider_metadata",
+      },
+    });
+
     const created = await prisma.detectionLog.create({
       data: {
         stationId: st.id,
@@ -151,10 +180,11 @@ async function main() {
         rawStreamText: combined || null,
         parsedArtist: artist || null,
         parsedTitle: song || null,
-        titleFinal: song || combined || null,
-        artistFinal: artist || null,
+        titleFinal,
+        artistFinal,
         status: "matched",
         sourceProvider: "onlineradiobox",
+        matchDiagnosticsJson,
       },
       select: { id: true },
     });
