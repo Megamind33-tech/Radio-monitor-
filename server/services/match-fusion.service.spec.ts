@@ -55,6 +55,25 @@ function run() {
   const sum = MatchFusionService.summarizeForDiagnostics(d);
   assert(typeof sum.conflicts === "number", "summary");
 
+  const mergedOnly = MatchFusionService.mergeAudioCatalog(audio, null, 0.55);
+  const recoveryDiag = MatchFusionService.recoveryMatchDiagnosticsJson({
+    stationId: "s2",
+    unresolvedSampleId: "u1",
+    linkedDetectionLogId: "d1",
+    recoveryMeta: icy,
+    audioMatch: audio,
+    audioMatchSource: "acoustid",
+    merged: mergedOnly,
+    finalMatch: audio,
+    finalMethod: "fingerprint_acoustid",
+    recoveredViaAcoustid: true,
+    recoveredViaAudd: false,
+    recoveredViaAcrcloud: false,
+  });
+  const parsed = JSON.parse(recoveryDiag) as { recoveryMode?: boolean; fusionV2?: { conflicts?: number } };
+  assert(parsed.recoveryMode === true, "recovery flag");
+  assert(parsed.fusionV2 && typeof parsed.fusionV2.conflicts === "number", "recovery fusionV2");
+
   console.log("match-fusion.service.spec.ts: ok");
 }
 

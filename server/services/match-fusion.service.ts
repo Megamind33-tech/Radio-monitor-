@@ -76,6 +76,85 @@ export class MatchFusionService {
   }
 
   /**
+   * Reconstruct stream metadata context from a prior DetectionLog (recovery / reprocess).
+   */
+  static metadataSnapshotFromDetectionLog(
+    linked: { rawStreamText: string | null; parsedArtist: string | null; parsedTitle: string | null } | null
+  ): NormalizedMetadata | null {
+    if (!linked) return null;
+    const raw = (linked.rawStreamText ?? "").trim();
+    const ra = (linked.parsedArtist ?? "").trim();
+    const rt = (linked.parsedTitle ?? "").trim();
+    const combined = raw || (ra && rt ? `${ra} - ${rt}` : ra || rt || "");
+    if (!combined) return null;
+    return {
+      combinedRaw: combined,
+      rawArtist: ra || undefined,
+      rawTitle: rt || undefined,
+      sourceType: "stream_metadata",
+    };
+  }
+
+  /**
+   * `matchDiagnosticsJson` for unresolved recovery — same `fusionV2` shape as live polls.
+   */
+  static recoveryMatchDiagnosticsJson(input: {
+    stationId: string;
+    unresolvedSampleId: string;
+    linkedDetectionLogId: string | null;
+    recoveryMeta: NormalizedMetadata | null;
+    audioMatch: MatchResult;
+    audioMatchSource: "local" | "acoustid" | "audd" | "acrcloud";
+    merged: MergeAudioCatalogResult;
+    finalMatch: MatchResult;
+    finalMethod: DetectionMethod;
+    recoveredViaAcoustid: boolean;
+    recoveredViaAudd: boolean;
+    recoveredViaAcrcloud: boolean;
+  }): string {
+    const metaTrust01 = input.recoveryMeta?.combinedRaw ? 0.45 : 0;
+    const fusionDecision = MatchFusionService.buildLivePollDecision({
+      stationId: input.stationId,
+      metadata: input.recoveryMeta,
+      icyMeta: input.recoveryMeta,
+      providerMeta: null,
+      metaTrust01,
+      audioMatch: input.audioMatch,
+      audioMatchSource: input.audioMatchSource,
+      primaryCatalogMatch: null,
+      finalMatch: input.finalMatch,
+      finalMethod: input.finalMethod,
+      mergeReasonCode: input.merged.reasonCode ?? null,
+      secondPassCatalogApplied: false,
+      shouldLearnFingerprint: !!(
+        input.recoveredViaAcoustid ||
+        input.recoveredViaAudd ||
+        input.recoveredViaAcrcloud
+      ),
+      shouldArchiveUnresolved: false,
+      shouldQueueRecovery: false,
+    });
+    return JSON.stringify({
+      pollReason: "unresolved_recovery",
+      recoveryMode: true,
+      unresolvedSampleId: input.unresolvedSampleId,
+      linkedDetectionLogId: input.linkedDetectionLogId,
+      recoveredViaAcoustid: input.recoveredViaAcoustid,
+      recoveredViaAudd: input.recoveredViaAudd,
+      recoveredViaAcrcloud: input.recoveredViaAcrcloud,
+      fingerprintAttempts: [
+        {
+          attempt: 1,
+          delaySec: 0,
+          sampleSec: 0,
+          outcome: `recovery_match_${input.audioMatchSource}`,
+        },
+      ],
+      fusionV2: MatchFusionService.summarizeForDiagnostics(fusionDecision),
+    });
+  }
+
+  /**
    * Build a FusedMatchDecision for diagnostics and downstream recovery alignment.
    * Does not change match/method — caller passes the already-resolved outcome.
    */
