@@ -20,6 +20,11 @@ import { effectiveMountUrl } from "./lib/stream-source.js";
 import { StreamDiscoveryService } from "./services/stream-discovery.service.js";
 import { monitorEvents } from "./lib/monitor-events.js";
 import { UnresolvedRecoveryService } from "./services/unresolved-recovery.service.js";
+import {
+  listUnresolvedClusters,
+  listRecoveryAudits,
+  revertUnresolvedRecoveryAudit,
+} from "./lib/unresolved-recovery-audit.js";
 import { LocalFingerprintService } from "./services/local-fingerprint.service.js";
 import {
   exportRowsToCsv,
@@ -632,10 +637,124 @@ async function startServer() {
       for (const row of totals) {
         byStatus[row.recoveryStatus || "pending"] = Number(row._count._all || 0);
       }
-      res.json({ ...status, totals: byStatus });
+      const byReasonRows = await prisma.unresolvedSample.groupBy({
+        by: ["recoveryReason"],
+        _count: { _all: true },
+      });
+      const byReason: Record<string, number> = {};
+      for (const row of byReasonRows) {
+        const k = row.recoveryReason || "(null)";
+        byReason[k] = Number(row._count._all || 0);
+      }
+      const dayAgo = new Date(Date.now() - 86400000);
+      const [created24h, recovered24h] = await Promise.all([
+        prisma.unresolvedSample.count({ where: { createdAt: { gte: dayAgo } } }),
+        prisma.unresolvedSample.count({
+          where: { recoveredAt: { gte: dayAgo }, recoveryStatus: "recovered" },
+        }),
+      ]);
+      res.json({
+        ...status,
+        totals: byStatus,
+        byReason,
+        flow24h: { created: created24h, recovered: recovered24h },
+      });
     } catch (error) {
       logger.error({ error }, "Failed unresolved recovery status request");
       res.status(500).json({ error: "failed_to_read_recovery_status" });
+    }
+  });
+
+  app.post("/api/recovery/unresolved/classify", async (req, res) => {
+    try {
+      const body = req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+      const stationId = typeof body.stationId === "string" && body.stationId.trim() ? body.stationId.trim() : undefined;
+      const limitRaw = typeof body.limit === "number" ? body.limit : Number(body.limit);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 500) : undefined;
+      const out = await UnresolvedRecoveryService.classifyPendingBatch({ stationId, limit });
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved classify batch");
+      res.status(500).json({ error: "failed_to_classify_unresolved" });
+    }
+  });
+
+  app.post("/api/recovery/unresolved/safe-title-recover", async (req, res) => {
+    try {
+      const body = req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+      const stationId = typeof body.stationId === "string" && body.stationId.trim() ? body.stationId.trim() : undefined;
+      const limitRaw = typeof body.limit === "number" ? body.limit : Number(body.limit);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 500) : undefined;
+      const dryRun =
+        typeof body.dryRun === "boolean"
+          ? body.dryRun
+          : String(body.dryRun || "true").toLowerCase() !== "false";
+      const out = await UnresolvedRecoveryService.runSafeTitleAutoRecoveryBatch({ stationId, limit, dryRun });
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "Failed safe title recovery batch");
+      res.status(500).json({ error: "failed_safe_title_recovery" });
+    }
+  });
+
+  /**
+   * Grouped view of unresolved backlog by normalized title key + recoveryReason (operator triage).
+   * Query: minSamples (default 3), limit (default 40), stationId, recoveryReasons=comma-separated codes.
+   */
+  app.get("/api/recovery/unresolved/clusters", async (req, res) => {
+    try {
+      const minRaw = typeof req.query.minSamples === "string" ? Number(req.query.minSamples) : Number(req.query.minSamples);
+      const limitRaw = typeof req.query.limit === "string" ? Number(req.query.limit) : Number(req.query.limit);
+      const minSamples = Number.isFinite(minRaw) ? Math.min(500, Math.max(2, Math.trunc(minRaw))) : 3;
+      const limit = Number.isFinite(limitRaw) ? Math.min(200, Math.max(1, Math.trunc(limitRaw))) : 40;
+      const stationId =
+        typeof req.query.stationId === "string" && req.query.stationId.trim() ? req.query.stationId.trim() : undefined;
+      const reasonsRaw = typeof req.query.recoveryReasons === "string" ? req.query.recoveryReasons.trim() : "";
+      const recoveryReasons = reasonsRaw
+        ? reasonsRaw
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
+      const clusters = await listUnresolvedClusters({ minSamples, limit, stationId, recoveryReasons });
+      res.json({ minSamples, limit, count: clusters.length, clusters });
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved cluster query");
+      res.status(500).json({ error: "failed_unresolved_clusters" });
+    }
+  });
+
+  app.get("/api/recovery/unresolved/audits", async (req, res) => {
+    try {
+      const takeRaw = typeof req.query.take === "string" ? Number(req.query.take) : 50;
+      const take = Number.isFinite(takeRaw) ? Math.min(200, Math.max(1, Math.trunc(takeRaw))) : 50;
+      const activeOnly = String(req.query.activeOnly || "true").toLowerCase() !== "false";
+      const rows = await listRecoveryAudits({ take, onlyActive: activeOnly });
+      res.json({ take, activeOnly, count: rows.length, audits: rows });
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved recovery audit list");
+      res.status(500).json({ error: "failed_unresolved_audits" });
+    }
+  });
+
+  app.post("/api/recovery/unresolved/audits/:auditId/revert", async (req, res) => {
+    try {
+      const auditId = typeof req.params.auditId === "string" ? req.params.auditId.trim() : "";
+      if (!auditId) {
+        res.status(400).json({ error: "missing_audit_id" });
+        return;
+      }
+      const body = req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+      const note = typeof body.note === "string" ? body.note.slice(0, 2000) : undefined;
+      const out = await revertUnresolvedRecoveryAudit(auditId, note);
+      if (!out.ok) {
+        res.status(400).json(out);
+        return;
+      }
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved recovery audit revert");
+      res.status(500).json({ error: "failed_unresolved_audit_revert" });
     }
   });
 
@@ -728,6 +847,9 @@ async function startServer() {
           lastRecoveryAt: true,
           lastRecoveryError: true,
           recoveredAt: true,
+          recoveryReason: true,
+          titleNormKey: true,
+          recoveryPriority: true,
         },
       });
 
@@ -774,6 +896,9 @@ async function startServer() {
           lastRecoveryAt: row.lastRecoveryAt ?? null,
           lastRecoveryError: row.lastRecoveryError ?? null,
           recoveredAt: row.recoveredAt ?? null,
+          recoveryReason: row.recoveryReason ?? null,
+          titleNormKey: row.titleNormKey ?? null,
+          recoveryPriority: row.recoveryPriority ?? 0,
           hasAudioFile,
           detectedAt: log?.observedAt ?? null,
           rawStreamText: log?.rawStreamText ?? null,

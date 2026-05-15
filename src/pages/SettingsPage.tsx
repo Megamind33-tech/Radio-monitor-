@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Settings } from 'lucide-react';
 import type { DependencyStatus, UnknownStorageSummary } from '../types/dashboard';
 
@@ -7,6 +7,7 @@ export function SettingsPage({
   crawlerStatus,
   rematchSummary,
   unknownStorage,
+  unresolvedRecovery,
   storageLoading,
   storageError,
   storageDryRun,
@@ -14,6 +15,7 @@ export function SettingsPage({
   includeHiddenStations,
   onRefreshCrawler,
   onRefreshRematch,
+  onRefreshUnresolvedRecovery,
   onStorageError,
   onHashBackfillResult,
   onStorageDryRun,
@@ -26,6 +28,7 @@ export function SettingsPage({
   crawlerStatus: any;
   rematchSummary: any;
   unknownStorage: UnknownStorageSummary | null;
+  unresolvedRecovery: Record<string, unknown> | null;
   storageLoading: boolean;
   storageError: string | null;
   storageDryRun: any;
@@ -33,6 +36,7 @@ export function SettingsPage({
   includeHiddenStations: boolean;
   onRefreshCrawler: () => void;
   onRefreshRematch: () => void;
+  onRefreshUnresolvedRecovery: () => Promise<void>;
   onStorageError: (msg: string | null) => void;
   onHashBackfillResult: (v: any) => void;
   onStorageDryRun: (v: any) => void;
@@ -41,6 +45,35 @@ export function SettingsPage({
   onRecheckDependencies: () => void;
   onRefreshStations: () => void;
 }) {
+  const [clusterLoading, setClusterLoading] = useState(false);
+  const [clusterError, setClusterError] = useState<string | null>(null);
+  const [clusters, setClusters] = useState<
+    Array<{
+      titleNormKey: string;
+      recoveryReason: string | null;
+      sampleCount: number;
+      stationSpread: number;
+      firstSeen: string;
+      lastSeen: string;
+      stationIdsSample: string[];
+    }>
+  >([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [audits, setAudits] = useState<
+    Array<{
+      id: string;
+      kind: string;
+      stationId: string;
+      unresolvedSampleId: string;
+      createdDetectionLogId: string;
+      titleFinal: string | null;
+      artistFinal: string | null;
+      revertedAt: string | null;
+      createdAt: string;
+    }>
+  >([]);
+
   return (
     <div className="max-w-2xl rm-card p-8">
       <h2 className="text-lg font-semibold mb-6 flex items-center gap-2 text-slate-900">
@@ -107,6 +140,187 @@ export function SettingsPage({
           </div>
           <p className="text-xs text-slate-600">Human-verified logs are protected. Dry-run does not change logs. Strong fingerprint evidence required for automatic correction.</p>
           {rematchSummary ? <div className="grid grid-cols-2 gap-2 text-xs text-slate-700"><div>Pending: {rematchSummary.pending ?? 0}</div><div>Matched: {rematchSummary.matched ?? 0}</div><div>Needs review: {rematchSummary.needs_review ?? 0}</div><div>Failed: {rematchSummary.failed ?? 0}</div></div> : <p className="text-xs text-slate-500">No rematch summary loaded.</p>}
+        </div>
+
+        <div className="rm-card-inner p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-slate-800">Unresolved recovery (honest backlog)</span>
+            <button
+              type="button"
+              onClick={() => void onRefreshUnresolvedRecovery()}
+              className="btn-ghost-sm px-2.5 py-1 text-slate-600"
+            >
+              Refresh
+            </button>
+          </div>
+          <p className="text-xs text-slate-600">
+            Status codes separate fingerprint misses from title-only evidence, weak stream-learned library hits,
+            catalogue gaps, and programme/junk metadata. CLI: <code className="text-slate-700">npm run audit:unresolved-recovery</code>
+          </p>
+          {unresolvedRecovery ? (
+            <div className="space-y-3 text-xs text-slate-700">
+              <div className="grid grid-cols-2 gap-2">
+                <div>24h created: {(unresolvedRecovery.flow24h as { created?: number })?.created ?? "—"}</div>
+                <div>24h recovered: {(unresolvedRecovery.flow24h as { recovered?: number })?.recovered ?? "—"}</div>
+              </div>
+              <div>
+                <div className="font-medium text-slate-800 mb-1">By recoveryStatus</div>
+                <ul className="list-disc list-inside space-y-0.5">
+                  {Object.entries((unresolvedRecovery.totals as Record<string, number>) || {}).map(([k, v]) => (
+                    <li key={k}>
+                      {k}: {v}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="font-medium text-slate-800 mb-1">By recoveryReason (semantic lane)</div>
+                <ul className="list-disc list-inside space-y-0.5 max-h-40 overflow-y-auto">
+                  {Object.entries((unresolvedRecovery.byReason as Record<string, number>) || {})
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([k, v]) => (
+                      <li key={k}>
+                        {k}: {v}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">Load status to see lane breakdown.</p>
+          )}
+        </div>
+
+        <div className="rm-card-inner p-5 space-y-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span className="font-semibold text-slate-800">Unresolved clusters & revert audit</span>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                type="button"
+                disabled={clusterLoading}
+                onClick={async () => {
+                  setClusterLoading(true);
+                  setClusterError(null);
+                  try {
+                    const res = await fetch('/api/recovery/unresolved/clusters?minSamples=3&limit=35');
+                    const body = await res.json();
+                    if (!res.ok) throw new Error(body?.error || `Clusters failed (${res.status})`);
+                    setClusters(Array.isArray(body.clusters) ? body.clusters : []);
+                  } catch (e) {
+                    setClusterError(e instanceof Error ? e.message : 'Cluster load failed');
+                  } finally {
+                    setClusterLoading(false);
+                  }
+                }}
+                className="btn-ghost-sm px-2.5 py-1 text-slate-600"
+              >
+                {clusterLoading ? 'Loading…' : 'Load clusters'}
+              </button>
+              <button
+                type="button"
+                disabled={auditLoading}
+                onClick={async () => {
+                  setAuditLoading(true);
+                  setAuditError(null);
+                  try {
+                    const res = await fetch('/api/recovery/unresolved/audits?take=30&activeOnly=true');
+                    const body = await res.json();
+                    if (!res.ok) throw new Error(body?.error || `Audits failed (${res.status})`);
+                    setAudits(Array.isArray(body.audits) ? body.audits : []);
+                  } catch (e) {
+                    setAuditError(e instanceof Error ? e.message : 'Audit load failed');
+                  } finally {
+                    setAuditLoading(false);
+                  }
+                }}
+                className="btn-ghost-sm px-2.5 py-1 text-slate-600"
+              >
+                {auditLoading ? 'Loading…' : 'Load revertable audits'}
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-slate-600">
+            Clusters group pending/no_match rows by <code className="text-slate-700">titleNormKey</code> + lane for
+            triage. Audits capture each automatic recovery; revert deletes the synthetic matched log and restores the
+            unresolved row (best-effort spin adjustment).
+          </p>
+          {clusterError ? <p className="text-xs text-red-700">{clusterError}</p> : null}
+          {auditError ? <p className="text-xs text-red-700">{auditError}</p> : null}
+          {clusters.length > 0 ? (
+            <div className="overflow-x-auto border border-slate-200 rounded-xl max-h-56 overflow-y-auto">
+              <table className="w-full text-[11px] min-w-[720px]">
+                <thead className="bg-slate-100 text-slate-600 sticky top-0">
+                  <tr>
+                    <th className="p-2 text-left">Count</th>
+                    <th className="p-2 text-left">Stations</th>
+                    <th className="p-2 text-left">Reason</th>
+                    <th className="p-2 text-left">titleNormKey</th>
+                    <th className="p-2 text-left">Sample station ids</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {clusters.map((c) => (
+                    <tr key={`${c.titleNormKey}|${c.recoveryReason ?? ''}`} className="border-t border-slate-200">
+                      <td className="p-2">{c.sampleCount}</td>
+                      <td className="p-2">{c.stationSpread}</td>
+                      <td className="p-2 whitespace-nowrap">{c.recoveryReason ?? '—'}</td>
+                      <td className="p-2 break-all">{c.titleNormKey}</td>
+                      <td className="p-2 break-all text-slate-500">{c.stationIdsSample.join(', ') || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          {audits.length > 0 ? (
+            <div className="overflow-x-auto border border-slate-200 rounded-xl max-h-56 overflow-y-auto">
+              <table className="w-full text-[11px] min-w-[640px]">
+                <thead className="bg-slate-100 text-slate-600 sticky top-0">
+                  <tr>
+                    <th className="p-2 text-left">Kind</th>
+                    <th className="p-2 text-left">Title</th>
+                    <th className="p-2 text-left">Station</th>
+                    <th className="p-2 text-left">Created</th>
+                    <th className="p-2 text-left">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {audits.map((a) => (
+                    <tr key={a.id} className="border-t border-slate-200">
+                      <td className="p-2 whitespace-nowrap">{a.kind}</td>
+                      <td className="p-2">
+                        {(a.artistFinal || '?') + ' — ' + (a.titleFinal || '?')}
+                      </td>
+                      <td className="p-2 font-mono text-[10px]">{a.stationId.slice(0, 10)}…</td>
+                      <td className="p-2 whitespace-nowrap">{new Date(a.createdAt).toLocaleString()}</td>
+                      <td className="p-2">
+                        <button
+                          type="button"
+                          className="px-2 py-1 rounded border border-amber-200 bg-amber-50 text-amber-950 text-[10px]"
+                          onClick={async () => {
+                            if (!window.confirm('Revert this automatic recovery? Deletes the matched detection log and restores the unresolved sample.')) return;
+                            const res = await fetch(`/api/recovery/unresolved/audits/${encodeURIComponent(a.id)}/revert`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ note: 'operator_revert_settings_ui' }),
+                            });
+                            const body = await res.json();
+                            if (!res.ok) {
+                              window.alert(body?.reason || body?.error || `Revert failed (${res.status})`);
+                              return;
+                            }
+                            setAudits((prev) => prev.filter((x) => x.id !== a.id));
+                          }}
+                        >
+                          Revert
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </div>
         <div className="rm-card-inner p-5 space-y-4">
           <div className="flex items-center justify-between">

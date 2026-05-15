@@ -310,10 +310,46 @@ model UnresolvedSample {
   purgeReadyAt     DateTime?
   purgeReason      String?
   purgeDryRunAt    DateTime?
+  /// Machine-readable recovery lane / evidence tier (e.g. weak_metadata_candidate_needs_review).
+  recoveryReason   String?
+  /// Normalized artist+title identity for clustering and dedupe (see server/lib/unresolved-evidence.ts).
+  titleNormKey     String?
+  /// Higher values processed first by the recovery worker (trusted title evidence, repeats, etc.).
+  recoveryPriority Int      @default(0)
   station          Station  @relation(fields: [stationId], references: [id], onDelete: Cascade)
   detectionLog     DetectionLog? @relation(fields: [detectionLogId], references: [id], onDelete: SetNull)
 
   @@index([stationId, recoveryStatus, createdAt])
+  @@index([recoveryReason])
+  @@index([titleNormKey])
+  @@index([stationId, titleNormKey, createdAt])
+}
+
+/// Snapshot of an automatic unresolved-to-matched recovery for audit / optional revert.
+model UnresolvedRecoveryAudit {
+  id                       String    @id @default(cuid())
+  unresolvedSampleId     String
+  stationId                String
+  /// title_verified | title_trusted_localfp | audio_resolver
+  kind                     String
+  createdDetectionLogId    String
+  previousRecoveryStatus   String
+  previousRecoveryReason   String?
+  previousRecoveredAt      DateTime?
+  previousVerifiedTrackId  String?
+  previousLastRecoveryError String?
+  titleFinal               String?
+  artistFinal              String?
+  titleNormKey             String?
+  matchSnapshotJson        String?
+  revertedAt               DateTime?
+  revertNote               String?
+  createdAt                DateTime  @default(now())
+
+  @@index([unresolvedSampleId])
+  @@index([createdDetectionLogId])
+  @@index([revertedAt])
+  @@index([stationId, createdAt])
 }
 
 model VerifiedTrack {

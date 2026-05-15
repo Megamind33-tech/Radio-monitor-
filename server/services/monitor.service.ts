@@ -30,6 +30,7 @@ import { classifyContent, deriveMonitorState } from "../lib/station-health.js";
 import { monitorEvents } from "../lib/monitor-events.js";
 import { classifyStreamUrl } from "../lib/stream-source.js";
 import { classifyMusicContent } from "../lib/music-content-filter.js";
+import { buildTitleNormKey, RecoveryReason, screenProgrammeOrDirtyWeb } from "../lib/unresolved-evidence.js";
 
 function parseEnvMs(key: string, fallback: number): number {
   const v = process.env[key];
@@ -626,7 +627,7 @@ export class MonitorService {
           reusePath ||
           (await SamplerService.captureSample(resolvedUrl, archSec));
         if (archTmp) {
-          unresolvedSamplePath = await this.archiveUnresolvedSample(stationId, archTmp);
+          unresolvedSamplePath = await this.archiveUnresolvedSample(stationId, archTmp, metadata);
           SamplerService.cleanup(archTmp);
         }
         fingerprintSamplePathPendingCleanup = null;
@@ -1470,13 +1471,56 @@ export class MonitorService {
     });
   }
 
-  private static async archiveUnresolvedSample(stationId: string, samplePath: string): Promise<string | null> {
+  private static async archiveUnresolvedSample(
+    stationId: string,
+    samplePath: string,
+    streamMeta?: NormalizedMetadata | null
+  ): Promise<string | null> {
     if (!parseEnvBool("ARCHIVE_UNRESOLVED_SAMPLES", true)) return null;
     try {
       const root =
         process.env.UNRESOLVED_SAMPLE_DIR || path.join(process.cwd(), "data/unresolved_samples");
       const dir = path.join(root, stationId);
       fs.mkdirSync(dir, { recursive: true });
+
+      const screen = screenProgrammeOrDirtyWeb({
+        parsedArtist: streamMeta?.rawArtist,
+        parsedTitle: streamMeta?.rawTitle,
+        rawStreamText: streamMeta?.combinedRaw,
+      });
+      if (screen) {
+        return null;
+      }
+
+      const burstPerHour = parseEnvInt("UNRESOLVED_ARCHIVE_BURST_PER_HOUR", 400);
+      if (burstPerHour > 0) {
+        const since = new Date(Date.now() - 3600000);
+        const recent = await prisma.unresolvedSample.count({
+          where: { stationId, createdAt: { gte: since } },
+        });
+        if (recent >= burstPerHour) {
+          logger.info({ stationId, recent, burstPerHour }, "Unresolved archive skipped: station flood control");
+          return null;
+        }
+      }
+
+      const dedupeHours = Math.min(168, Math.max(1, parseEnvInt("UNRESOLVED_DEDUPE_WINDOW_HOURS", 24)));
+      const titleNormKey = buildTitleNormKey(streamMeta?.rawArtist, streamMeta?.rawTitle);
+      if (titleNormKey) {
+        const sinceDedupe = new Date(Date.now() - dedupeHours * 3600000);
+        const dup = await prisma.unresolvedSample.findFirst({
+          where: {
+            stationId,
+            titleNormKey,
+            createdAt: { gte: sinceDedupe },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { id: true },
+        });
+        if (dup) {
+          return null;
+        }
+      }
 
       const fileName = `${Date.now()}_${path.basename(samplePath)}`;
       const destPath = path.join(dir, fileName);
@@ -1485,6 +1529,9 @@ export class MonitorService {
         data: {
           stationId,
           filePath: destPath,
+          titleNormKey,
+          recoveryReason: RecoveryReason.PENDING_CLASSIFICATION,
+          recoveryPriority: titleNormKey ? 50 : 20,
         },
       });
 
