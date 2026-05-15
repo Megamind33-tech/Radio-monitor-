@@ -7,7 +7,6 @@ import {
   recordAcoustidFinalWinIfApplicable,
   recordAcoustidMetadataComparison,
 } from "../lib/acoustid-metrics.js";
-import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
 import { assessMetadataQuality } from "../lib/metadata-quality.js";
 import { ResolverService } from "./resolver.service.js";
 import { MetadataService } from "./metadata.service.js";
@@ -549,7 +548,7 @@ export class MonitorService {
       }
 
       const minAcoust = parseEnvFloat("ACOUSTID_PREFER_MIN_SCORE", 0.55);
-      const merged = mergeAcoustidAndCatalog(audioMatch, catalogMatch, minAcoust, catalogTrustFactor);
+      const merged = MatchFusionService.mergeAudioCatalog(audioMatch, catalogMatch, minAcoust, catalogTrustFactor);
 
       let match = merged.match;
       let method: DetectionMethod = merged.method;
@@ -557,7 +556,7 @@ export class MonitorService {
 
       // ICY accuracy verification: when ICY has been stuck (metadata_stale) and the audio
       // fingerprint resolves a DIFFERENT song, log the contradiction so operators can investigate
-      // the stream.  The fingerprint result is already preferred by mergeAcoustidAndCatalog;
+      // the stream.  The fingerprint result is already preferred by MatchFusionService.mergeAudioCatalog;
       // this log line makes the discrepancy visible in the detection trail.
       if (
         audioMatch?.title &&
@@ -614,11 +613,7 @@ export class MonitorService {
       let secondPassCatalogApplied = false;
       // Second-pass: combined-line catalog whenever still unmatched (even if quality heuristics flagged forceFingerprint).
       if (!match && metadata && station.fingerprintFallbackEnabled && !isJunkIcyMetadata(metadata)) {
-        const viaCombined = await CatalogLookupService.lookupFromMetadata({
-          ...metadata,
-          rawArtist: metadata.rawArtist || "",
-          rawTitle: metadata.rawTitle || metadata.combinedRaw || "",
-        });
+        const viaCombined = await MatchFusionService.secondPassCatalogLookup(metadata);
         if (viaCombined) {
           match = viaCombined;
           method = "catalog_lookup";

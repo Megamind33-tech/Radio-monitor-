@@ -1,7 +1,7 @@
 import React from 'react';
 import { Activity, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 import type { DetectionLog, Station } from '../types/dashboard';
-import { formatMethod } from '../lib/dashboard-format';
+import { formatFusionV2Line, formatMethod, parseFusionV2FromDiagnostics } from '../lib/dashboard-format';
 
 export function ActivityPage({
   logs,
@@ -89,7 +89,9 @@ export function ActivityPage({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {recent.map((log) => (
+              {recent.map((log) => {
+                const fusionLine = formatFusionV2Line(parseFusionV2FromDiagnostics(log.matchDiagnosticsJson));
+                return (
                 <tr key={log.id} className="hover:bg-slate-50 transition-colors group">
                   <td className="py-3 px-4 text-slate-500 text-xs whitespace-nowrap">{new Date(log.observedAt).toLocaleString()}</td>
                   <td className="py-3 px-4 font-medium text-slate-800 truncate pr-2" title={log.station?.name || stationNameById.get(log.stationId) || 'Unknown'}>
@@ -100,6 +102,11 @@ export function ActivityPage({
                       {log.titleFinal || 'Unknown track'}
                     </div>
                     <div className="text-xs text-slate-500 truncate" title={log.artistFinal || ''}>{log.artistFinal || ''}</div>
+                    {fusionLine && (
+                      <div className="text-[10px] text-indigo-700/80 truncate" title={fusionLine}>
+                        Fusion · {fusionLine}
+                      </div>
+                    )}
                   </td>
                   <td className="py-3 px-4">
                     <span className="px-2 py-0.5 bg-rm-indigo-soft text-rm-indigo rounded-md text-[10px] uppercase font-bold tracking-wide">
@@ -114,7 +121,8 @@ export function ActivityPage({
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {!loading && recent.length === 0 && totalLogCount > 0 && (
                 <tr>
                   <td colSpan={5} className="py-12 text-center text-slate-500 text-sm">

@@ -40,6 +40,20 @@ export interface Station {
   };
 }
 
+export interface FusionV2Diagnostics {
+  status?: string;
+  reasonCode?: string;
+  finalMethod?: string;
+  finalConfidence?: number;
+  finalTitle?: string;
+  finalArtist?: string;
+  shouldLearnFingerprint?: boolean;
+  secondPassCatalogApplied?: boolean;
+  lanes?: Array<{ type: string; tier: string; source?: string }>;
+  conflicts?: number;
+  winningType?: string | null;
+}
+
 export interface DetectionLog {
   id: string;
   stationId: string;
@@ -52,6 +66,9 @@ export interface DetectionLog {
   sourceProvider?: string;
   status: string;
   acoustidScore?: number;
+  reasonCode?: string | null;
+  /** Raw JSON from backend (fingerprint attempts, merge hints, fusionV2 summary). */
+  matchDiagnosticsJson?: string | null;
   station?: {
     id: string;
     name: string;

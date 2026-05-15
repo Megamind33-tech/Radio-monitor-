@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
-import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
+import { MatchFusionService } from "./match-fusion.service.js";
 import { FingerprintService } from "./fingerprint.service.js";
 import { AcoustidService } from "./acoustid.service.js";
 import { AuddService } from "./audd.service.js";
@@ -280,7 +280,7 @@ export class UnresolvedRecoveryService {
             continue;
           }
 
-          const merged = mergeAcoustidAndCatalog(audioMatch, null, parseEnvFloat("ACOUSTID_PREFER_MIN_SCORE", 0.55));
+          const merged = MatchFusionService.mergeAudioCatalog(audioMatch, null, parseEnvFloat("ACOUSTID_PREFER_MIN_SCORE", 0.55));
           const match = merged.match || audioMatch;
           if (!match?.title) {
             noMatch += 1;

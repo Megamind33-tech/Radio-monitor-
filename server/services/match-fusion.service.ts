@@ -1,16 +1,21 @@
 /**
- * MATCHING ENGINE V2 — central place to assemble FusedMatchDecision from lane outputs.
- * Live monitor still owns gating and ordering; this service standardizes the fused record.
+ * MATCHING ENGINE V2 — central arbitration: audio vs catalog merge, second-pass catalog,
+ * and FusedMatchDecision assembly. Implementations for numeric merge rules stay in
+ * `audio-id-merge.ts`; this service is the only production entry callers should use.
  */
 
 import type { DetectionMethod, MatchResult, NormalizedMetadata } from "../types.js";
 import type { FusedMatchDecision, MatchEvidence } from "../lib/match-engine-v2-types.js";
+import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
+import { CatalogLookupService } from "./catalog-lookup.service.js";
 import {
   evidenceFromMatchResult,
   evidenceFromNormalizedMetadata,
   icyProviderCombinedDisagree,
   normEvidenceText,
 } from "../lib/match-evidence-builders.js";
+
+export type MergeAudioCatalogResult = ReturnType<typeof mergeAcoustidAndCatalog>;
 
 function fingerprintEvidenceType(
   source: "local" | "acoustid" | "audd" | "acrcloud" | null
@@ -45,6 +50,31 @@ export type LivePollFusionInput = {
 };
 
 export class MatchFusionService {
+  /**
+   * Merge audio fingerprint candidate vs catalog text hit (AcoustID score thresholds,
+   * catalog trust scaling). Delegates to `mergeAcoustidAndCatalog`.
+   */
+  static mergeAudioCatalog(
+    audio: MatchResult | null,
+    catalog: MatchResult | null,
+    minAcoustidPrefer: number,
+    catalogTrustFactor = 1
+  ): MergeAudioCatalogResult {
+    return mergeAcoustidAndCatalog(audio, catalog, minAcoustidPrefer, catalogTrustFactor);
+  }
+
+  /**
+   * Second catalog pass: use combined stream line as title candidate (same policy as
+   * live monitor). Caller applies gates (no existing match, fingerprint enabled, non-junk metadata).
+   */
+  static async secondPassCatalogLookup(metadata: NormalizedMetadata): Promise<MatchResult | null> {
+    return CatalogLookupService.lookupFromMetadata({
+      ...metadata,
+      rawArtist: metadata.rawArtist || "",
+      rawTitle: metadata.rawTitle || metadata.combinedRaw || "",
+    });
+  }
+
   /**
    * Build a FusedMatchDecision for diagnostics and downstream recovery alignment.
    * Does not change match/method — caller passes the already-resolved outcome.
@@ -219,6 +249,15 @@ export class MatchFusionService {
 
   /** Compact shape for DetectionLog.matchDiagnosticsJson (avoid huge payloads). */
   static summarizeForDiagnostics(d: FusedMatchDecision): Record<string, unknown> {
+    let secondPassCatalogApplied = false;
+    try {
+      if (d.diagnosticsJson) {
+        const parsed = JSON.parse(d.diagnosticsJson) as { secondPassCatalogApplied?: boolean };
+        secondPassCatalogApplied = !!parsed.secondPassCatalogApplied;
+      }
+    } catch {
+      // ignore
+    }
     return {
       status: d.status,
       reasonCode: d.reasonCode,
@@ -227,6 +266,7 @@ export class MatchFusionService {
       finalTitle: d.finalTitle,
       finalArtist: d.finalArtist,
       shouldLearnFingerprint: d.shouldLearnFingerprint,
+      secondPassCatalogApplied,
       lanes: d.supportingEvidence.map((e) => ({
         type: e.evidenceType,
         tier: e.evidenceTrustTier,

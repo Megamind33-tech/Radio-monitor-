@@ -1,5 +1,6 @@
+import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
 import { icyProviderCombinedDisagree, normEvidenceText } from "../lib/match-evidence-builders.js";
-import { MatchFusionService } from "../services/match-fusion.service.js";
+import { MatchFusionService } from "./match-fusion.service.js";
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
@@ -7,6 +8,25 @@ function assert(condition: boolean, message: string) {
 
 function run() {
   assert(normEvidenceText("  A  B ") === "a b", "norm");
+
+  const catalog = {
+    score: 0.7,
+    confidence: 0.7,
+    title: "Catalog Title",
+    artist: "Catalog Artist",
+    sourceProvider: "itunes_search" as const,
+  };
+  const audio = {
+    score: 0.9,
+    confidence: 0.9,
+    title: "Catalog Title",
+    artist: "Catalog Artist",
+    sourceProvider: "acoustid" as const,
+  };
+  const viaService = MatchFusionService.mergeAudioCatalog(audio, catalog, 0.55, 1);
+  const viaLib = mergeAcoustidAndCatalog(audio, catalog, 0.55, 1);
+  assert(viaService.match?.title === viaLib.match?.title, "MatchFusionService.mergeAudioCatalog matches library");
+  assert(viaService.method === viaLib.method, "method");
 
   const icy = { combinedRaw: "Artist - Song A", rawArtist: "Artist", rawTitle: "Song A", sourceType: "stream_metadata" as const };
   const prov = { combinedRaw: "Other - Song B", rawArtist: "Other", rawTitle: "Song B", sourceType: "stream_metadata" as const };

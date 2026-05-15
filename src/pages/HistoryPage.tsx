@@ -1,7 +1,7 @@
 import React from 'react';
 import { History, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import type { DetectionLog, Station } from '../types/dashboard';
-import { formatMethod } from '../lib/dashboard-format';
+import { formatFusionV2Line, formatMethod, parseFusionV2FromDiagnostics } from '../lib/dashboard-format';
 
 export function HistoryPage({
   logs,
@@ -63,7 +63,9 @@ export function HistoryPage({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {logs.map((log) => (
+            {logs.map((log) => {
+              const fusionLine = formatFusionV2Line(parseFusionV2FromDiagnostics(log.matchDiagnosticsJson));
+              return (
               <tr key={log.id} className="hover:bg-slate-50 transition-colors group">
                 <td className="py-3.5 px-4 text-slate-500 text-xs whitespace-nowrap">{new Date(log.observedAt).toLocaleString()}</td>
                 <td className="py-3.5 px-4 font-medium text-slate-800 truncate pr-2" title={log.station?.name || stationNameById.get(log.stationId) || 'Unknown'}>
@@ -77,6 +79,11 @@ export function HistoryPage({
                   {(log.genreFinal || log.sourceProvider) && (
                     <div className="text-[10px] text-slate-400">
                       {log.genreFinal}{log.genreFinal && log.sourceProvider ? ' · ' : ''}{log.sourceProvider ? `via ${log.sourceProvider}` : ''}
+                    </div>
+                  )}
+                  {fusionLine && (
+                    <div className="text-[10px] text-indigo-700/80 truncate" title={fusionLine}>
+                      Fusion · {fusionLine}
                     </div>
                   )}
                 </td>
@@ -93,7 +100,8 @@ export function HistoryPage({
                   )}
                 </td>
               </tr>
-            ))}
+              );
+            })}
             {!historyLoading && logs.length === 0 && totalLogCount > 0 && (
               <tr>
                 <td colSpan={5} className="py-12 text-center text-slate-500 text-sm">
