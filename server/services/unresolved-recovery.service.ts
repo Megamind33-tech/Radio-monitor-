@@ -2,7 +2,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
-import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
+import { MatchFusionService } from "./match-fusion.service.js";
+import { recordAcoustidFinalWinIfApplicable, recordAcoustidMetadataComparison } from "../lib/acoustid-metrics.js";
 import { FingerprintService } from "./fingerprint.service.js";
 import { AcoustidService } from "./acoustid.service.js";
 import { AuddService } from "./audd.service.js";
@@ -10,7 +11,7 @@ import { AcrcloudService } from "./acrcloud.service.js";
 import { LocalFingerprintService } from "./local-fingerprint.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { upsertSongSpinOnNewPlay } from "../lib/song-spin.js";
-import { MatchResult } from "../types.js";
+import { MatchResult, type DetectionMethod } from "../types.js";
 import { fingerprintPipelineGate } from "../lib/fingerprint-pipeline-gate.js";
 
 function parseEnvInt(key: string, fallback: number): number {
@@ -34,7 +35,7 @@ function envBoolTrue(key: string, fallback = true): boolean {
   return !(t === "0" || t === "false" || t === "no" || t === "off");
 }
 
-function detectionMethodForProvider(provider: MatchResult["sourceProvider"] | undefined): string {
+function detectionMethodForProvider(provider: MatchResult["sourceProvider"] | undefined): DetectionMethod {
   if (provider === "audd") return "fingerprint_audd";
   if (provider === "acrcloud") return "fingerprint_acrcloud";
   if (provider === "local_fingerprint") return "fingerprint_local";
@@ -208,6 +209,23 @@ export class UnresolvedRecoveryService {
             continue;
           }
 
+          const linkedDetection = row.detectionLogId
+            ? await prisma.detectionLog.findUnique({
+                where: { id: row.detectionLogId },
+                select: { id: true, rawStreamText: true, parsedArtist: true, parsedTitle: true, observedAt: true },
+              })
+            : await prisma.detectionLog.findFirst({
+                where: {
+                  stationId: row.stationId,
+                  status: "unresolved",
+                  observedAt: { lte: row.createdAt },
+                },
+                orderBy: { observedAt: "desc" },
+                select: { id: true, rawStreamText: true, parsedArtist: true, parsedTitle: true, observedAt: true },
+              });
+
+          const recoveryMeta = MatchFusionService.metadataSnapshotFromDetectionLog(linkedDetection);
+
           // Gate: respect the global 2/sec pipeline limit shared with real-time station polling.
           const releaseGate = await fingerprintPipelineGate.acquire();
           let fingerprint: Awaited<ReturnType<typeof FingerprintService.generateFingerprint>>;
@@ -231,6 +249,7 @@ export class UnresolvedRecoveryService {
 
           // Try the self-learned library first — avoids hitting paid/free APIs for repeat songs.
           let audioMatch: MatchResult | null = await LocalFingerprintService.lookup(fingerprint);
+          let audioMatchSource: "local" | "acoustid" | "audd" | "acrcloud" | null = audioMatch ? "local" : null;
           let recoveredViaAcoustid = false;
           let recoveredViaAudd = false;
           let recoveredViaAcrcloud = false;
@@ -238,8 +257,10 @@ export class UnresolvedRecoveryService {
           if (!audioMatch && acoustidEnabled) {
             const acoustid = await AcoustidService.lookup(fingerprint);
             if (acoustid) {
+              recordAcoustidMetadataComparison(acoustid, recoveryMeta ?? undefined);
               audioMatch = await MusicbrainzService.enrich(acoustid);
               recoveredViaAcoustid = !!audioMatch;
+              if (audioMatch) audioMatchSource = "acoustid";
             }
           }
 
@@ -250,6 +271,7 @@ export class UnresolvedRecoveryService {
             if (audd) {
               audioMatch = audd;
               recoveredViaAudd = true;
+              audioMatchSource = "audd";
             }
           }
 
@@ -258,6 +280,7 @@ export class UnresolvedRecoveryService {
             if (acrcloud) {
               audioMatch = acrcloud.recordingId ? await MusicbrainzService.enrich(acrcloud) : acrcloud;
               recoveredViaAcrcloud = !!audioMatch;
+              if (audioMatch) audioMatchSource = "acrcloud";
             }
           }
 
@@ -280,7 +303,7 @@ export class UnresolvedRecoveryService {
             continue;
           }
 
-          const merged = mergeAcoustidAndCatalog(audioMatch, null, parseEnvFloat("ACOUSTID_PREFER_MIN_SCORE", 0.55));
+          const merged = MatchFusionService.mergeAudioCatalog(audioMatch, null, parseEnvFloat("ACOUSTID_PREFER_MIN_SCORE", 0.55));
           const match = merged.match || audioMatch;
           if (!match?.title) {
             noMatch += 1;
@@ -295,26 +318,31 @@ export class UnresolvedRecoveryService {
             continue;
           }
 
-          const linkedDetection = row.detectionLogId
-            ? await prisma.detectionLog.findUnique({ where: { id: row.detectionLogId } })
-            : await prisma.detectionLog.findFirst({
-                where: {
-                  stationId: row.stationId,
-                  status: "unresolved",
-                  observedAt: { lte: row.createdAt },
-                },
-                orderBy: { observedAt: "desc" },
-              });
-
           const observedAt = linkedDetection?.observedAt ?? row.createdAt;
           const titleFinal = (match.title || "").trim();
           const artistFinal = (match.artist || "").trim() || null;
+          const finalMethod = detectionMethodForProvider(match.sourceProvider);
+          const audioLaneSource = audioMatchSource ?? "local";
+          const matchDiagnosticsJson = MatchFusionService.recoveryMatchDiagnosticsJson({
+            stationId: row.stationId,
+            unresolvedSampleId: row.id,
+            linkedDetectionLogId: linkedDetection?.id ?? null,
+            recoveryMeta,
+            audioMatch,
+            audioMatchSource: audioLaneSource,
+            merged,
+            finalMatch: match,
+            finalMethod,
+            recoveredViaAcoustid,
+            recoveredViaAudd,
+            recoveredViaAcrcloud,
+          });
 
           const recoveredLog = await prisma.detectionLog.create({
             data: {
               stationId: row.stationId,
               observedAt,
-              detectionMethod: detectionMethodForProvider(match.sourceProvider),
+              detectionMethod: finalMethod,
               rawStreamText: linkedDetection?.rawStreamText ?? null,
               parsedArtist: linkedDetection?.parsedArtist ?? artistFinal,
               parsedTitle: linkedDetection?.parsedTitle ?? titleFinal,
@@ -334,9 +362,12 @@ export class UnresolvedRecoveryService {
               processingMs: null,
               status: "matched",
               reasonCode: "recovered_from_unresolved_sample",
+              matchDiagnosticsJson,
             },
             select: { id: true },
           });
+
+          recordAcoustidFinalWinIfApplicable(match, finalMethod);
 
           await upsertSongSpinOnNewPlay(prisma, {
             stationId: row.stationId,

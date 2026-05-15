@@ -3,7 +3,10 @@ import * as path from "path";
 import type { Prisma, Station } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
-import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
+import {
+  recordAcoustidFinalWinIfApplicable,
+  recordAcoustidMetadataComparison,
+} from "../lib/acoustid-metrics.js";
 import { assessMetadataQuality } from "../lib/metadata-quality.js";
 import { ResolverService } from "./resolver.service.js";
 import { MetadataService } from "./metadata.service.js";
@@ -15,6 +18,7 @@ import { AcrcloudService } from "./acrcloud.service.js";
 import { LocalFingerprintService } from "./local-fingerprint.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { CatalogLookupService } from "./catalog-lookup.service.js";
+import { MatchFusionService } from "./match-fusion.service.js";
 import {
   NormalizedMetadata,
   MatchResult,
@@ -179,7 +183,7 @@ export class MonitorService {
     if (!station || !station.isActive) return;
 
     logger.info({ station: station.name }, "Polling station");
-        let latestNowPlaying = null;
+    let latestNowPlaying = null;
     const markPollError = async (message: string) => {
       await prisma.station.update({
         where: { id: stationId },
@@ -198,15 +202,20 @@ export class MonitorService {
       const resolvedUrl = await ResolverService.resolveStreamUrl(mountUrl);
       const health = await StreamHealthService.validateStream(resolvedUrl);
 
+      let icyMeta: NormalizedMetadata | null = null;
+      let providerMeta: NormalizedMetadata | null = null;
+      let orbMeta: NormalizedMetadata | null = null;
       let metadata: NormalizedMetadata | null = null;
       let legacyFingerprint = false;
       let reasonCode: string | null = null;
 
       if (station.metadataPriorityEnabled) {
-        metadata = await MetadataService.readStreamMetadata(resolvedUrl);
-        if (!metadata) {
-          metadata = await MetadataService.readProviderNowPlayingMetadata(resolvedUrl);
-        }
+        [icyMeta, providerMeta, orbMeta] = await Promise.all([
+          MetadataService.readStreamMetadata(resolvedUrl),
+          MetadataService.readProviderNowPlayingMetadata(resolvedUrl),
+          MetadataService.readOnlineRadioBoxNowPlaying(station.sourceIdsJson),
+        ]);
+        metadata = icyMeta ?? providerMeta ?? orbMeta ?? null;
         latestNowPlaying = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
 
         if (!metadata) {
@@ -264,7 +273,7 @@ export class MonitorService {
       const intervalElapsed =
         !lastFp || Date.now() - lastFp.getTime() >= intervalSec * 1000;
 
-      const acoustidKey = process.env.ACOUSTID_API_KEY;
+      const acoustidKey = process.env.ACOUSTID_API_KEY || process.env.ACOUSTID_OPEN_CLIENT;
       const forceAudioFallback = parseEnvBool("FORCE_AUDIO_FALLBACK_WHEN_UNRESOLVED", true);
       /** When true, capture+fingerprint on every poll (not only ICY gap/stale/change). Heavy on CPU/network; use for stations with bad or missing ICY. */
       const fingerprintEveryPoll = parseEnvBool("FINGERPRINT_EVERY_POLL", false);
@@ -462,6 +471,7 @@ export class MonitorService {
           if (acoustidKey) {
             const acoustidMatch = await AcoustidService.lookup(fp);
             if (acoustidMatch) {
+              recordAcoustidMetadataComparison(acoustidMatch, metadata);
               audioMatch = await MusicbrainzService.enrich(acoustidMatch);
               audioMatchSource = "acoustid";
               fingerprintAttempts.push({
@@ -515,7 +525,10 @@ export class MonitorService {
           fingerprintSamplePathPendingCleanup = null;
         }
         if (!acoustidKey && doAudioId) {
-          logger.debug({ station: station.name }, "Fingerprint path ran without ACOUSTID_API_KEY after local miss");
+          logger.debug(
+            { station: station.name },
+            "Fingerprint path ran without AcoustID client key after local miss (set ACOUSTID_API_KEY or ACOUSTID_OPEN_CLIENT)"
+          );
         }
       }
 
@@ -537,7 +550,7 @@ export class MonitorService {
       }
 
       const minAcoust = parseEnvFloat("ACOUSTID_PREFER_MIN_SCORE", 0.55);
-      const merged = mergeAcoustidAndCatalog(audioMatch, catalogMatch, minAcoust, catalogTrustFactor);
+      const merged = MatchFusionService.mergeAudioCatalog(audioMatch, catalogMatch, minAcoust, catalogTrustFactor);
 
       let match = merged.match;
       let method: DetectionMethod = merged.method;
@@ -545,7 +558,7 @@ export class MonitorService {
 
       // ICY accuracy verification: when ICY has been stuck (metadata_stale) and the audio
       // fingerprint resolves a DIFFERENT song, log the contradiction so operators can investigate
-      // the stream.  The fingerprint result is already preferred by mergeAcoustidAndCatalog;
+      // the stream.  The fingerprint result is already preferred by MatchFusionService.mergeAudioCatalog;
       // this log line makes the discrepancy visible in the detection trail.
       if (
         audioMatch?.title &&
@@ -599,18 +612,18 @@ export class MonitorService {
         }
       }
 
+      let secondPassCatalogApplied = false;
       // Second-pass: combined-line catalog whenever still unmatched (even if quality heuristics flagged forceFingerprint).
       if (!match && metadata && station.fingerprintFallbackEnabled && !isJunkIcyMetadata(metadata)) {
-        const viaCombined = await CatalogLookupService.lookupFromMetadata({
-          ...metadata,
-          rawArtist: metadata.rawArtist || "",
-          rawTitle: metadata.rawTitle || metadata.combinedRaw || "",
-        });
+        const viaCombined = await MatchFusionService.secondPassCatalogLookup(metadata);
         if (viaCombined) {
           match = viaCombined;
           method = "catalog_lookup";
+          secondPassCatalogApplied = true;
         }
       }
+
+      recordAcoustidFinalWinIfApplicable(match, method);
 
       let unresolvedSamplePath: string | null = null;
       if (!match && sampledForFingerprint && resolvedUrl.startsWith("http")) {
@@ -668,6 +681,25 @@ export class MonitorService {
         (icyChanged ? "icy_changed_audio" : null) ||
         (intervalElapsed && !legacyFingerprint ? "audio_interval" : null);
 
+      const fusionDecision = MatchFusionService.buildLivePollDecision({
+        stationId,
+        metadata,
+        icyMeta,
+        providerMeta,
+        orbMeta,
+        metaTrust01: metaTrust,
+        audioMatch,
+        audioMatchSource,
+        primaryCatalogMatch: catalogMatch,
+        finalMatch: match,
+        finalMethod: method,
+        mergeReasonCode: mergeReason,
+        secondPassCatalogApplied,
+        shouldLearnFingerprint: !!(capturedFingerprint && match && audioMatchSource !== "local"),
+        shouldArchiveUnresolved: !match && sampledForFingerprint,
+        shouldQueueRecovery: false,
+      });
+
       const matchDiagnostics = {
         pollReason: reasonCode,
         icyChanged,
@@ -689,6 +721,7 @@ export class MonitorService {
         fingerprintAttempts,
         streamHealthOk: health.reachable && health.audioFlowing && health.decoderOk,
         healthReason: health.reason,
+        fusionV2: MatchFusionService.summarizeForDiagnostics(fusionDecision),
       };
 
       const processingMs = Date.now() - start;

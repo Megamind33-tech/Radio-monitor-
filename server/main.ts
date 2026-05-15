@@ -33,6 +33,7 @@ import { AcrcloudService } from "./services/acrcloud.service.js";
 import { SpinRefreshService } from "./services/spin-refresh.service.js";
 import { FingerprintService } from "./services/fingerprint.service.js";
 import { AcoustidService } from "./services/acoustid.service.js";
+import { getAcoustidMetricsSnapshot } from "./lib/acoustid-metrics.js";
 import { MusicbrainzService } from "./services/musicbrainz.service.js";
 import { SampleStorageService } from "./services/sample-storage.service.js";
 import { CatalogCrawlerService } from "./services/catalog-crawler.service.js";
@@ -1018,6 +1019,12 @@ async function startServer() {
     const toMethodMap = (rows: { detectionMethod: string; _count: { _all: number } }[]) =>
       Object.fromEntries(rows.map((r) => [r.detectionMethod, r._count._all]));
 
+    const acoustidRuntime = getAcoustidMetricsSnapshot();
+    const acoustidHitRate =
+      acoustidRuntime.acoustidCalls > 0 ? acoustidRuntime.acoustidHits / acoustidRuntime.acoustidCalls : null;
+    const acoustidFinalWinRate =
+      acoustidRuntime.acoustidHits > 0 ? acoustidRuntime.acoustidFinalWins / acoustidRuntime.acoustidHits : null;
+
     res.json({
       total_detections: totalLogs,
       match_rate: totalLogs > 0 ? matchedLogs / totalLogs : 0,
@@ -1036,6 +1043,25 @@ async function startServer() {
       all_detections_by_detection_method_24h: toMethodMap(allByMethod24h as never),
       match_rate_note:
         "Default: trusted ICY can match again (ALLOW_STREAM_METADATA_MATCH_WITHOUT_ID). Use music_match_rate and matched_by_detection_method_24h for AcoustID vs catalog.",
+      /** Since server start: API calls, hits/misses, fusion wins, ICY agreement (in-process). */
+      acoustid_operational: {
+        ...acoustidRuntime,
+        acoustidHitRate: acoustidHitRate,
+        acoustidFinalWinRateVsHits: acoustidFinalWinRate,
+      },
+    });
+  });
+
+  /** In-process AcoustID counters (since server boot). See also `acoustid_operational` on /api/metrics/summary. */
+  app.get("/api/metrics/acoustid", (_req, res) => {
+    const snap = getAcoustidMetricsSnapshot();
+    const acoustidHitRate = snap.acoustidCalls > 0 ? snap.acoustidHits / snap.acoustidCalls : null;
+    const acoustidFinalWinRateVsHits = snap.acoustidHits > 0 ? snap.acoustidFinalWins / snap.acoustidHits : null;
+    res.json({
+      ...snap,
+      acoustidHitRate,
+      acoustidFinalWinRateVsHits,
+      note: "Counters reset on process restart. Compare with matched_by_detection_method_24h on /api/metrics/summary for persisted log wins.",
     });
   });
 

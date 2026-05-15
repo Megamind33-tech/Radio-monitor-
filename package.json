@@ -32,7 +32,9 @@
     "test:station-health": "tsx server/lib/station-health.spec.ts",
     "test:stream-url-guard": "tsx server/lib/stream-url-guard.spec.ts",
     "test:local-fingerprint": "tsx server/services/local-fingerprint.service.spec.ts",
-    "test:audio-id-merge": "tsx server/lib/audio-id-merge.spec.ts"
+    "test:audio-id-merge": "tsx server/lib/audio-id-merge.spec.ts",
+    "test:acoustid-metrics": "tsx server/lib/acoustid-metrics.spec.ts",
+    "test:match-fusion": "tsx server/services/match-fusion.service.spec.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
