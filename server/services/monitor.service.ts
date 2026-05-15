@@ -19,6 +19,7 @@ import { AcrcloudService } from "./acrcloud.service.js";
 import { LocalFingerprintService } from "./local-fingerprint.service.js";
 import { MusicbrainzService } from "./musicbrainz.service.js";
 import { CatalogLookupService } from "./catalog-lookup.service.js";
+import { MatchFusionService } from "./match-fusion.service.js";
 import {
   NormalizedMetadata,
   MatchResult,
@@ -183,7 +184,7 @@ export class MonitorService {
     if (!station || !station.isActive) return;
 
     logger.info({ station: station.name }, "Polling station");
-        let latestNowPlaying = null;
+    let latestNowPlaying = null;
     const markPollError = async (message: string) => {
       await prisma.station.update({
         where: { id: stationId },
@@ -202,15 +203,18 @@ export class MonitorService {
       const resolvedUrl = await ResolverService.resolveStreamUrl(mountUrl);
       const health = await StreamHealthService.validateStream(resolvedUrl);
 
+      let icyMeta: NormalizedMetadata | null = null;
+      let providerMeta: NormalizedMetadata | null = null;
       let metadata: NormalizedMetadata | null = null;
       let legacyFingerprint = false;
       let reasonCode: string | null = null;
 
       if (station.metadataPriorityEnabled) {
-        metadata = await MetadataService.readStreamMetadata(resolvedUrl);
-        if (!metadata) {
-          metadata = await MetadataService.readProviderNowPlayingMetadata(resolvedUrl);
-        }
+        [icyMeta, providerMeta] = await Promise.all([
+          MetadataService.readStreamMetadata(resolvedUrl),
+          MetadataService.readProviderNowPlayingMetadata(resolvedUrl),
+        ]);
+        metadata = icyMeta ?? providerMeta ?? null;
         latestNowPlaying = await prisma.currentNowPlaying.findUnique({ where: { stationId } });
 
         if (!metadata) {
@@ -607,6 +611,7 @@ export class MonitorService {
         }
       }
 
+      let secondPassCatalogApplied = false;
       // Second-pass: combined-line catalog whenever still unmatched (even if quality heuristics flagged forceFingerprint).
       if (!match && metadata && station.fingerprintFallbackEnabled && !isJunkIcyMetadata(metadata)) {
         const viaCombined = await CatalogLookupService.lookupFromMetadata({
@@ -617,6 +622,7 @@ export class MonitorService {
         if (viaCombined) {
           match = viaCombined;
           method = "catalog_lookup";
+          secondPassCatalogApplied = true;
         }
       }
 
@@ -678,6 +684,24 @@ export class MonitorService {
         (icyChanged ? "icy_changed_audio" : null) ||
         (intervalElapsed && !legacyFingerprint ? "audio_interval" : null);
 
+      const fusionDecision = MatchFusionService.buildLivePollDecision({
+        stationId,
+        metadata,
+        icyMeta,
+        providerMeta,
+        metaTrust01: metaTrust,
+        audioMatch,
+        audioMatchSource,
+        primaryCatalogMatch: catalogMatch,
+        finalMatch: match,
+        finalMethod: method,
+        mergeReasonCode: mergeReason,
+        secondPassCatalogApplied,
+        shouldLearnFingerprint: !!(capturedFingerprint && match && audioMatchSource !== "local"),
+        shouldArchiveUnresolved: !match && sampledForFingerprint,
+        shouldQueueRecovery: false,
+      });
+
       const matchDiagnostics = {
         pollReason: reasonCode,
         icyChanged,
@@ -699,6 +723,7 @@ export class MonitorService {
         fingerprintAttempts,
         streamHealthOk: health.reachable && health.audioFlowing && health.decoderOk,
         healthReason: health.reason,
+        fusionV2: MatchFusionService.summarizeForDiagnostics(fusionDecision),
       };
 
       const processingMs = Date.now() - start;
