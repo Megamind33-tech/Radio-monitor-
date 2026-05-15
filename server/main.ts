@@ -20,6 +20,11 @@ import { effectiveMountUrl } from "./lib/stream-source.js";
 import { StreamDiscoveryService } from "./services/stream-discovery.service.js";
 import { monitorEvents } from "./lib/monitor-events.js";
 import { UnresolvedRecoveryService } from "./services/unresolved-recovery.service.js";
+import {
+  listUnresolvedClusters,
+  listRecoveryAudits,
+  revertUnresolvedRecoveryAudit,
+} from "./lib/unresolved-recovery-audit.js";
 import { LocalFingerprintService } from "./services/local-fingerprint.service.js";
 import {
   exportRowsToCsv,
@@ -689,6 +694,67 @@ async function startServer() {
     } catch (error) {
       logger.error({ error }, "Failed safe title recovery batch");
       res.status(500).json({ error: "failed_safe_title_recovery" });
+    }
+  });
+
+  /**
+   * Grouped view of unresolved backlog by normalized title key + recoveryReason (operator triage).
+   * Query: minSamples (default 3), limit (default 40), stationId, recoveryReasons=comma-separated codes.
+   */
+  app.get("/api/recovery/unresolved/clusters", async (req, res) => {
+    try {
+      const minRaw = typeof req.query.minSamples === "string" ? Number(req.query.minSamples) : Number(req.query.minSamples);
+      const limitRaw = typeof req.query.limit === "string" ? Number(req.query.limit) : Number(req.query.limit);
+      const minSamples = Number.isFinite(minRaw) ? Math.min(500, Math.max(2, Math.trunc(minRaw))) : 3;
+      const limit = Number.isFinite(limitRaw) ? Math.min(200, Math.max(1, Math.trunc(limitRaw))) : 40;
+      const stationId =
+        typeof req.query.stationId === "string" && req.query.stationId.trim() ? req.query.stationId.trim() : undefined;
+      const reasonsRaw = typeof req.query.recoveryReasons === "string" ? req.query.recoveryReasons.trim() : "";
+      const recoveryReasons = reasonsRaw
+        ? reasonsRaw
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
+      const clusters = await listUnresolvedClusters({ minSamples, limit, stationId, recoveryReasons });
+      res.json({ minSamples, limit, count: clusters.length, clusters });
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved cluster query");
+      res.status(500).json({ error: "failed_unresolved_clusters" });
+    }
+  });
+
+  app.get("/api/recovery/unresolved/audits", async (req, res) => {
+    try {
+      const takeRaw = typeof req.query.take === "string" ? Number(req.query.take) : 50;
+      const take = Number.isFinite(takeRaw) ? Math.min(200, Math.max(1, Math.trunc(takeRaw))) : 50;
+      const activeOnly = String(req.query.activeOnly || "true").toLowerCase() !== "false";
+      const rows = await listRecoveryAudits({ take, onlyActive: activeOnly });
+      res.json({ take, activeOnly, count: rows.length, audits: rows });
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved recovery audit list");
+      res.status(500).json({ error: "failed_unresolved_audits" });
+    }
+  });
+
+  app.post("/api/recovery/unresolved/audits/:auditId/revert", async (req, res) => {
+    try {
+      const auditId = typeof req.params.auditId === "string" ? req.params.auditId.trim() : "";
+      if (!auditId) {
+        res.status(400).json({ error: "missing_audit_id" });
+        return;
+      }
+      const body = req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+      const note = typeof body.note === "string" ? body.note.slice(0, 2000) : undefined;
+      const out = await revertUnresolvedRecoveryAudit(auditId, note);
+      if (!out.ok) {
+        res.status(400).json(out);
+        return;
+      }
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved recovery audit revert");
+      res.status(500).json({ error: "failed_unresolved_audit_revert" });
     }
   });
 

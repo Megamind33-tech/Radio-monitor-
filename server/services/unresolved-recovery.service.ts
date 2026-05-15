@@ -16,11 +16,13 @@ import { fingerprintPipelineGate } from "../lib/fingerprint-pipeline-gate.js";
 import {
   RecoveryReason,
   analyzeTitleEvidence,
+  buildTitleNormKey,
   matchResultFromLocalFingerprint,
   matchResultFromVerifiedTrack,
   recoveryPriorityForEvidence,
   screenProgrammeOrDirtyWeb,
 } from "../lib/unresolved-evidence.js";
+import { createUnresolvedRecoveryAudit, type RecoveryAuditKind } from "../lib/unresolved-recovery-audit.js";
 
 function parseEnvInt(key: string, fallback: number): number {
   const raw = process.env[key];
@@ -79,6 +81,7 @@ async function persistRecoveryMatch(params: {
   recoveredViaAcrcloud: boolean;
   titleNormKey?: string | null;
   recoveryPriority?: number;
+  auditKind?: RecoveryAuditKind | null;
 }): Promise<void> {
   const {
     row,
@@ -95,6 +98,7 @@ async function persistRecoveryMatch(params: {
     recoveredViaAcrcloud,
     titleNormKey,
     recoveryPriority,
+    auditKind,
   } = params;
 
   const observedAt = linkedDetection?.observedAt ?? row.createdAt;
@@ -207,6 +211,16 @@ async function persistRecoveryMatch(params: {
       ...(typeof recoveryPriority === "number" ? { recoveryPriority } : {}),
     },
   });
+
+  if (auditKind) {
+    await createUnresolvedRecoveryAudit({
+      row,
+      createdDetectionLogId: recoveredLog.id,
+      kind: auditKind,
+      match,
+      titleNormKey: titleNormKey ?? row.titleNormKey ?? null,
+    });
+  }
 }
 
 export class UnresolvedRecoveryService {
@@ -390,6 +404,7 @@ export class UnresolvedRecoveryService {
         recoveredViaAcrcloud: false,
         titleNormKey: ev.titleNormKey,
         recoveryPriority: recoveryPriorityForEvidence(ev),
+        auditKind: ev.kind === "verified_exact" ? "title_verified" : "title_trusted_localfp",
       });
       recovered += 1;
       logger.info(
@@ -667,6 +682,7 @@ export class UnresolvedRecoveryService {
                   recoveredViaAcrcloud: false,
                   titleNormKey: ev.titleNormKey,
                   recoveryPriority: recoveryPriorityForEvidence(ev),
+                  auditKind: "title_verified",
                 });
                 recovered += 1;
                 logger.info(
@@ -693,6 +709,7 @@ export class UnresolvedRecoveryService {
                   recoveredViaAcrcloud: false,
                   titleNormKey: ev.titleNormKey,
                   recoveryPriority: recoveryPriorityForEvidence(ev),
+                  auditKind: "title_trusted_localfp",
                 });
                 recovered += 1;
                 logger.info(
@@ -891,6 +908,13 @@ export class UnresolvedRecoveryService {
               lastRecoveryError: null,
               recoveryReason: RecoveryReason.RECOVERED_FROM_AUDIO,
             },
+          });
+          await createUnresolvedRecoveryAudit({
+            row,
+            createdDetectionLogId: recoveredLog.id,
+            kind: "audio_resolver",
+            match,
+            titleNormKey: buildTitleNormKey(artistFinal, titleFinal),
           });
           logger.info(
             {

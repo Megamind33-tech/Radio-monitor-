@@ -325,6 +325,33 @@ model UnresolvedSample {
   @@index([stationId, titleNormKey, createdAt])
 }
 
+/// Snapshot of an automatic unresolved-to-matched recovery for audit / optional revert.
+model UnresolvedRecoveryAudit {
+  id                       String    @id @default(cuid())
+  unresolvedSampleId     String
+  stationId                String
+  /// title_verified | title_trusted_localfp | audio_resolver
+  kind                     String
+  createdDetectionLogId    String
+  previousRecoveryStatus   String
+  previousRecoveryReason   String?
+  previousRecoveredAt      DateTime?
+  previousVerifiedTrackId  String?
+  previousLastRecoveryError String?
+  titleFinal               String?
+  artistFinal              String?
+  titleNormKey             String?
+  matchSnapshotJson        String?
+  revertedAt               DateTime?
+  revertNote               String?
+  createdAt                DateTime  @default(now())
+
+  @@index([unresolvedSampleId])
+  @@index([createdDetectionLogId])
+  @@index([revertedAt])
+  @@index([stationId, createdAt])
+}
+
 model VerifiedTrack {
   id             String   @id @default(cuid())
   artist         String
