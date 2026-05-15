@@ -632,10 +632,63 @@ async function startServer() {
       for (const row of totals) {
         byStatus[row.recoveryStatus || "pending"] = Number(row._count._all || 0);
       }
-      res.json({ ...status, totals: byStatus });
+      const byReasonRows = await prisma.unresolvedSample.groupBy({
+        by: ["recoveryReason"],
+        _count: { _all: true },
+      });
+      const byReason: Record<string, number> = {};
+      for (const row of byReasonRows) {
+        const k = row.recoveryReason || "(null)";
+        byReason[k] = Number(row._count._all || 0);
+      }
+      const dayAgo = new Date(Date.now() - 86400000);
+      const [created24h, recovered24h] = await Promise.all([
+        prisma.unresolvedSample.count({ where: { createdAt: { gte: dayAgo } } }),
+        prisma.unresolvedSample.count({
+          where: { recoveredAt: { gte: dayAgo }, recoveryStatus: "recovered" },
+        }),
+      ]);
+      res.json({
+        ...status,
+        totals: byStatus,
+        byReason,
+        flow24h: { created: created24h, recovered: recovered24h },
+      });
     } catch (error) {
       logger.error({ error }, "Failed unresolved recovery status request");
       res.status(500).json({ error: "failed_to_read_recovery_status" });
+    }
+  });
+
+  app.post("/api/recovery/unresolved/classify", async (req, res) => {
+    try {
+      const body = req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+      const stationId = typeof body.stationId === "string" && body.stationId.trim() ? body.stationId.trim() : undefined;
+      const limitRaw = typeof body.limit === "number" ? body.limit : Number(body.limit);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 500) : undefined;
+      const out = await UnresolvedRecoveryService.classifyPendingBatch({ stationId, limit });
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "Failed unresolved classify batch");
+      res.status(500).json({ error: "failed_to_classify_unresolved" });
+    }
+  });
+
+  app.post("/api/recovery/unresolved/safe-title-recover", async (req, res) => {
+    try {
+      const body = req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+      const stationId = typeof body.stationId === "string" && body.stationId.trim() ? body.stationId.trim() : undefined;
+      const limitRaw = typeof body.limit === "number" ? body.limit : Number(body.limit);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 500) : undefined;
+      const dryRun =
+        typeof body.dryRun === "boolean"
+          ? body.dryRun
+          : String(body.dryRun || "true").toLowerCase() !== "false";
+      const out = await UnresolvedRecoveryService.runSafeTitleAutoRecoveryBatch({ stationId, limit, dryRun });
+      res.json(out);
+    } catch (error) {
+      logger.error({ error }, "Failed safe title recovery batch");
+      res.status(500).json({ error: "failed_safe_title_recovery" });
     }
   });
 
@@ -728,6 +781,9 @@ async function startServer() {
           lastRecoveryAt: true,
           lastRecoveryError: true,
           recoveredAt: true,
+          recoveryReason: true,
+          titleNormKey: true,
+          recoveryPriority: true,
         },
       });
 
@@ -774,6 +830,9 @@ async function startServer() {
           lastRecoveryAt: row.lastRecoveryAt ?? null,
           lastRecoveryError: row.lastRecoveryError ?? null,
           recoveredAt: row.recoveredAt ?? null,
+          recoveryReason: row.recoveryReason ?? null,
+          titleNormKey: row.titleNormKey ?? null,
+          recoveryPriority: row.recoveryPriority ?? 0,
           hasAudioFile,
           detectedAt: log?.observedAt ?? null,
           rawStreamText: log?.rawStreamText ?? null,

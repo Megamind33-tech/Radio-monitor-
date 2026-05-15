@@ -76,6 +76,7 @@ export default function App() {
   const [audioEditorFilter, setAudioEditorFilter] = useState<'untagged' | 'tagged' | 'all'>('untagged');
   const [audioEditorStationFilter, setAudioEditorStationFilter] = useState<string>('all');
   const [unknownStorage, setUnknownStorage] = useState<UnknownStorageSummary | null>(null);
+  const [unresolvedRecovery, setUnresolvedRecovery] = useState<Record<string, unknown> | null>(null);
   const [storageLoading, setStorageLoading] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [storageDryRun, setStorageDryRun] = useState<any | null>(null);
@@ -184,6 +185,17 @@ export default function App() {
     }
   }, []);
 
+  const fetchUnresolvedRecovery = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/recovery/unresolved/status');
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error || `Unresolved recovery status failed (${res.status})`);
+      setUnresolvedRecovery(body);
+    } catch (e) {
+      console.error('Failed to fetch unresolved recovery status', e);
+    }
+  }, []);
+
   const fetchRematchSummary = React.useCallback(async () => {
     try {
       const res = await fetch('/api/admin/rematch/summary');
@@ -252,8 +264,10 @@ export default function App() {
     if (activeTab === 'settings') {
       fetchUnknownStorage();
       fetchCrawlerStatus();
+      fetchRematchSummary();
+      fetchUnresolvedRecovery();
     }
-  }, [activeTab, fetchAudioEditorSamples, fetchUnknownStorage, fetchCrawlerStatus]);
+  }, [activeTab, fetchAudioEditorSamples, fetchUnknownStorage, fetchCrawlerStatus, fetchRematchSummary, fetchUnresolvedRecovery]);
 
   useEffect(() => {
     if (!stationPageId || activeTab !== 'stations') return;
@@ -710,6 +724,7 @@ export default function App() {
               crawlerStatus={crawlerStatus}
               rematchSummary={rematchSummary}
               unknownStorage={unknownStorage}
+              unresolvedRecovery={unresolvedRecovery}
               storageLoading={storageLoading}
               storageError={storageError}
               storageDryRun={storageDryRun}
@@ -717,6 +732,7 @@ export default function App() {
               includeHiddenStations={includeHiddenStations}
               onRefreshCrawler={fetchCrawlerStatus}
               onRefreshRematch={fetchRematchSummary}
+              onRefreshUnresolvedRecovery={fetchUnresolvedRecovery}
               onStorageError={setStorageError}
               onHashBackfillResult={setHashBackfillResult}
               onStorageDryRun={setStorageDryRun}

@@ -7,6 +7,7 @@ export function SettingsPage({
   crawlerStatus,
   rematchSummary,
   unknownStorage,
+  unresolvedRecovery,
   storageLoading,
   storageError,
   storageDryRun,
@@ -14,6 +15,7 @@ export function SettingsPage({
   includeHiddenStations,
   onRefreshCrawler,
   onRefreshRematch,
+  onRefreshUnresolvedRecovery,
   onStorageError,
   onHashBackfillResult,
   onStorageDryRun,
@@ -26,6 +28,7 @@ export function SettingsPage({
   crawlerStatus: any;
   rematchSummary: any;
   unknownStorage: UnknownStorageSummary | null;
+  unresolvedRecovery: Record<string, unknown> | null;
   storageLoading: boolean;
   storageError: string | null;
   storageDryRun: any;
@@ -33,6 +36,7 @@ export function SettingsPage({
   includeHiddenStations: boolean;
   onRefreshCrawler: () => void;
   onRefreshRematch: () => void;
+  onRefreshUnresolvedRecovery: () => Promise<void>;
   onStorageError: (msg: string | null) => void;
   onHashBackfillResult: (v: any) => void;
   onStorageDryRun: (v: any) => void;
@@ -107,6 +111,55 @@ export function SettingsPage({
           </div>
           <p className="text-xs text-slate-600">Human-verified logs are protected. Dry-run does not change logs. Strong fingerprint evidence required for automatic correction.</p>
           {rematchSummary ? <div className="grid grid-cols-2 gap-2 text-xs text-slate-700"><div>Pending: {rematchSummary.pending ?? 0}</div><div>Matched: {rematchSummary.matched ?? 0}</div><div>Needs review: {rematchSummary.needs_review ?? 0}</div><div>Failed: {rematchSummary.failed ?? 0}</div></div> : <p className="text-xs text-slate-500">No rematch summary loaded.</p>}
+        </div>
+
+        <div className="rm-card-inner p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-slate-800">Unresolved recovery (honest backlog)</span>
+            <button
+              type="button"
+              onClick={() => void onRefreshUnresolvedRecovery()}
+              className="btn-ghost-sm px-2.5 py-1 text-slate-600"
+            >
+              Refresh
+            </button>
+          </div>
+          <p className="text-xs text-slate-600">
+            Status codes separate fingerprint misses from title-only evidence, weak stream-learned library hits,
+            catalogue gaps, and programme/junk metadata. CLI: <code className="text-slate-700">npm run audit:unresolved-recovery</code>
+          </p>
+          {unresolvedRecovery ? (
+            <div className="space-y-3 text-xs text-slate-700">
+              <div className="grid grid-cols-2 gap-2">
+                <div>24h created: {(unresolvedRecovery.flow24h as { created?: number })?.created ?? "—"}</div>
+                <div>24h recovered: {(unresolvedRecovery.flow24h as { recovered?: number })?.recovered ?? "—"}</div>
+              </div>
+              <div>
+                <div className="font-medium text-slate-800 mb-1">By recoveryStatus</div>
+                <ul className="list-disc list-inside space-y-0.5">
+                  {Object.entries((unresolvedRecovery.totals as Record<string, number>) || {}).map(([k, v]) => (
+                    <li key={k}>
+                      {k}: {v}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="font-medium text-slate-800 mb-1">By recoveryReason (semantic lane)</div>
+                <ul className="list-disc list-inside space-y-0.5 max-h-40 overflow-y-auto">
+                  {Object.entries((unresolvedRecovery.byReason as Record<string, number>) || {})
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([k, v]) => (
+                      <li key={k}>
+                        {k}: {v}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">Load status to see lane breakdown.</p>
+          )}
         </div>
         <div className="rm-card-inner p-5 space-y-4">
           <div className="flex items-center justify-between">

@@ -29,10 +29,14 @@
     "optimize:stations": "node scripts/optimize_stations.mjs",
     "optimize:stations:apply": "node scripts/optimize_stations.mjs --apply",
     "drain:unresolved": "node scripts/drain_unresolved_aggressive.mjs --max-passes 10 --batch 30",
+    "audit:unresolved-recovery": "tsx scripts/unresolved_recovery_dry_run.ts",
+    "recover:unresolved-safe-title": "tsx scripts/unresolved_safe_title_recover.ts",
+    "queue:unresolved-enrichment": "tsx scripts/unresolved_enqueue_enrichment.ts",
     "test:station-health": "tsx server/lib/station-health.spec.ts",
     "test:stream-url-guard": "tsx server/lib/stream-url-guard.spec.ts",
     "test:local-fingerprint": "tsx server/services/local-fingerprint.service.spec.ts",
-    "test:audio-id-merge": "tsx server/lib/audio-id-merge.spec.ts"
+    "test:audio-id-merge": "tsx server/lib/audio-id-merge.spec.ts",
+    "test:unresolved-evidence": "tsx server/lib/unresolved-evidence.spec.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

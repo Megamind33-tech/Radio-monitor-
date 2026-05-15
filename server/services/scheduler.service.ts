@@ -23,6 +23,7 @@ export class SchedulerService {
   private static masterJob: cron.ScheduledTask | null = null;
   private static dispatchTimer: NodeJS.Timeout | null = null;
   private static unresolvedRecoveryJob: cron.ScheduledTask | null = null;
+  private static unresolvedClassifyJob: cron.ScheduledTask | null = null;
   private static spinRefreshJob: cron.ScheduledTask | null = null;
   private static catalogRepairJob: cron.ScheduledTask | null = null;
   private static rematchJob: cron.ScheduledTask | null = null;
@@ -42,6 +43,9 @@ export class SchedulerService {
     }, dispatchTickMs);
     this.unresolvedRecoveryJob = cron.schedule("*/2 * * * *", () => {
       void this.runUnresolvedRecoveryTick();
+    });
+    this.unresolvedClassifyJob = cron.schedule("25,55 * * * * *", () => {
+      void this.runUnresolvedClassifyTick();
     });
     this.spinRefreshJob = cron.schedule("5 */30 * * * *", () => {
       void this.runSpinRefreshTick();
@@ -92,10 +96,23 @@ export class SchedulerService {
     }
   }
 
+  private static async runUnresolvedClassifyTick() {
+    if (String(process.env.UNRESOLVED_CLASSIFY_ENABLED || "true").toLowerCase() === "false") return;
+    try {
+      const out = await UnresolvedRecoveryService.classifyPendingBatch({
+        limit: Math.min(250, parseInt(process.env.UNRESOLVED_CLASSIFY_BATCH_SIZE || "150", 10) || 150),
+      });
+      if (out.updated > 0) logger.info({ out }, "Unresolved classify tick");
+    } catch (error) {
+      logger.warn({ error }, "Unresolved classify tick failed");
+    }
+  }
+
   private static async runUnresolvedRecoveryTick() {
     const forceWithoutAcoustid =
       String(process.env.UNRESOLVED_FORCE_RETRY_WITHOUT_ACOUSTID || "").toLowerCase() === "true";
-    if (!process.env.ACOUSTID_API_KEY && !forceWithoutAcoustid) return;
+    const titleLaneEnabled = String(process.env.UNRESOLVED_TITLE_LANE_ENABLED || "true").toLowerCase() !== "false";
+    if (!process.env.ACOUSTID_API_KEY && !forceWithoutAcoustid && !titleLaneEnabled) return;
     try {
       const forcePasses = Math.max(
         1,
@@ -214,6 +231,7 @@ export class SchedulerService {
       this.dispatchTimer = null;
     }
     this.unresolvedRecoveryJob?.stop();
+    this.unresolvedClassifyJob?.stop();
     this.spinRefreshJob?.stop();
     this.catalogRepairJob?.stop();
     this.rematchJob?.stop();
