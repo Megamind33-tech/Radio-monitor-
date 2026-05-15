@@ -3,6 +3,10 @@ import * as path from "path";
 import type { Prisma, Station } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
+import {
+  recordAcoustidFinalWinIfApplicable,
+  recordAcoustidMetadataComparison,
+} from "../lib/acoustid-metrics.js";
 import { mergeAcoustidAndCatalog } from "../lib/audio-id-merge.js";
 import { assessMetadataQuality } from "../lib/metadata-quality.js";
 import { ResolverService } from "./resolver.service.js";
@@ -264,7 +268,7 @@ export class MonitorService {
       const intervalElapsed =
         !lastFp || Date.now() - lastFp.getTime() >= intervalSec * 1000;
 
-      const acoustidKey = process.env.ACOUSTID_API_KEY;
+      const acoustidKey = process.env.ACOUSTID_API_KEY || process.env.ACOUSTID_OPEN_CLIENT;
       const forceAudioFallback = parseEnvBool("FORCE_AUDIO_FALLBACK_WHEN_UNRESOLVED", true);
       /** When true, capture+fingerprint on every poll (not only ICY gap/stale/change). Heavy on CPU/network; use for stations with bad or missing ICY. */
       const fingerprintEveryPoll = parseEnvBool("FINGERPRINT_EVERY_POLL", false);
@@ -462,6 +466,7 @@ export class MonitorService {
           if (acoustidKey) {
             const acoustidMatch = await AcoustidService.lookup(fp);
             if (acoustidMatch) {
+              recordAcoustidMetadataComparison(acoustidMatch, metadata);
               audioMatch = await MusicbrainzService.enrich(acoustidMatch);
               audioMatchSource = "acoustid";
               fingerprintAttempts.push({
@@ -515,7 +520,10 @@ export class MonitorService {
           fingerprintSamplePathPendingCleanup = null;
         }
         if (!acoustidKey && doAudioId) {
-          logger.debug({ station: station.name }, "Fingerprint path ran without ACOUSTID_API_KEY after local miss");
+          logger.debug(
+            { station: station.name },
+            "Fingerprint path ran without AcoustID client key after local miss (set ACOUSTID_API_KEY or ACOUSTID_OPEN_CLIENT)"
+          );
         }
       }
 
@@ -611,6 +619,8 @@ export class MonitorService {
           method = "catalog_lookup";
         }
       }
+
+      recordAcoustidFinalWinIfApplicable(match, method);
 
       let unresolvedSamplePath: string | null = null;
       if (!match && sampledForFingerprint && resolvedUrl.startsWith("http")) {

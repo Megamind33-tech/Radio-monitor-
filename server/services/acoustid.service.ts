@@ -1,6 +1,15 @@
-import axios from 'axios';
-import { logger } from '../lib/logger.js';
-import { FingerprintResult, MatchResult } from '../types.js';
+import axios from "axios";
+import { logger } from "../lib/logger.js";
+import {
+  recordAcoustidApiCall,
+  recordAcoustidEmptyOrBadStatus,
+  recordAcoustidHit,
+  recordAcoustidLowScoreReject,
+  recordAcoustidMissingRecording,
+  recordAcoustidRequestFailure,
+  recordAcoustidSkipNoClient,
+} from "../lib/acoustid-metrics.js";
+import { FingerprintResult, MatchResult } from "../types.js";
 
 export class AcoustidService {
   private static lastRequestAt: number = 0;
@@ -21,6 +30,7 @@ export class AcoustidService {
     const configuredClient = process.env.ACOUSTID_API_KEY;
     const apiKey = configuredClient || process.env.ACOUSTID_OPEN_CLIENT;
     if (!apiKey) {
+      recordAcoustidSkipNoClient();
       logger.warn("No AcoustID client configured (set ACOUSTID_API_KEY or ACOUSTID_OPEN_CLIENT)");
       return null;
     }
@@ -28,6 +38,7 @@ export class AcoustidService {
     await this.throttle();
 
     try {
+      recordAcoustidApiCall();
       logger.info({ duration: fp.duration }, "Querying AcoustID API");
       
       const response = await axios.post('https://api.acoustid.org/v2/lookup', 
@@ -43,7 +54,8 @@ export class AcoustidService {
       );
 
       const data = response.data;
-      if (data.status !== 'ok' || !data.results || data.results.length === 0) {
+      if (data.status !== "ok" || !data.results || data.results.length === 0) {
+        recordAcoustidEmptyOrBadStatus();
         logger.debug({ status: data.status }, "AcoustID returned no results");
         return null;
       }
@@ -53,12 +65,16 @@ export class AcoustidService {
       const minScore = parseFloat(process.env.ACOUSTID_MIN_SCORE || '0.55');
       
       if (result.score < minScore) {
+        recordAcoustidLowScoreReject();
         logger.debug({ score: result.score, minScore }, "AcoustID match score too low");
         return null;
       }
 
       const recording = result.recordings?.[0];
-      if (!recording) return null;
+      if (!recording) {
+        recordAcoustidMissingRecording();
+        return null;
+      }
 
       const durSec = typeof recording.duration === "number" ? recording.duration : undefined;
       const match: MatchResult = {
@@ -73,8 +89,10 @@ export class AcoustidService {
         reasonCode: configuredClient ? "fingerprint_acoustid" : "fingerprint_acoustid_open"
       };
 
+      recordAcoustidHit();
       return match;
     } catch (error) {
+      recordAcoustidRequestFailure();
       logger.error({ error }, "AcoustID API request failed");
       return null;
     }
